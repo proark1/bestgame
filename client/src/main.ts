@@ -3,6 +3,8 @@ import { FBInstantBridge } from './fbinstant/FBInstantBridge.js';
 import { BootScene } from './scenes/BootScene.js';
 import { HomeScene } from './scenes/HomeScene.js';
 import { RaidScene } from './scenes/RaidScene.js';
+import { LeaderboardScene } from './scenes/LeaderboardScene.js';
+import { RaidHistoryScene } from './scenes/RaidHistoryScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
 
@@ -77,7 +79,13 @@ async function main(): Promise<void> {
     render: { pixelArt: false, antialias: true },
     // No `physics` block — the shared deterministic sim is our physics;
     // Phaser's built-in physics would add weight and engine-dependent math.
-    scene: [new BootScene(fb), new HomeScene(), new RaidScene()],
+    scene: [
+      new BootScene(fb),
+      new HomeScene(),
+      new RaidScene(),
+      new LeaderboardScene(),
+      new RaidHistoryScene(),
+    ],
   });
   // Runtime is attached to the game registry so scenes can pull it
   // without constructor wiring.
