@@ -152,6 +152,66 @@ export function registerPlayer(app: FastifyInstance): void {
     }
   });
 
+  // Recent raids involving the player (attacker OR defender). Used by
+  // HomeScene to show a revenge button / recent activity feed.
+  app.get('/player/raids', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const limit = Math.max(1, Math.min(50, Number((req.query as { limit?: string } | null)?.limit) || 20));
+
+    const res = await pool.query<{
+      id: string;
+      attacker_id: string;
+      defender_id: string | null;
+      attacker_name: string | null;
+      defender_name: string | null;
+      stars: number;
+      sugar_looted: string;
+      leaf_looted: string;
+      attacker_trophies_delta: number;
+      defender_trophies_delta: number;
+      created_at: Date;
+    }>(
+      `SELECT r.id, r.attacker_id, r.defender_id,
+              ap.display_name AS attacker_name,
+              dp.display_name AS defender_name,
+              r.stars, r.sugar_looted, r.leaf_looted,
+              r.attacker_trophies_delta, r.defender_trophies_delta,
+              r.created_at
+         FROM raids r
+         LEFT JOIN players ap ON ap.id = r.attacker_id
+         LEFT JOIN players dp ON dp.id = r.defender_id
+        WHERE r.attacker_id = $1 OR r.defender_id = $1
+        ORDER BY r.created_at DESC
+        LIMIT $2`,
+      [playerId, limit],
+    );
+
+    return {
+      raids: res.rows.map((r) => ({
+        id: r.id,
+        role: r.attacker_id === playerId ? ('attacker' as const) : ('defender' as const),
+        opponentId: r.attacker_id === playerId ? r.defender_id : r.attacker_id,
+        opponentName:
+          (r.attacker_id === playerId ? r.defender_name : r.attacker_name) ??
+          (r.defender_id === null ? 'Beetle Outpost (bot)' : 'Unknown'),
+        stars: r.stars,
+        sugarLooted: Number(r.sugar_looted),
+        leafLooted: Number(r.leaf_looted),
+        trophyDelta:
+          r.attacker_id === playerId
+            ? r.attacker_trophies_delta
+            : r.defender_trophies_delta,
+        createdAt: r.created_at.toISOString(),
+      })),
+    };
+  });
+
   interface PutBaseBody {
     base: Types.Base;
   }
