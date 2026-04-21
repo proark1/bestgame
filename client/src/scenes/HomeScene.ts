@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
+import { openAccountModal } from '../ui/accountModal.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -52,6 +53,7 @@ export class HomeScene extends Phaser.Scene {
   private layer: 0 | 1 = 0;
   private boardContainer!: Phaser.GameObjects.Container;
   private layerLabel!: Phaser.GameObjects.Text;
+  private accountChip!: Phaser.GameObjects.Text;
   private resources = { sugar: 1240, leafBits: 380, aphidMilk: 0 };
   private sugarText!: Phaser.GameObjects.Text;
   private leafText!: Phaser.GameObjects.Text;
@@ -214,6 +216,33 @@ export class HomeScene extends Phaser.Scene {
       color: '#ffd98a',
       fontStyle: 'bold',
     }).setOrigin(0, 0.5);
+
+    // Account chip: "guest" or "@username", tappable to open the
+    // register/login modal. Placed to the right of the title so it
+    // doesn't fight the resource badges on the far right.
+    this.accountChip = crispText(this, 140, HUD_H / 2, 'guest ▾', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '12px',
+      color: '#9bb88a',
+      backgroundColor: '#1a2b1a',
+      padding: { left: 8, right: 8, top: 4, bottom: 4 },
+    })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true });
+    this.accountChip.on('pointerdown', () => this.openAccountMenu());
+    // Kick off a non-blocking fetch to replace "guest" with the real
+    // @username. Server returns { isGuest, username } — we just swap
+    // the chip text. Failures stay on "guest".
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (rt) {
+      void rt.auth.fetchMe().then((me) => {
+        if (!me || !this.accountChip?.active) return;
+        this.accountChip.setText(
+          me.isGuest || !me.username ? 'guest ▾' : `@${me.username} ▾`,
+        );
+        this.accountChip.setColor(me.isGuest ? '#9bb88a' : '#ffd98a');
+      });
+    }
 
     // Resource badges (right-aligned). We build the texts first so class
     // fields are populated before the income tick runs.
@@ -894,6 +923,28 @@ export class HomeScene extends Phaser.Scene {
     } catch (err) {
       this.flashToast((err as Error).message);
     }
+  }
+
+  // Open the DOM-overlay register/login modal. On success we reload
+  // /player/me so the HUD reflects whichever player the session now
+  // points at — either the same one (guest→user claim) or a different
+  // one (login restored a previous account). Cheapest way to get the
+  // whole scene back in sync is to restart it.
+  private openAccountMenu(): void {
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!rt) return;
+    openAccountModal({
+      auth: rt.auth,
+      mode: 'register',
+      onSuccess: async () => {
+        try {
+          rt.player = await rt.api.getPlayerMe();
+        } catch {
+          // Keep old snapshot; the scene restart below will retry.
+        }
+        this.scene.restart();
+      },
+    });
   }
 
   private toast: Phaser.GameObjects.Text | null = null;
