@@ -10,6 +10,12 @@ const HUD_H = 56;
 export class LeaderboardScene extends Phaser.Scene {
   private rowContainer!: Phaser.GameObjects.Container;
   private loadingText!: Phaser.GameObjects.Text;
+  private contentHeight = 0;
+  private viewportTop = HUD_H + 24;
+  private scrollOffset = 0;
+  private scrolling = false;
+  private scrollStartY = 0;
+  private scrollStartOffset = 0;
 
   constructor() {
     super('LeaderboardScene');
@@ -19,7 +25,7 @@ export class LeaderboardScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#0f1b10');
 
     this.drawHud();
-    this.rowContainer = this.add.container(0, HUD_H + 24);
+    this.rowContainer = this.add.container(0, this.viewportTop);
     this.loadingText = this.add
       .text(this.scale.width / 2, HUD_H + 80, 'Loading standings…', {
         fontFamily: 'ui-monospace, monospace',
@@ -28,7 +34,42 @@ export class LeaderboardScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    this.wireScroll();
     void this.fetchData();
+  }
+
+  // Simple drag-to-scroll on the list area. Works with mouse + touch.
+  // Wheel also scrolls for desktop convenience. Clamped so the last
+  // row is always visible.
+  private wireScroll(): void {
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.y < this.viewportTop) return;
+      this.scrolling = true;
+      this.scrollStartY = p.y;
+      this.scrollStartOffset = this.scrollOffset;
+    });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!this.scrolling || !p.isDown) return;
+      const dy = p.y - this.scrollStartY;
+      this.setScroll(this.scrollStartOffset + dy);
+    });
+    this.input.on('pointerup', () => {
+      this.scrolling = false;
+    });
+    this.input.on(
+      'wheel',
+      (_p: Phaser.Input.Pointer, _obj: unknown[], _dx: number, dy: number) => {
+        this.setScroll(this.scrollOffset - dy);
+      },
+    );
+  }
+
+  private setScroll(raw: number): void {
+    const viewportH = this.scale.height - this.viewportTop - 16;
+    const minOffset = Math.min(0, viewportH - this.contentHeight);
+    const clamped = Math.max(minOffset, Math.min(0, raw));
+    this.scrollOffset = clamped;
+    this.rowContainer.setY(this.viewportTop + clamped);
   }
 
   private drawHud(): void {
@@ -67,9 +108,13 @@ export class LeaderboardScene extends Phaser.Scene {
     }
     try {
       const res = await runtime.api.getLeaderboard(50);
+      // The user may have navigated away while we were awaiting the
+      // response; writing to a dead scene is a guaranteed null deref.
+      if (!this.scene.isActive()) return;
       this.loadingText.destroy();
       this.renderRows(res.top, res.me?.playerId ?? null, res.me);
     } catch (err) {
+      if (!this.scene.isActive()) return;
       this.loadingText.setText(`Error: ${(err as Error).message}`);
     }
   }
@@ -100,6 +145,7 @@ export class LeaderboardScene extends Phaser.Scene {
     );
     this.rowContainer.add(headerRow);
 
+    let finalY = rowH;
     // Rows
     rows.forEach((r, i) => {
       const y = (i + 1) * rowH;
@@ -145,22 +191,16 @@ export class LeaderboardScene extends Phaser.Scene {
           0.5,
         ),
       );
+      finalY = y + rowH;
     });
 
     // If the caller isn't in the top list, append a divider + their row
-    // at the bottom.
+    // at the bottom. Same cells as the top rows (faction icon + name)
+    // so formatting is identical.
     if (me && !rows.some((r) => r.playerId === mePlayerId)) {
       const y = (rows.length + 1) * rowH + 20;
       this.rowContainer.add(
-        this.text(
-          this.scale.width / 2,
-          y - 10,
-          '···',
-          '#9cb98a',
-          14,
-          0.5,
-          0.5,
-        ),
+        this.text(this.scale.width / 2, y - 10, '···', '#9cb98a', 14, 0.5, 0.5),
       );
       const myBg = this.add.graphics();
       myBg.fillStyle(0x2a3d21, 0.85);
@@ -175,7 +215,7 @@ export class LeaderboardScene extends Phaser.Scene {
         this.text(
           originX + 80,
           y + rowH / 2,
-          `${me.displayName} (you)`,
+          `${me.displayName} (you) · ${factionIcon(me.faction)}${me.faction}`,
           '#ffd98a',
           14,
           0,
@@ -185,7 +225,12 @@ export class LeaderboardScene extends Phaser.Scene {
       this.rowContainer.add(
         this.text(originX + maxW - 20, y + rowH / 2, `🏆 ${me.trophies}`, '#ffd98a', 14, 1, 0.5),
       );
+      finalY = y + rowH;
     }
+
+    // Track content height so the scroll handler knows when to stop
+    // letting the user drag upward.
+    this.contentHeight = finalY + 16;
   }
 
   private text(
