@@ -371,18 +371,37 @@ async function automateAllMissing(): Promise<void> {
     else failed++;
   }
   clearProgress();
-  statusToast(
-    failed === 0
-      ? `Automated ${ok} sprite(s). Hit "Download .zip" to commit.`
-      : `Automated ${ok} / failed ${failed}. See individual cards for details.`,
-    failed === 0 ? 'success' : 'error',
-  );
   // Refresh file listing so the cards' meta blocks reflect the new saves.
   try {
     const s = await fetchStatus();
     state.files = s.files;
   } catch {
     // non-fatal
+  }
+  if (failed === 0 && ok > 0) {
+    statusToast(
+      `Automated ${ok} sprite(s). Downloading .zip for commit…`,
+      'success',
+    );
+    try {
+      await downloadAllSprites();
+      statusToast(
+        'Extract the zip into client/public/assets/sprites/ and commit.',
+        'success',
+      );
+    } catch (err) {
+      statusToast(
+        `auto-zip failed: ${(err as Error).message} — click Download .zip manually`,
+        'error',
+      );
+    }
+  } else {
+    statusToast(
+      failed === 0
+        ? `Nothing generated (cache hits).`
+        : `Automated ${ok} / failed ${failed}. See individual cards for details.`,
+      failed === 0 ? 'info' : 'error',
+    );
   }
 }
 
