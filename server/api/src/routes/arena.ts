@@ -52,6 +52,12 @@ function arenaSeed(salt: string): number {
 }
 
 export function registerArena(app: FastifyInstance): void {
+  // Arbitrary 32-bit namespace for the reserve-flow advisory lock. Any
+  // constant works; we only need all reserve callers to agree on the
+  // same value so pg_advisory_xact_lock serializes them. "ARENARSV" in
+  // ASCII-ish hex keeps it self-documenting in pg_locks output.
+  const RESERVE_LOCK_KEY = 0x4152454e; // 'AREN'
+
   app.post('/arena/reserve', async (req, reply) => {
     const playerId = requirePlayer(req, reply);
     if (!playerId) return;
@@ -61,159 +67,178 @@ export function registerArena(app: FastifyInstance): void {
       return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
-    // Rendezvous rule: if any unexpired, unfinished reservation already
-    // names THIS player as host or challenger, return it verbatim so
-    // both callers end up with the same arenaToken and meet in the
-    // same Colyseus room. Without this, two simultaneous reserve calls
-    // each mint their own token and never rendezvous.
-    //
-    // LIMIT 1 is safe because token uniqueness + "unfinished" filter
-    // guarantees at most one active reservation per player pair, and
-    // we prefer the oldest so the first caller's token wins.
-    const existing = await pool.query<{
-      token: string;
-      seed: string;
-      host_player_id: string;
-      challenger_player_id: string;
-      host_snapshot: Types.Base;
-      challenger_snapshot: Types.Base;
-    }>(
-      `SELECT token, seed, host_player_id, challenger_player_id,
-              host_snapshot, challenger_snapshot
-         FROM arena_matches
-        WHERE (host_player_id = $1 OR challenger_player_id = $1)
-          AND expires_at > NOW()
-          AND finished_at IS NULL
-        ORDER BY created_at ASC
-        LIMIT 1`,
-      [playerId],
-    );
-    if (existing.rows.length > 0) {
-      const r = existing.rows[0]!;
-      const oppId =
-        r.host_player_id === playerId ? r.challenger_player_id : r.host_player_id;
-      const oppRow = await pool.query<{
+    // Serialize the whole existing-lookup + opponent-match + insert
+    // sequence behind an advisory transaction lock. Without this, two
+    // simultaneous callers can both observe "no active row" and both
+    // INSERT, producing two tokens for the same pair and silently
+    // breaking rendezvous. Throughput cost is trivial (reserve is ~ms
+    // work, called a handful of times per arena session).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [RESERVE_LOCK_KEY]);
+
+      // Rendezvous rule: if any unexpired, unfinished reservation already
+      // names THIS player as host or challenger, return it verbatim so
+      // both callers end up with the same arenaToken and meet in the
+      // same Colyseus room.
+      const existing = await client.query<{
+        token: string;
+        seed: string;
+        host_player_id: string;
+        challenger_player_id: string;
+        host_snapshot: Types.Base;
+        challenger_snapshot: Types.Base;
+      }>(
+        `SELECT token, seed, host_player_id, challenger_player_id,
+                host_snapshot, challenger_snapshot
+           FROM arena_matches
+          WHERE (host_player_id = $1 OR challenger_player_id = $1)
+            AND expires_at > NOW()
+            AND finished_at IS NULL
+          ORDER BY created_at ASC
+          LIMIT 1`,
+        [playerId],
+      );
+      if (existing.rows.length > 0) {
+        const r = existing.rows[0]!;
+        const oppId =
+          r.host_player_id === playerId ? r.challenger_player_id : r.host_player_id;
+        const oppRow = await client.query<{
+          display_name: string;
+          trophies: number;
+        }>('SELECT display_name, trophies FROM players WHERE id = $1', [oppId]);
+        const opp = oppRow.rows[0];
+        await client.query('COMMIT');
+        const rendezvous: ReserveResponse = {
+          arenaToken: r.token,
+          role: r.host_player_id === playerId ? 'host' : 'challenger',
+          seed: Number(r.seed),
+          opponent: {
+            playerId: oppId,
+            displayName: opp?.display_name ?? 'Unknown',
+            trophies: opp?.trophies ?? 0,
+          },
+          hostSnapshot: r.host_snapshot,
+          challengerSnapshot: r.challenger_snapshot,
+        };
+        return rendezvous;
+      }
+
+      // No rendezvous yet — try to create a fresh reservation.
+      const self = await client.query<{
+        trophies: number;
+        display_name: string;
+        snapshot: Types.Base;
+      }>(
+        `SELECT p.trophies, p.display_name, b.snapshot
+           FROM players p
+           JOIN bases b ON b.player_id = p.id
+          WHERE p.id = $1`,
+        [playerId],
+      );
+      if (self.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player or base missing' };
+      }
+      const me = self.rows[0]!;
+
+      // Opponent query: trophy-banded, freshly-active, excludes self
+      // AND excludes anyone already in an active reservation (they'll
+      // hit the rendezvous branch above on their next call).
+      const opp = await client.query<{
+        id: string;
         display_name: string;
         trophies: number;
-      }>('SELECT display_name, trophies FROM players WHERE id = $1', [oppId]);
-      const opp = oppRow.rows[0];
-      const rendezvous: ReserveResponse = {
-        arenaToken: r.token,
-        role: r.host_player_id === playerId ? 'host' : 'challenger',
-        seed: Number(r.seed),
-        opponent: {
-          playerId: oppId,
-          displayName: opp?.display_name ?? 'Unknown',
-          trophies: opp?.trophies ?? 0,
-        },
-        hostSnapshot: r.host_snapshot,
-        challengerSnapshot: r.challenger_snapshot,
-      };
-      return rendezvous;
-    }
+        snapshot: Types.Base;
+      }>(
+        `SELECT p.id, p.display_name, p.trophies, b.snapshot
+           FROM players p
+           JOIN bases b ON b.player_id = p.id
+          WHERE p.id <> $1
+            AND p.trophies BETWEEN $2 AND $3
+            AND p.last_seen_at > NOW() - ($4 || ' minutes')::INTERVAL
+            AND NOT EXISTS (
+              SELECT 1 FROM arena_matches m
+               WHERE (m.host_player_id = p.id OR m.challenger_player_id = p.id)
+                 AND m.expires_at > NOW()
+                 AND m.finished_at IS NULL
+            )
+          ORDER BY p.last_seen_at DESC
+          LIMIT 1`,
+        [
+          playerId,
+          me.trophies - ARENA_TROPHY_BAND,
+          me.trophies + ARENA_TROPHY_BAND,
+          String(ARENA_ACTIVE_WINDOW_MINUTES),
+        ],
+      );
+      if (opp.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return {
+          error: 'no arena opponent online — try again soon or use a bot arena',
+        };
+      }
+      const other = opp.rows[0]!;
 
-    // No rendezvous yet — try to create a fresh reservation.
-    const self = await pool.query<{
-      trophies: number;
-      display_name: string;
-      snapshot: Types.Base;
-    }>(
-      `SELECT p.trophies, p.display_name, b.snapshot
-         FROM players p
-         JOIN bases b ON b.player_id = p.id
-        WHERE p.id = $1`,
-      [playerId],
-    );
-    if (self.rows.length === 0) {
-      reply.code(404);
-      return { error: 'player or base missing' };
-    }
-    const me = self.rows[0]!;
+      // Deterministic host pick so both players agree without a
+      // second-phase handshake. Lower UUID wins (hosts).
+      const hostId = playerId < other.id ? playerId : other.id;
+      const challengerId = hostId === playerId ? other.id : playerId;
+      const hostSnapshot = hostId === playerId ? me.snapshot : other.snapshot;
+      const challengerSnapshot =
+        challengerId === playerId ? me.snapshot : other.snapshot;
 
-    // Opponent query: trophy-banded, freshly-active, excludes self AND
-    // excludes anyone already tied up in another active reservation
-    // (they'll hit the rendezvous branch above on their next call).
-    const opp = await pool.query<{
-      id: string;
-      display_name: string;
-      trophies: number;
-      snapshot: Types.Base;
-    }>(
-      `SELECT p.id, p.display_name, p.trophies, b.snapshot
-         FROM players p
-         JOIN bases b ON b.player_id = p.id
-        WHERE p.id <> $1
-          AND p.trophies BETWEEN $2 AND $3
-          AND p.last_seen_at > NOW() - ($4 || ' minutes')::INTERVAL
-          AND NOT EXISTS (
-            SELECT 1 FROM arena_matches m
-             WHERE (m.host_player_id = p.id OR m.challenger_player_id = p.id)
-               AND m.expires_at > NOW()
-               AND m.finished_at IS NULL
-          )
-        ORDER BY p.last_seen_at DESC
-        LIMIT 1`,
-      [
-        playerId,
-        me.trophies - ARENA_TROPHY_BAND,
-        me.trophies + ARENA_TROPHY_BAND,
-        String(ARENA_ACTIVE_WINDOW_MINUTES),
-      ],
-    );
-    if (opp.rows.length === 0) {
-      reply.code(409);
-      return {
-        error: 'no arena opponent online — try again soon or use a bot arena',
-      };
-    }
-    const other = opp.rows[0]!;
+      const token = randomToken();
+      const seed = arenaSeed(`${hostId}:${challengerId}:${Date.now()}`);
 
-    // Deterministic host pick so both players agree without a
-    // second-phase handshake. Lower UUID wins (hosts).
-    const hostId = playerId < other.id ? playerId : other.id;
-    const challengerId = hostId === playerId ? other.id : playerId;
-    const hostSnapshot = hostId === playerId ? me.snapshot : other.snapshot;
-    const challengerSnapshot =
-      challengerId === playerId ? me.snapshot : other.snapshot;
+      await client.query(
+        `INSERT INTO arena_matches
+           (token, host_player_id, challenger_player_id, seed,
+            host_snapshot, challenger_snapshot, expires_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
+                 NOW() + ($7 || ' minutes')::INTERVAL)`,
+        [
+          token,
+          hostId,
+          challengerId,
+          seed,
+          JSON.stringify(hostSnapshot),
+          JSON.stringify(challengerSnapshot),
+          String(ARENA_MATCH_TTL_MINUTES),
+        ],
+      );
 
-    const token = randomToken();
-    const seed = arenaSeed(`${hostId}:${challengerId}:${Date.now()}`);
+      await client.query('COMMIT');
 
-    await pool.query(
-      `INSERT INTO arena_matches
-         (token, host_player_id, challenger_player_id, seed,
-          host_snapshot, challenger_snapshot, expires_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb,
-               NOW() + ($7 || ' minutes')::INTERVAL)`,
-      [
-        token,
-        hostId,
-        challengerId,
+      // Best-effort prune of stale rows (outside the xact lock).
+      pool
+        .query('DELETE FROM arena_matches WHERE expires_at < NOW()')
+        .catch(() => undefined);
+
+      const response: ReserveResponse = {
+        arenaToken: token,
+        role: hostId === playerId ? 'host' : 'challenger',
         seed,
-        JSON.stringify(hostSnapshot),
-        JSON.stringify(challengerSnapshot),
-        String(ARENA_MATCH_TTL_MINUTES),
-      ],
-    );
-
-    // Best-effort prune of stale rows.
-    pool
-      .query('DELETE FROM arena_matches WHERE expires_at < NOW()')
-      .catch(() => undefined);
-
-    const response: ReserveResponse = {
-      arenaToken: token,
-      role: hostId === playerId ? 'host' : 'challenger',
-      seed,
-      opponent: {
-        playerId: other.id,
-        displayName: other.display_name,
-        trophies: other.trophies,
-      },
-      hostSnapshot,
-      challengerSnapshot,
-    };
-    return response;
+        opponent: {
+          playerId: other.id,
+          displayName: other.display_name,
+          trophies: other.trophies,
+        },
+        hostSnapshot,
+        challengerSnapshot,
+      };
+      return response;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'arena reserve failed');
+      reply.code(500);
+      return { error: 'arena reserve failed' };
+    } finally {
+      client.release();
+    }
   });
 
   // The arena server calls this to redeem a token and get the

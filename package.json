@@ -14,7 +14,7 @@
     "dev:client": "pnpm --filter @hive/client dev",
     "dev:api": "pnpm --filter @hive/api dev",
     "dev:arena": "pnpm --filter @hive/arena dev",
-    "start": "pnpm --filter @hive/api start",
+    "start": "node scripts/start.mjs",
     "start:api": "pnpm --filter @hive/api start",
     "start:arena": "pnpm --filter @hive/arena start",
     "lint": "pnpm -r lint",
