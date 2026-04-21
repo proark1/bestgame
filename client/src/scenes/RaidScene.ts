@@ -686,8 +686,10 @@ export class RaidScene extends Phaser.Scene {
     overlay.fillStyle(0x000000, 0.7);
     overlay.fillRect(0, 0, this.scale.width, this.scale.height);
 
+    // Card is a bit taller on wins to accommodate the Share button.
+    const isWin = this.state.outcome === 'attackerWin' && stars > 0;
     const cardW = 360;
-    const cardH = 220;
+    const cardH = isWin ? 270 : 220;
     const card = this.add.graphics().setDepth(101);
     card.fillStyle(0x1a2b1a, 1);
     card.lineStyle(4, 0xffd98a, 1);
@@ -730,18 +732,85 @@ export class RaidScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(102);
 
-    const btn = this.add
-      .text(this.scale.width / 2, cy + 170, 'Back to home', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#3a7f3a',
-        padding: { left: 18, right: 18, top: 10, bottom: 10 },
-      })
+    const actionsY = isWin ? cy + 220 : cy + 170;
+
+    const backBtn = this.add
+      .text(
+        isWin ? this.scale.width / 2 - 80 : this.scale.width / 2,
+        actionsY,
+        'Back to home',
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '16px',
+          color: '#ffffff',
+          backgroundColor: '#3a7f3a',
+          padding: { left: 18, right: 18, top: 10, bottom: 10 },
+        },
+      )
       .setOrigin(0.5)
       .setDepth(102)
       .setInteractive({ useHandCursor: true });
-    btn.on('pointerdown', () => this.scene.start('HomeScene'));
+    backBtn.on('pointerdown', () => this.scene.start('HomeScene'));
+
+    if (isWin) {
+      const shareBtn = this.add
+        .text(this.scale.width / 2 + 80, actionsY, '📣 Share', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '16px',
+          color: '#0f1b10',
+          backgroundColor: '#ffd98a',
+          padding: { left: 18, right: 18, top: 10, bottom: 10 },
+        })
+        .setOrigin(0.5)
+        .setDepth(102)
+        .setInteractive({ useHandCursor: true });
+      shareBtn.on('pointerdown', () => void this.shareOutcome(stars));
+    }
+  }
+
+  // Fire-and-forget share. Uses the bridge's cascading fallback:
+  // FB Instant → Web Share API → clipboard. On clipboard copy we flash
+  // a tiny toast so the user knows something happened (vs the share
+  // sheet, which is its own confirmation).
+  private async shareOutcome(stars: 0 | 1 | 2 | 3): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    const opponent = this.matchContext?.opponent.displayName ?? 'a rival hive';
+    const text =
+      `${'★'.repeat(stars)} Raided ${opponent} in Hive Wars! ` +
+      `${this.state.attackerSugarLooted} sugar + ${this.state.attackerLeafBitsLooted} leaf looted.`;
+    try {
+      const mode = await runtime.fb.shareRaidResult({ text });
+      // User may have tapped Back-to-home while the share sheet was up;
+      // touching a torn-down scene would throw.
+      if (!this.scene.isActive()) return;
+      if (mode === 'clipboard') this.flashShareToast('Copied to clipboard');
+      else if (mode === 'unavailable')
+        this.flashShareToast('Share unavailable here');
+    } catch (err) {
+      console.warn('share failed', err);
+      if (this.scene.isActive()) this.flashShareToast('Share failed');
+    }
+  }
+
+  private flashShareToast(msg: string): void {
+    const t = this.add
+      .text(this.scale.width / 2, this.scale.height - 40, msg, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#0f1b10',
+        backgroundColor: '#ffd98a',
+        padding: { left: 10, right: 10, top: 6, bottom: 6 },
+      })
+      .setOrigin(0.5)
+      .setDepth(500);
+    this.tweens.add({
+      targets: t,
+      alpha: { from: 1, to: 0 },
+      delay: 1600,
+      duration: 400,
+      onComplete: () => t.destroy(),
+    });
   }
 
   private layout(): void {

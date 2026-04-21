@@ -79,19 +79,71 @@ export class FBInstantBridge {
     window.FBInstant?.setLoadingProgress(Math.max(0, Math.min(100, p * 100)));
   }
 
-  async shareRaidResult(text: string): Promise<void> {
-    const sdk = window.FBInstant;
-    if (!sdk) return; // no-op off-platform
-    try {
-      await sdk.shareAsync({
-        intent: 'SHARE',
-        image: '', // set by caller
-        text,
-        data: { source: 'raid-result' },
-      });
-    } catch (err) {
-      console.warn('share failed', err);
+  // Share a raid result across whatever transport is available. Tries in order:
+  //   1. FBInstant.shareAsync — when the game is actually running inside
+  //      the Facebook / Messenger wrapper
+  //   2. navigator.share — the Web Share API, available on most modern
+  //      mobile browsers (surfaces the OS share sheet)
+  //   3. Clipboard copy of the text+url as a last resort
+  //
+  // Returns the mode that was actually used so the caller can surface
+  // an appropriate toast ("Shared!" vs "Copied to clipboard").
+  async shareRaidResult(args: {
+    text: string;
+    url?: string;
+  }): Promise<'fbinstant' | 'web-share' | 'clipboard' | 'unavailable'> {
+    // 1. Native FB Instant share — only when we're inside the wrapper
+    if (this.ctx.available && window.FBInstant) {
+      try {
+        await window.FBInstant.shareAsync({
+          intent: 'SHARE',
+          image: '',
+          text: args.text,
+          data: { source: 'raid-result' },
+        });
+        return 'fbinstant';
+      } catch (err) {
+        console.warn('FBInstant share failed, falling back:', err);
+      }
     }
+
+    const shareUrl = args.url ?? window.location.origin;
+
+    // 2. Web Share API — mobile-friendly OS share sheet
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    if (nav && typeof nav.share === 'function') {
+      try {
+        await nav.share({
+          title: 'Hive Wars',
+          text: args.text,
+          url: shareUrl,
+        });
+        return 'web-share';
+      } catch (err) {
+        // Only AbortError means "user dismissed the share sheet" — that
+        // counts as success (the OS UI showed; user chose no). Every
+        // other error (including NotAllowedError, which means the share
+        // UI was BLOCKED — no transient activation, Permissions-Policy,
+        // etc.) falls through so the clipboard tier can still give the
+        // user a way to share.
+        const name = (err as Error).name ?? '';
+        if (name === 'AbortError') {
+          return 'web-share';
+        }
+        console.warn('navigator.share failed, falling back:', err);
+      }
+    }
+
+    // 3. Clipboard — the boring but reliable path
+    if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
+      try {
+        await nav.clipboard.writeText(`${args.text}\n${shareUrl}`);
+        return 'clipboard';
+      } catch (err) {
+        console.warn('clipboard write failed:', err);
+      }
+    }
+    return 'unavailable';
   }
 
   get context(): HiveInstantContext {
