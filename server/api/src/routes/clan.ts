@@ -50,7 +50,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const body = req.body ?? { name: '', tag: '' };
     const name = (body.name ?? '').trim();
@@ -119,7 +119,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const rows = await pool.query<{
       id: string;
@@ -157,7 +157,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const clanId = req.body?.clanId;
     if (!clanId || typeof clanId !== 'string') {
@@ -214,7 +214,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const client = await pool.connect();
     try {
@@ -274,7 +274,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const myRow = await pool.query<{ clan_id: string; role: string }>(
       'SELECT clan_id, role FROM clan_members WHERE player_id = $1',
@@ -363,7 +363,7 @@ export function registerClan(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const content = sanitizeChat(req.body?.content ?? '');
     if (content.length === 0) {
@@ -415,7 +415,7 @@ export function registerClan(app: FastifyInstance): void {
       const pool = await getPool();
       if (!pool) {
         reply.code(503);
-        return { error: 'database not configured' };
+        return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
       }
       const clanRow = await pool.query<{ clan_id: string }>(
         'SELECT clan_id FROM clan_members WHERE player_id = $1',

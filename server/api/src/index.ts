@@ -13,9 +13,11 @@ import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
 import { registerLeaderboard } from './routes/leaderboard.js';
 import { registerClan } from './routes/clan.js';
+import { registerArena } from './routes/arena.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
+import { hydrateSpritesToDisk } from './db/sprites.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -53,18 +55,43 @@ async function start(): Promise<void> {
       try {
         await runMigrations(pool, (msg) => app.log.info(msg));
         app.log.info('[db] migrations up to date');
+        // Pull every admin-uploaded sprite out of the DB and onto the
+        // served disk directory so fastify-static returns them right
+        // away — no per-request DB read in the hot path.
+        //
+        // Dist is 'create' because a fresh Railway deploy starts with
+        // NO client/dist/assets/sprites/ directory — hydration has to
+        // make it. Public is 'mirror': only populated when the repo
+        // checkout exists (local dev), never auto-created in a
+        // production bundle.
+        try {
+          const clientDist = join(__dirname, '..', '..', '..', 'client');
+          await hydrateSpritesToDisk(
+            pool,
+            [
+              { dir: join(clientDist, 'dist', 'assets', 'sprites'), mode: 'create' },
+              { dir: join(clientDist, 'public', 'assets', 'sprites'), mode: 'mirror' },
+            ],
+            (msg) => app.log.info(msg),
+          );
+        } catch (err) {
+          app.log.warn({ err }, '[db] sprite hydration failed (non-fatal)');
+        }
       } catch (err) {
         app.log.error({ err }, '[db] migrations failed');
         process.exit(1);
       }
     } else {
       app.log.warn(
-        '[db] DATABASE_URL set but pool init failed; persistence routes will 503',
+        '[db] DATABASE_URL set but pool init failed — check TLS and credentials. Persistence routes will return 503.',
       );
     }
   } else {
     app.log.warn(
-      '[db] DATABASE_URL not set — persistence routes will return 503',
+      '[db] DATABASE_URL not set. On Railway: Add Plugin → Postgres, ' +
+        'then under the API service Variables tab add DATABASE_URL ' +
+        'referencing ${{Postgres.DATABASE_URL}}. Persistence routes will ' +
+        'return 503 until this is set.',
     );
   }
 
@@ -86,6 +113,7 @@ async function start(): Promise<void> {
       registerMatchmaking(scope);
       registerLeaderboard(scope);
       registerClan(scope);
+      registerArena(scope);
     },
     { prefix: '/api' },
   );

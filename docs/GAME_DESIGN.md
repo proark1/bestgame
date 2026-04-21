@@ -307,12 +307,37 @@ At MVP, we operate at implicit rank 1 (all kinds unlocked at start).
 
 ## 8. Matchmaking
 
+### 8.1 Async raid (single-player feel)
+
 - Trophy band: ±75 trophies (`TROPHY_BAND` in
   `server/api/src/routes/matchmaking.ts`).
 - Active window: 3 days (skip ghost defenders).
 - Fallback: deterministic bot base (`botBase()`) if no live match found.
 - Pending match has a 15-minute TTL; consumed atomically on submit to
   prevent replay farming.
+
+### 8.2 Live PvP (arena)
+
+- Trophy band: ±120 trophies (wider than async so a room fills faster).
+- Active window: 10 minutes (needs a fresh pool of online players).
+- Host pick: lower UUID wins deterministically; the host's base becomes
+  the live map.
+- `/api/arena/reserve` stores both players' snapshots in `arena_matches`
+  keyed by a random token; both clients connect to the Colyseus `picnic`
+  room with that token.
+- The Colyseus arena redeems the token via `POST /api/arena/_lookup`
+  (auth: `ARENA_SHARED_SECRET` header, or loopback-only if unset) and
+  seeds the sim with the persisted `host_snapshot`. On match end,
+  `POST /api/arena/_result` writes `outcome`, `winner_slot`, `ticks`,
+  and `final_state_hash` back into the row.
+- **Today's sim limitation:** the core sim has no per-building
+  ownership, so live matches run on the host's base only — both players
+  deploy against it and the loser is whoever lost their deploy cap
+  first (or whoever dealt less damage at tick 2700). Full symmetric
+  base-vs-base PvP is a sim refactor: add `ownerSlot` to `SimBuilding`
+  and partition the map into left/right halves. The storage + wire
+  shape already carries both snapshots so no further migration will be
+  needed when the sim lands.
 
 ## 9. Monetization (post-MVP)
 

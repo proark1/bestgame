@@ -9,10 +9,18 @@ export interface SpriteFile {
   name: string;
   size: number;
   mtime: number;
+  // 'db' means the authoritative bytes live in Postgres and will
+  // survive Railway redeploys; 'dist' and 'public' are the on-disk
+  // mirrors. Absent on older server builds.
+  source?: 'dist' | 'public' | 'db';
 }
 export interface AdminStatus {
   authMode: 'token' | 'loopback-only';
   spritesDir: string;
+  // 'connected' means admin saves are persisted durably. 'not-configured'
+  // means bytes land on disk only and vanish on the next redeploy.
+  dbPersistence?: 'connected' | 'not-configured';
+  mirrorsPublic?: boolean;
   files: SpriteFile[];
 }
 
