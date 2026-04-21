@@ -84,7 +84,7 @@ export class Api {
     if (!res.ok) throw new Error(`player/base ${res.status}`);
   }
 
-  async requestMatch(trophies: number): Promise<unknown> {
+  async requestMatch(trophies: number): Promise<MatchResponse> {
     const res = await this.authedFetch('/match', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -94,6 +94,76 @@ export class Api {
       }),
     });
     if (!res.ok) throw new Error(`match ${res.status}`);
-    return await res.json();
+    return (await res.json()) as MatchResponse;
   }
+
+  async submitRaid(args: {
+    defenderId: string | null;
+    baseSnapshot: Types.Base;
+    seed: number;
+    inputs: Types.SimInput[];
+    clientResultHash: string;
+  }): Promise<RaidSubmitResponse> {
+    const res = await this.authedFetch('/raid/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      let msg = `raid/submit ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // leave msg
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as RaidSubmitResponse;
+  }
+
+  async getRaidHistory(limit = 20): Promise<RaidHistoryEntry[]> {
+    const res = await this.authedFetch(`/player/raids?limit=${limit}`);
+    if (!res.ok) throw new Error(`player/raids ${res.status}`);
+    const body = (await res.json()) as { raids: RaidHistoryEntry[] };
+    return body.raids;
+  }
+}
+
+export interface MatchResponse {
+  defenderId: string | null;
+  trophiesSought: number;
+  seed: number;
+  baseSnapshot: Types.Base;
+  opponent: { isBot: boolean; displayName: string; trophies: number };
+}
+
+export interface RaidSubmitResponse {
+  ok: boolean;
+  replayId: string;
+  result: {
+    outcome: string;
+    stars: 0 | 1 | 2 | 3;
+    sugarLooted: number;
+    leafBitsLooted: number;
+    tickEnded: number;
+  };
+  player: {
+    trophies: number;
+    sugar: number;
+    leafBits: number;
+    aphidMilk: number;
+  };
+}
+
+export interface RaidHistoryEntry {
+  id: string;
+  role: 'attacker' | 'defender';
+  opponentId: string | null;
+  opponentName: string;
+  stars: number;
+  sugarLooted: number;
+  leafLooted: number;
+  trophyDelta: number;
+  createdAt: string;
 }

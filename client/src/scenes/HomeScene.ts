@@ -68,7 +68,9 @@ export class HomeScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
 
-    // Hydrate from runtime if the boot auth succeeded.
+    // Hydrate from runtime — scene is re-entered after each raid, so this
+    // re-reads the latest player state (which RaidScene patches after a
+    // successful /raid/submit).
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (runtime?.player) {
       this.serverBase = runtime.player.base;

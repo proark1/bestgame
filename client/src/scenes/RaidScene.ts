@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { Sim, Types } from '@hive/shared';
 import { bakeTrailDot } from '../assets/placeholders.js';
+import type { HiveRuntime } from '../main.js';
+import type { MatchResponse } from '../net/Api.js';
 
 // RaidScene — the first end-to-end playable loop.
 // The player attacks a hard-coded bot base. They pick a unit from the
@@ -149,6 +151,12 @@ export class RaidScene extends Phaser.Scene {
   private simTickElapsed = 0; // fractional tick accumulator
   private started = false;
   private resultShown = false;
+  // Captured from the match response so raid/submit can round-trip
+  // against the same defender + seed + base snapshot that was used
+  // to run the sim.
+  private matchContext: MatchResponse | null = null;
+  private raidInputs: Types.SimInput[] = [];
+  private submitted = false;
 
   constructor() {
     super('RaidScene');
@@ -165,13 +173,19 @@ export class RaidScene extends Phaser.Scene {
     this.buildingHpBars.clear();
     this.unitSprites.clear();
     this.pendingInputs = [];
+    this.raidInputs = [];
     this.simTickElapsed = 0;
     this.resultShown = false;
     this.started = false;
+    this.submitted = false;
     this.selectedDeckIdx = 0;
     this.drawingPoints = [];
     this.isDrawing = false;
+    this.matchContext = null;
 
+    // Start the scene synchronously against the hard-coded bot so there's
+    // never a white flash; if a matchmaking response arrives shortly
+    // after, it replaces the state and re-renders.
     this.cfg = {
       tickRate: 30,
       maxTicks: TICK_HZ * RAID_SECONDS,
@@ -179,6 +193,7 @@ export class RaidScene extends Phaser.Scene {
       seed: 0xc0ffee,
     };
     this.state = Sim.createInitialState(this.cfg);
+    void this.fetchMatchFromServer();
 
     this.drawHud();
     this.boardContainer = this.add.container(0, HUD_H);
@@ -431,7 +446,7 @@ export class RaidScene extends Phaser.Scene {
       const label = this.deckLabels[this.selectedDeckIdx]!;
       label.setText(`${entry.label} ×${entry.count}`);
 
-      this.pendingInputs.push({
+      const input: Types.SimInput = {
         type: 'deployPath',
         tick: this.state.tick + 1,
         ownerSlot: 0,
@@ -442,7 +457,13 @@ export class RaidScene extends Phaser.Scene {
           count: burst,
           points: tilePoints,
         },
-      });
+      };
+      this.pendingInputs.push(input);
+      // Replay timeline for server submission — every deploy the player
+      // commits is recorded. Defeat/timeout endings submit this list
+      // via /api/raid/submit, where the shared sim re-runs it to verify
+      // the outcome before awarding trophies/loot.
+      this.raidInputs.push(input);
 
       // fade the committed trail
       this.tweens.add({
@@ -563,9 +584,84 @@ export class RaidScene extends Phaser.Scene {
     return queenDead && pct >= 0.9 ? 3 : queenDead || pct >= 0.5 ? 2 : pct > 0 ? 1 : 0;
   }
 
+  // Pulls a real opponent from /api/match. If the attacker has no
+  // authenticated session or the API 503s, we quietly stay on the bot
+  // base the scene already booted with — raid still plays.
+  private async fetchMatchFromServer(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const match = await runtime.api.requestMatch(
+        runtime.player?.player.trophies ?? 100,
+      );
+      this.matchContext = match;
+      // Rebuild sim against the real opponent's snapshot.
+      this.cfg = {
+        tickRate: 30,
+        maxTicks: TICK_HZ * RAID_SECONDS,
+        initialSnapshot: match.baseSnapshot,
+        seed: match.seed,
+      };
+      this.state = Sim.createInitialState(this.cfg);
+      // Re-render buildings from the new state. Wipe the board of the
+      // stale bot sprites first.
+      for (const spr of this.buildingSprites.values()) spr.destroy();
+      this.buildingSprites.clear();
+      for (const bar of this.buildingHpBars.values()) bar.destroy();
+      this.buildingHpBars.clear();
+      this.drawBuildingsFromState();
+      // Nice-to-have: show the opponent's display name above the HUD
+      this.add
+        .text(this.scale.width / 2, 4, `vs ${match.opponent.displayName}`, {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '12px',
+          color: match.opponent.isBot ? '#c3e8b0' : '#ffd98a',
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(50);
+    } catch (err) {
+      // Non-fatal — keep the hard-coded bot.
+      console.warn('match fetch failed, staying on bot:', err);
+    }
+  }
+
+  // Submit the full raid replay to the server. Server re-runs the sim
+  // authoritatively, persists to the `raids` table, and returns the
+  // player's new resource totals. We patch those into runtime.player so
+  // HomeScene shows the updated numbers when the scene re-enters.
+  private async submitToServer(): Promise<void> {
+    if (this.submitted) return;
+    this.submitted = true;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime || !this.matchContext) return;
+    try {
+      const res = await runtime.api.submitRaid({
+        defenderId: this.matchContext.defenderId,
+        baseSnapshot: this.matchContext.baseSnapshot,
+        seed: this.matchContext.seed,
+        inputs: this.raidInputs,
+        clientResultHash: Sim.hashToHex(Sim.hashSimState(this.state)),
+      });
+      if (runtime.player) {
+        runtime.player.player.trophies = res.player.trophies;
+        runtime.player.player.sugar = res.player.sugar;
+        runtime.player.player.leafBits = res.player.leafBits;
+        runtime.player.player.aphidMilk = res.player.aphidMilk;
+      }
+    } catch (err) {
+      // Showing an error would steal focus from the result screen;
+      // log and move on — the local result is already displayed.
+      console.warn('raid submit failed:', err);
+    }
+  }
+
   private showResult(): void {
     if (this.resultShown) return;
     this.resultShown = true;
+    // Fire-and-forget the server submission. The result card renders
+    // immediately; loot/trophies in the HUD will reflect on return
+    // to HomeScene either way.
+    void this.submitToServer();
 
     const stars = this.currentStars();
     const overlay = this.add.graphics().setDepth(100);
