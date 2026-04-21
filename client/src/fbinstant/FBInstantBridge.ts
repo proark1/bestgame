@@ -44,18 +44,23 @@ export class FBInstantBridge {
 
   async initialize(onProgress: (p: number) => void): Promise<HiveInstantContext> {
     const sdk = window.FBInstant;
-    if (!sdk) {
-      // Outside FB — local dev / itch / Poki. Use a guest identity derived
-      // from a persisted uuid so the player keeps their base across visits.
+    // Off-platform fast path. The FBInstant SDK's `initializeAsync` /
+    // `startGameAsync` never resolve outside Facebook's wrapper — they
+    // wait for a parent iframe that isn't there. So we short-circuit if
+    // either (a) the SDK never loaded, or (b) we're the top-level window
+    // (Facebook always hosts the game in an iframe).
+    const isTopLevel = typeof window !== 'undefined' && window.top === window;
+    if (!sdk || isTopLevel) {
       this.ctx.playerId = readOrCreateGuestId();
       return this.ctx;
     }
     try {
-      await sdk.initializeAsync();
+      // Belt-and-braces timeout: even inside an iframe, if the SDK stalls
+      // we bail to guest rather than freeze the boot splash.
+      await withTimeout(sdk.initializeAsync(), 3000, 'initializeAsync');
       sdk.setLoadingProgress(0);
       onProgress(0);
-      // Asset loading happens in BootScene; we only gate the SDK here.
-      await sdk.startGameAsync();
+      await withTimeout(sdk.startGameAsync(), 3000, 'startGameAsync');
       this.ctx = {
         available: true,
         playerId: sdk.getPlayerID(),
@@ -63,7 +68,7 @@ export class FBInstantBridge {
         contextId: sdk.context.getID(),
       };
     } catch (err) {
-      // If SDK init fails (bad context, user closed, etc), fall back to guest.
+      // SDK failure mode — bad context, user closed, or timeout. Guest.
       console.warn('FBInstant init failed; falling back to guest', err);
       this.ctx.playerId = readOrCreateGuestId();
     }
@@ -105,4 +110,23 @@ function readOrCreateGuestId(): string {
   } catch {
     return 'guest-local';
   }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }

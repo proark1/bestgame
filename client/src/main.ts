@@ -4,9 +4,25 @@ import { BootScene } from './scenes/BootScene.js';
 import { HomeScene } from './scenes/HomeScene.js';
 import { RaidScene } from './scenes/RaidScene.js';
 
+// Remove the HTML splash shown during initial JS load. Called from two
+// places (after FB init, and from BootScene) so the splash never sticks
+// if one path hangs — whichever runs first wins.
+function dismissSplash(): void {
+  document.getElementById('boot-splash')?.remove();
+}
+
+// Absolute safety net: no matter what, the splash disappears within 6s.
+// If we hit this, something is wrong, but at least the user sees the page.
+setTimeout(dismissSplash, 6000);
+
 async function main(): Promise<void> {
   const fb = new FBInstantBridge();
-  await fb.initialize(() => {});
+  try {
+    await fb.initialize(() => {});
+  } catch (err) {
+    // FBInstantBridge already catches internally; this is defensive.
+    console.warn('boot: FB init threw', err);
+  }
 
   const game = new Phaser.Game({
     type: Phaser.AUTO,
@@ -24,7 +40,20 @@ async function main(): Promise<void> {
     scene: [new BootScene(fb), new HomeScene(), new RaidScene()],
   });
 
+  // Phaser initializes the renderer synchronously in the constructor on AUTO.
+  // Dismiss the splash now; BootScene.create() will also dismiss as a
+  // secondary guard in case the canvas isn't ready yet.
+  dismissSplash();
+
   void game; // Game holds all its own references; variable kept for debuggability.
 }
 
-void main();
+void main().catch((err) => {
+  console.error('boot failed', err);
+  dismissSplash();
+  const el = document.createElement('div');
+  el.style.cssText =
+    'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#ffb0a0;font-family:system-ui;padding:20px;text-align:center;background:#0f1b10;';
+  el.textContent = 'Sorry, Hive Wars failed to start. Please reload.';
+  document.body.appendChild(el);
+});
