@@ -74,12 +74,14 @@ async function main(): Promise<void> {
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
-      // HUD (56) + 16×12-tile board (576) + deck/footer (~96) + padding.
+      // HUD (56) + 16×12-tile board (576) + two-row footer (~152) + padding.
       // Scale.FIT preserves aspect while letterboxing on any viewport.
+      // Height grew by 48 px from the one-row footer to accommodate the
+      // second row of secondary-nav buttons (see HomeScene.drawFooter).
       width: 16 * 48,
-      height: 56 + 12 * 48 + 96 + 40,
+      height: 56 + 12 * 48 + 152 + 32,
     },
-    render: { pixelArt: false, antialias: true },
+    render: { pixelArt: false, antialias: true, roundPixels: false },
     // No `physics` block — the shared deterministic sim is our physics;
     // Phaser's built-in physics would add weight and engine-dependent math.
     scene: [
