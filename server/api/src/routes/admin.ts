@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import archiver from 'archiver';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -225,6 +226,49 @@ export function registerAdmin(app: FastifyInstance): void {
       path: `/assets/sprites/${safeKey}.${body.format}`,
       size: buf.length,
     };
+  });
+
+  app.get('/admin/api/download-all', async (_req, reply) => {
+    // Stream a ZIP of the sprites/ directory. Admin presses this after
+    // generating art on Railway's ephemeral disk, downloads the zip,
+    // and extracts into client/public/assets/sprites/ locally for a
+    // durable git commit. Entries are STORE-only because WebP/PNG are
+    // already compressed — deflating them again would only waste CPU.
+    let files: string[] = [];
+    try {
+      files = (await readdir(SPRITES_DIR)).filter(
+        (n) => n.endsWith('.png') || n.endsWith('.webp'),
+      );
+    } catch {
+      files = [];
+    }
+    reply
+      .header(
+        'content-disposition',
+        `attachment; filename="hive-sprites-${Date.now()}.zip"`,
+      )
+      .header('content-type', 'application/zip');
+
+    const zip = archiver('zip', { store: true });
+    zip.on('error', (err) => {
+      app.log.error({ err }, 'zip error');
+      reply.raw.destroy(err);
+    });
+    for (const name of files) {
+      zip.file(join(SPRITES_DIR, name), { name });
+    }
+    // Attach a short README so the zip is self-describing.
+    zip.append(
+      `# Hive Wars sprite bundle\n\nExtract these ${files.length} file(s) ` +
+        `to\n  client/public/assets/sprites/\nthen \`git add\` and commit ` +
+        `so the art survives the next Railway redeploy.\n`,
+      { name: 'README.txt' },
+    );
+    // Trigger finalize without awaiting — Fastify pipes the stream to
+    // the HTTP response and archiver drains on back-pressure. Errors are
+    // surfaced by the 'error' handler above.
+    void zip.finalize();
+    return reply.send(zip);
   });
 
   app.delete('/admin/api/sprite/:key', async (req, reply) => {

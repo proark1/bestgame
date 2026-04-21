@@ -129,15 +129,38 @@ Set these env vars on the API service:
 own machine — admin routes accept loopback (127.0.0.1) requests
 without a token.
 
-### Saving art
+### Two automation paths
 
-The admin panel writes to the API container's filesystem, which is
-**ephemeral** on Railway. Workflow:
+Both start from the same prompts.json and produce the same output
+directory. Use whichever is more convenient.
 
-1. Open `/admin`, generate and pick the sprites you want.
-2. Click **Download** on each to save the PNG/WebP locally.
-3. Commit the files under `client/public/assets/sprites/` to git.
-4. Next deploy rebuilds the client with the real art bundled in.
+**A) One-command CLI (most durable)**
+
+```sh
+export GEMINI_API_KEY=AIza...
+pnpm --filter @hive/gemini-art generate            # all sprites, WebP q=85 ≤256 px
+pnpm --filter @hive/gemini-art generate -- --missing  # only empty slots
+pnpm --filter @hive/gemini-art generate -- --only=unit-SoldierAnt
+```
+
+Output goes directly into `client/public/assets/sprites/`. Commit the
+diff; next Railway deploy picks up the real art automatically. Full
+flag reference in `tools/gemini-art/README.md`.
+
+**B) In-browser admin panel (/admin)**
+
+- **⚡ Automate all missing** — generates + compresses + saves every
+  empty slot end-to-end. Uses the current toolbar settings (format,
+  quality, max-dim). Progress bar in the header.
+- **Generate (review)** — produces candidates for every empty slot but
+  doesn't save; you pick per card.
+- **Download .zip** — bundles the server's entire `sprites/` folder
+  into a zip for committing locally. Needed because Railway's API
+  filesystem is ephemeral, so saves don't survive the next deploy
+  unless they end up in git.
+
+Per-card controls remain (edit prompt, 1×/2×/4× variants, save, download,
+delete) for when you want fine control.
 
 ## License
 

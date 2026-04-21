@@ -50,6 +50,30 @@ export class SpriteCard {
     this.root.remove();
   }
 
+  // Full automation entry point: generate one candidate, compress it,
+  // save it — without waiting for a human to pick. Used by the toolbar's
+  // "Automate all missing" button.
+  async automate(): Promise<boolean> {
+    if (this.busy) return false;
+    this.setBusy(true);
+    try {
+      const fullPrompt = this.opts.composePrompt(this.rawPrompt);
+      const imgs = await generateImages({ prompt: fullPrompt, variants: 1 });
+      if (imgs.length === 0) throw new Error('no image returned');
+      this.candidates = imgs;
+      this.selectedIdx = 0;
+      this.renderCandidates();
+      await this.prepareCompressed();
+    } catch (err) {
+      this.opts.showStatus(`${this.key}: ${(err as Error).message}`, 'error');
+      this.setBusy(false);
+      return false;
+    }
+    this.setBusy(false); // unlock before save() re-locks
+    await this.save();
+    return !!this.compressed;
+  }
+
   // Public — the toolbar "Generate all missing" button uses this.
   async generate(): Promise<void> {
     if (this.busy) return;
