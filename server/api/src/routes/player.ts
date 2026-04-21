@@ -9,6 +9,13 @@ import {
   MAX_BUILDINGS_PER_BASE,
   isPlayerPlaceable,
 } from '../game/buildingCosts.js';
+import {
+  isUpgradeableUnit,
+  upgradeCatalog,
+  upgradeCost,
+  MAX_UNIT_LEVEL,
+} from '../game/upgradeCosts.js';
+import type { Types as HiveTypes } from '@hive/shared';
 
 // Resource columns are BIGINT, so DB values come back as strings. JS
 // Number loses precision past 2^53 (~9 quadrillion); once a long-lived
@@ -57,6 +64,7 @@ interface PlayerRow {
   sugar: string; // bigint comes back as string from pg
   leaf_bits: string;
   aphid_milk: string;
+  unit_levels: Record<string, number>;
   last_seen_at: Date;
   created_at: Date;
 }
@@ -156,6 +164,7 @@ export function registerPlayer(app: FastifyInstance): void {
           sugar: safeBigintToNumber(newSugar.toString(), 'sugar', app.log),
           leafBits: safeBigintToNumber(newLeaf.toString(), 'leaf_bits', app.log),
           aphidMilk: safeBigintToNumber(newMilk.toString(), 'aphid_milk', app.log),
+          unitLevels: player.unit_levels ?? {},
           createdAt: player.created_at.toISOString(),
         },
         base: base.snapshot,
@@ -546,4 +555,155 @@ export function registerPlayer(app: FastifyInstance): void {
       ),
     };
   });
+
+  // Unit upgrade catalog + current levels. Clients use this to render
+  // the upgrade screen; cost scaling is always re-computed server-side
+  // before a debit.
+  app.get('/player/upgrades', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const res = await pool.query<{
+      unit_levels: Record<string, number>;
+      sugar: string;
+      leaf_bits: string;
+    }>(
+      'SELECT unit_levels, sugar, leaf_bits FROM players WHERE id = $1',
+      [playerId],
+    );
+    if (res.rows.length === 0) {
+      reply.code(404);
+      return { error: 'player not found' };
+    }
+    const row = res.rows[0]!;
+    const levels = row.unit_levels ?? {};
+    const catalog = upgradeCatalog();
+    // For each kind, compute the "next level cost" so the client can
+    // render affordability without re-deriving the ramp.
+    const entries = Object.entries(catalog).map(([kind, base]) => {
+      const level = levels[kind] ?? 1;
+      const next = upgradeCost(kind as Types.UnitKind, level);
+      return {
+        kind,
+        level,
+        maxLevel: base.maxLevel,
+        nextCost: next,
+      };
+    });
+    return {
+      units: entries,
+      resources: {
+        sugar: safeBigintToNumber(row.sugar, 'sugar', app.log),
+        leafBits: safeBigintToNumber(row.leaf_bits, 'leaf_bits', app.log),
+      },
+    };
+  });
+
+  interface UpgradeUnitBody {
+    kind: Types.UnitKind;
+  }
+  app.post<{ Body: UpgradeUnitBody }>(
+    '/player/upgrade-unit',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (!body || typeof body.kind !== 'string') {
+        reply.code(400);
+        return { error: 'kind required' };
+      }
+      if (!isUpgradeableUnit(body.kind as HiveTypes.UnitKind)) {
+        reply.code(400);
+        return { error: `${body.kind} is not upgradeable` };
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const lock = await client.query<{
+          unit_levels: Record<string, number>;
+          sugar: string;
+          leaf_bits: string;
+        }>(
+          'SELECT unit_levels, sugar, leaf_bits FROM players WHERE id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (lock.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'player not found' };
+        }
+        const currentLevels = lock.rows[0]!.unit_levels ?? {};
+        const currentLevel = currentLevels[body.kind] ?? 1;
+        if (currentLevel >= MAX_UNIT_LEVEL) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: `already at max level (${MAX_UNIT_LEVEL})` };
+        }
+        const cost = upgradeCost(body.kind as HiveTypes.UnitKind, currentLevel);
+        if (!cost) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'cannot compute cost' };
+        }
+
+        // Atomic resource debit + level increment. One round-trip avoids
+        // a TOCTOU gap between the SELECT FOR UPDATE above and the
+        // update we're about to do. Returns the new resource totals.
+        const upd = await client.query<{
+          sugar: string;
+          leaf_bits: string;
+          unit_levels: Record<string, number>;
+        }>(
+          `UPDATE players
+              SET sugar = sugar - $2,
+                  leaf_bits = leaf_bits - $3,
+                  unit_levels = jsonb_set(
+                    COALESCE(unit_levels, '{}'::jsonb),
+                    ARRAY[$4::text],
+                    to_jsonb($5::int),
+                    true
+                  )
+            WHERE id = $1
+              AND sugar >= $2
+              AND leaf_bits >= $3
+          RETURNING sugar, leaf_bits, unit_levels`,
+          [playerId, cost.sugar, cost.leafBits, body.kind, currentLevel + 1],
+        );
+        if (upd.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(402);
+          return { error: 'insufficient resources', cost };
+        }
+        await client.query('COMMIT');
+        const r = upd.rows[0]!;
+        return {
+          ok: true,
+          kind: body.kind,
+          newLevel: currentLevel + 1,
+          unitLevels: r.unit_levels,
+          resources: {
+            sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
+          },
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'upgrade-unit failed');
+        reply.code(500);
+        return { error: 'upgrade failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
 }

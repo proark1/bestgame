@@ -186,11 +186,16 @@ export class RaidScene extends Phaser.Scene {
     // Start the scene synchronously against the hard-coded bot so there's
     // never a white flash; if a matchmaking response arrives shortly
     // after, it replaces the state and re-renders.
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const attackerUnitLevels = (runtime?.player?.player.unitLevels ?? undefined) as
+      | Record<string, number>
+      | undefined;
     this.cfg = {
       tickRate: 30,
       maxTicks: TICK_HZ * RAID_SECONDS,
       initialSnapshot: BOT_BASE,
       seed: 0xc0ffee,
+      ...(attackerUnitLevels ? { attackerUnitLevels } : {}),
     };
     this.state = Sim.createInitialState(this.cfg);
     void this.fetchMatchFromServer();
@@ -605,12 +610,18 @@ export class RaidScene extends Phaser.Scene {
         return;
       }
       this.matchContext = match;
-      // Rebuild sim against the real opponent's snapshot.
+      // Rebuild sim against the real opponent's snapshot. Carry the
+      // attacker unit-level table forward so the client sim produces
+      // the same hash the server will when it re-runs.
+      const attackerUnitLevels = (runtime?.player?.player.unitLevels ?? undefined) as
+        | Record<string, number>
+        | undefined;
       this.cfg = {
         tickRate: 30,
         maxTicks: TICK_HZ * RAID_SECONDS,
         initialSnapshot: match.baseSnapshot,
         seed: match.seed,
+        ...(attackerUnitLevels ? { attackerUnitLevels } : {}),
       };
       this.state = Sim.createInitialState(this.cfg);
       // Re-render buildings from the new state. Wipe the board of the

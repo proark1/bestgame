@@ -75,6 +75,15 @@ export function registerRaid(app: FastifyInstance): void {
       const seed = Number(row.seed);
       const baseSnapshot = row.base_snapshot;
 
+      // Fetch the attacker's current unit levels — never trust the
+      // client to self-report. These feed the sim's stat-scaling so
+      // upgraded units actually survive longer in the re-run.
+      const lv = await client.query<{ unit_levels: Record<string, number> }>(
+        'SELECT unit_levels FROM players WHERE id = $1',
+        [attackerId],
+      );
+      const attackerUnitLevels = lv.rows[0]?.unit_levels ?? {};
+
       // Authoritative replay validation runs against the server-owned
       // snapshot. A malicious client can't spoof defenses away because
       // it never gets to submit the snapshot in the first place.
@@ -83,6 +92,7 @@ export function registerRaid(app: FastifyInstance): void {
         baseSnapshot,
         inputs: body.inputs,
         clientHash: body.clientResultHash,
+        attackerUnitLevels,
       });
       if (!ok) {
         await client.query('ROLLBACK');

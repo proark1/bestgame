@@ -24,12 +24,17 @@ export function validateReplay(args: {
   baseSnapshot: Types.Base;
   inputs: Types.SimInput[];
   clientHash: string;
+  // Per-kind levels the attacker has unlocked via /api/player/upgrade-unit.
+  // Pulled from the DB at submit time, not from the client — never trust
+  // the attacker to self-report their own upgrade state.
+  attackerUnitLevels?: Partial<Record<Types.UnitKind, number>>;
 }): ReplayValidation {
   const cfg: Sim.SimConfig = {
     tickRate: 30,
     maxTicks: 2700, // 90 s
     initialSnapshot: args.baseSnapshot,
     seed: args.seed,
+    ...(args.attackerUnitLevels ? { attackerUnitLevels: args.attackerUnitLevels } : {}),
   };
   const initial = Sim.createInitialState(cfg);
   const final = Sim.runReplay(initial, cfg, args.inputs);
