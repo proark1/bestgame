@@ -67,21 +67,27 @@ async function main(): Promise<void> {
     console.warn('boot: auth/player failed, continuing guest-local', err);
   }
 
-  // HiDPI: bump Phaser's canvas internal resolution to match the
-  // device pixel ratio. Without this, a 768×816 logical canvas gets
-  // CSS-bilinear-upscaled to viewport on a Retina / Pixel display
-  // and everything reads as soft. The zoom config multiplies the
-  // canvas backing buffer (canvas.width/height) by DPR while leaving
-  // game/camera coordinates in logical pixels, so no scene code
-  // needs to change. Capped at 2× — beyond that the GPU fill cost
-  // outweighs the visible sharpness gain on most mobiles.
+  // HiDPI: the previous version tried `scale.zoom = DPR` here to
+  // render the whole canvas at physical resolution. That combined
+  // badly with Scale.FIT — FIT already CSS-scales the canvas to the
+  // viewport, and zoom multiplied the backing buffer on top, so
+  // Phaser's pointer-to-game-coord conversion ended up off by
+  // (1 - 1/zoom) of the screen position. In practice every click
+  // landed above-and-left of the rendered thing it targeted: the
+  // raid/arena drawn pheromone trail floated above the cursor, deck
+  // cards ignored taps until you clicked just above them, etc.
+  //
+  // Canonical fix: render at logical resolution and accept that
+  // sprites get browser-upscaled on Retina — still sharp-enough via
+  // antialias: true, and pointers align exactly with visuals.
+  // Text is the one thing that reads fuzzy under CSS upscale, so the
+  // factory patch below keeps glyphs at DPR resolution — drawn at the
+  // game's logical coordinates, so no pointer math breaks.
   const dpr = Math.min(Math.max(1, window.devicePixelRatio || 1), 2);
 
-  // Phaser text glyphs rasterize at resolution=1 by default. With the
-  // canvas now drawn at DPR resolution, low-res glyph textures still
-  // get bilinear-upscaled and read fuzzy. Patch the factory once so
-  // every scene.add.text(...) call across the app automatically
-  // renders at DPR — no per-callsite changes needed.
+  // Phaser text glyphs rasterize at resolution=1 by default. Patching
+  // the factory once so every scene.add.text(...) call across the app
+  // automatically renders at DPR — no per-callsite changes needed.
   const _origTextFactory = Phaser.GameObjects.GameObjectFactory.prototype.text;
   Phaser.GameObjects.GameObjectFactory.prototype.text = function patched(
     this: Phaser.GameObjects.GameObjectFactory,
@@ -103,11 +109,10 @@ async function main(): Promise<void> {
       autoCenter: Phaser.Scale.CENTER_BOTH,
       // HUD (56) + 16×12-tile board (576) + two-row footer (~152) + padding.
       // Scale.FIT preserves aspect while letterboxing on any viewport.
-      // Height grew by 48 px from the one-row footer to accommodate the
-      // second row of secondary-nav buttons (see HomeScene.drawFooter).
+      // No `zoom` here — see the comment above; zoom + FIT broke the
+      // pointer alignment on every input-driven scene.
       width: 16 * 48,
       height: 56 + 12 * 48 + 152 + 32,
-      zoom: dpr,
     },
     render: { pixelArt: false, antialias: true, roundPixels: false },
     // No `physics` block — the shared deterministic sim is our physics;
