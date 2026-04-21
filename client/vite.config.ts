@@ -13,6 +13,14 @@ export default defineConfig({
     cssCodeSplit: true,
     reportCompressedSize: true,
     rollupOptions: {
+      // Multi-page build: the game entrypoint (index.html → src/main.ts)
+      // and the admin panel (admin.html → src/admin/main.ts) share
+      // the same dist but load independently. The admin bundle stays
+      // small (no Phaser) so it opens fast even over a slow connection.
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        admin: resolve(__dirname, 'admin.html'),
+      },
       output: {
         manualChunks(id) {
           if (id.includes('node_modules/phaser')) return 'phaser';

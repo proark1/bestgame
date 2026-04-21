@@ -128,6 +128,7 @@ export class RaidScene extends Phaser.Scene {
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
   private buildingHpBars = new Map<number, Phaser.GameObjects.Graphics>();
   private unitSprites = new Map<number, Phaser.GameObjects.Image>();
+  private trailEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
 
   // Trail drawing state.
   private selectedDeckIdx = 0;
@@ -189,7 +190,22 @@ export class RaidScene extends Phaser.Scene {
 
     this.wirePointerInput();
 
-    bakeTrailDot(this);
+    const trailKey = bakeTrailDot(this);
+
+    // Particle trail that follows every unit. One shared emitter is far
+    // cheaper than per-unit emitters; we just move its position each frame
+    // when rendering to whichever unit needs a puff this tick.
+    this.trailEmitter = this.add.particles(0, 0, trailKey, {
+      lifespan: 340,
+      speed: { min: 0, max: 10 },
+      scale: { start: 0.9, end: 0 },
+      alpha: { start: 0.6, end: 0 },
+      blendMode: 'ADD',
+      frequency: -1, // manual emit — explode() when we want a puff
+      quantity: 1,
+    });
+    this.trailEmitter.setDepth(5);
+    this.boardContainer.add(this.trailEmitter);
 
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
     this.scale.on('resize', this.layout, this);
@@ -501,7 +517,7 @@ export class RaidScene extends Phaser.Scene {
       bar.fillRoundedRect(barX + 1, barY + 1, 42 * hpFrac, 4, 2);
     }
 
-    // Units: sync sprites to sim positions.
+    // Units: sync sprites to sim positions; puff the shared trail emitter.
     const alive = new Set<number>();
     for (const u of this.state.units) {
       alive.add(u.id);
@@ -517,6 +533,12 @@ export class RaidScene extends Phaser.Scene {
       }
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
       spr.setAlpha(0.35 + 0.65 * hpFrac);
+      // Emit one tiny pheromone puff at the unit's feet every ~5 frames.
+      // Rate-limited implicitly by the alternating (id % 5 === tick % 5)
+      // check so we don't drown in particles with a full swarm.
+      if ((u.id + this.state.tick) % 5 === 0) {
+        this.trailEmitter.emitParticle(1, x, y + 4);
+      }
     }
     for (const [id, spr] of this.unitSprites) {
       if (!alive.has(id)) {

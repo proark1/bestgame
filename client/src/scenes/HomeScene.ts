@@ -32,11 +32,24 @@ const STARTER_BUILDINGS: Array<{
   { kind: 'TunnelJunction', x: 7, y: 9, layer: 1 },
 ];
 
+// Per-second income by building kind. Trickles into the HUD resource
+// counters while the player is on the home scene — gives the colony a
+// sense of liveness even without a raid in progress.
+const INCOME_PER_SECOND: Partial<Record<Types.BuildingKind, { sugar: number; leafBits: number }>> = {
+  DewCollector: { sugar: 8, leafBits: 0 },
+  LarvaNursery: { sugar: 0, leafBits: 3 },
+  SugarVault: { sugar: 2, leafBits: 0 },
+};
+
 export class HomeScene extends Phaser.Scene {
   private layer: 0 | 1 = 0;
   private boardContainer!: Phaser.GameObjects.Container;
   private layerLabel!: Phaser.GameObjects.Text;
   private resources = { sugar: 1240, leafBits: 380, aphidMilk: 0 };
+  private sugarText!: Phaser.GameObjects.Text;
+  private leafText!: Phaser.GameObjects.Text;
+  private milkText!: Phaser.GameObjects.Text;
+  private incomeAccumulator = 0;
 
   constructor() {
     super('HomeScene');
@@ -56,6 +69,40 @@ export class HomeScene extends Phaser.Scene {
     this.handleResize();
   }
 
+  override update(_time: number, deltaMs: number): void {
+    // Resource trickle from producer buildings. Integer ticks so the HUD
+    // never shows fractional sugar — accumulate fractional income and
+    // apply whole units as they cross the threshold.
+    this.incomeAccumulator += deltaMs;
+    if (this.incomeAccumulator < 1000) return;
+    const seconds = Math.floor(this.incomeAccumulator / 1000);
+    this.incomeAccumulator -= seconds * 1000;
+
+    let sugar = 0;
+    let leaf = 0;
+    for (const b of STARTER_BUILDINGS) {
+      const inc = INCOME_PER_SECOND[b.kind];
+      if (!inc) continue;
+      sugar += inc.sugar * seconds;
+      leaf += inc.leafBits * seconds;
+    }
+    if (sugar === 0 && leaf === 0) return;
+    this.resources.sugar += sugar;
+    this.resources.leafBits += leaf;
+    this.sugarText.setText(this.resources.sugar.toString());
+    this.leafText.setText(this.resources.leafBits.toString());
+    this.flashResourceGain();
+  }
+
+  private flashResourceGain(): void {
+    this.tweens.add({
+      targets: [this.sugarText, this.leafText],
+      alpha: { from: 0.5, to: 1 },
+      duration: 260,
+      ease: 'Sine.easeOut',
+    });
+  }
+
   private drawHud(): void {
     const hud = this.add.graphics();
     hud.fillStyle(0x0a120c, 1);
@@ -71,28 +118,44 @@ export class HomeScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5);
 
-    // Resource badges
-    const resources = [
-      { icon: 'ui-resource-sugar', value: () => this.resources.sugar.toString() },
-      { icon: 'ui-resource-leaf', value: () => this.resources.leafBits.toString() },
-      { icon: 'ui-resource-milk', value: () => this.resources.aphidMilk.toString() },
-    ];
+    // Resource badges (right-aligned). We build the texts first so class
+    // fields are populated before the income tick runs.
+    this.sugarText = this.add
+      .text(0, 0, this.resources.sugar.toString(), {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#e6f5d2',
+      })
+      .setOrigin(1, 0.5);
+    this.leafText = this.add
+      .text(0, 0, this.resources.leafBits.toString(), {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#e6f5d2',
+      })
+      .setOrigin(1, 0.5);
+    this.milkText = this.add
+      .text(0, 0, this.resources.aphidMilk.toString(), {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#e6f5d2',
+      })
+      .setOrigin(1, 0.5);
 
+    const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
+      { icon: 'ui-resource-sugar', text: this.sugarText },
+      { icon: 'ui-resource-leaf', text: this.leafText },
+      { icon: 'ui-resource-milk', text: this.milkText },
+    ];
     let x = this.scale.width - 16;
-    for (let i = resources.length - 1; i >= 0; i--) {
-      const r = resources[i]!;
-      const group = this.add.container(0, HUD_H / 2);
-      const label = this.add
-        .text(0, 0, r.value(), {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '16px',
-          color: '#e6f5d2',
-        })
-        .setOrigin(1, 0.5);
-      const icon = this.add.image(-label.width - 24, 0, r.icon).setDisplaySize(28, 28);
-      group.add([icon, label]);
-      group.setPosition(x, HUD_H / 2);
-      x -= label.width + 44;
+    for (let i = badges.length - 1; i >= 0; i--) {
+      const b = badges[i]!;
+      b.text.setPosition(x, HUD_H / 2);
+      const icon = this.add
+        .image(x - b.text.width - 24, HUD_H / 2, b.icon)
+        .setDisplaySize(28, 28);
+      x -= b.text.width + 60;
+      void icon; // ref-hold for GC; image registers itself on the scene
     }
   }
 

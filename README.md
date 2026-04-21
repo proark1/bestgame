@@ -104,6 +104,41 @@ state hashes every 100 ticks. If a PR flakes the hash, it's blocked.
 - `tools/gemini-art/` — offline Gemini sprite generator + atlas packer
 - `tools/bot-tester/` — headless balance harness
 
+## Admin panel (Gemini sprite generation in the browser)
+
+The API serves a small admin app at **`/admin`** for generating sprites
+with Gemini 2.5 Flash Image directly, compressing them to WebP or PNG,
+and saving them into `client/public/assets/sprites/` without ever
+leaving the browser. Scenes pick the saved sprites up automatically —
+WebP first, PNG fallback, then procedural placeholder.
+
+### Deploy-time config (Railway)
+
+Set these env vars on the API service:
+
+- `GEMINI_API_KEY` — required. Used server-side for image generation;
+  never exposed to the browser. Get one at
+  https://aistudio.google.com/apikey.
+- `ADMIN_TOKEN` — required in any remote deploy. The panel prompts for
+  it on first load and stores it in `localStorage`. Without it, admin
+  routes 401 for non-loopback traffic.
+
+### Local dev
+
+`ADMIN_TOKEN` can be left unset when running `pnpm dev:api` on your
+own machine — admin routes accept loopback (127.0.0.1) requests
+without a token.
+
+### Saving art
+
+The admin panel writes to the API container's filesystem, which is
+**ephemeral** on Railway. Workflow:
+
+1. Open `/admin`, generate and pick the sprites you want.
+2. Click **Download** on each to save the PNG/WebP locally.
+3. Commit the files under `client/public/assets/sprites/` to git.
+4. Next deploy rebuilds the client with the real art bundled in.
+
 ## License
 
 All rights reserved. This repo is a private game prototype.
