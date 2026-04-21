@@ -1,6 +1,7 @@
 import { abs, add, sub, mul, div, dist2, fromInt } from '../fixed.js';
 import type { Fixed } from '../fixed.js';
 import { BUILDING_STATS, UNIT_STATS } from '../stats.js';
+import { levelStatPercent } from '../progression.js';
 import type { SimState } from '../state.js';
 import type { UnitKind } from '../../types/units.js';
 
@@ -13,13 +14,9 @@ import type { UnitKind } from '../../types/units.js';
 
 // Integer-only stat scaling (matches applyDeploy). Applied to attacker-
 // owned units' attack damage so upgrades hit harder as levels rise.
+// The level-percent table lives in progression.ts.
 function scaleFixedByPercent(value: Fixed, percent: number): Fixed {
   return (mul(value, fromInt(percent)) / 100) | 0;
-}
-function levelPercent(level: number | undefined): number {
-  if (!level || level <= 1) return 100;
-  const capped = Math.min(10, Math.floor(level));
-  return 100 + 20 * (capped - 1);
 }
 
 export function combatSystem(
@@ -86,7 +83,7 @@ export function combatSystem(
     if (u.attackCooldown === 0) {
       const dmg =
         u.owner === 0
-          ? scaleFixedByPercent(stats.attackDamage, levelPercent(attackerUnitLevels?.[u.kind]))
+          ? scaleFixedByPercent(stats.attackDamage, levelStatPercent(attackerUnitLevels?.[u.kind]))
           : stats.attackDamage;
       b.hp = sub(b.hp, dmg);
       u.attackCooldown = stats.attackCooldownTicks;

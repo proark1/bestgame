@@ -4,6 +4,7 @@ import type { Types } from '@hive/shared';
 import { validateReplay } from '../replay/validator.js';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import { trophyDelta } from '../game/progression.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -17,14 +18,12 @@ interface RaidSubmissionBody {
   clientResultHash: string;
 }
 
-// Trophy table by star count. Keep attacker gains ≤ defender losses so
-// the ladder isn't inflationary.
-const TROPHY_TABLE: Record<0 | 1 | 2 | 3, { att: number; def: number }> = {
-  0: { att: 0, def: 0 },
-  1: { att: 10, def: -8 },
-  2: { att: 20, def: -15 },
-  3: { att: 30, def: -25 },
-};
+// Trophy ladder uses ELO with a trophy-tiered K-factor — see
+// server/api/src/game/progression.ts::trophyDelta() and
+// docs/GAME_DESIGN.md §6.5 for the design rationale. Gains scale with
+// opponent strength AND with the attacker's current bracket: a new
+// player at 100 trophies gains ~24 per 3★ win; a veteran at 3500+
+// gains ~4. That's the self-flattening ladder.
 
 export function registerRaid(app: FastifyInstance): void {
   app.post<{ Body: RaidSubmissionBody }>('/raid/submit', async (req, reply) => {
@@ -75,14 +74,18 @@ export function registerRaid(app: FastifyInstance): void {
       const seed = Number(row.seed);
       const baseSnapshot = row.base_snapshot;
 
-      // Fetch the attacker's current unit levels — never trust the
-      // client to self-report. These feed the sim's stat-scaling so
-      // upgraded units actually survive longer in the re-run.
-      const lv = await client.query<{ unit_levels: Record<string, number> }>(
-        'SELECT unit_levels FROM players WHERE id = $1',
+      // Fetch the attacker's current unit levels + trophies — never
+      // trust the client to self-report. unit_levels feeds the sim's
+      // stat-scaling; trophies feeds the ELO math below.
+      const lv = await client.query<{
+        unit_levels: Record<string, number>;
+        trophies: number;
+      }>(
+        'SELECT unit_levels, trophies FROM players WHERE id = $1',
         [attackerId],
       );
       const attackerUnitLevels = lv.rows[0]?.unit_levels ?? {};
+      const attackerTrophies = lv.rows[0]?.trophies ?? 0;
 
       // Authoritative replay validation runs against the server-owned
       // snapshot. A malicious client can't spoof defenses away because
@@ -100,8 +103,13 @@ export function registerRaid(app: FastifyInstance): void {
         return { error: 'replay hash mismatch', serverHash };
       }
 
-      const stars = result.stars;
-      const trophyDelta = TROPHY_TABLE[stars];
+      const stars = result.stars as 0 | 1 | 2 | 3;
+      // Defender trophies come from the authoritative baseSnapshot, which
+      // matchmaking.ts stamps with the defender's live count at /match
+      // time (bots use a fixed 80). That's close enough for ELO — the
+      // small race between match and submit is within sampling noise.
+      const defenderTrophies = Number(baseSnapshot.trophies ?? 0);
+      const delta = trophyDelta({ stars, attackerTrophies, defenderTrophies });
       const sugarLooted = Math.max(0, result.sugarLooted);
       const leafLooted = Math.max(0, result.leafBitsLooted);
 
@@ -118,7 +126,7 @@ export function registerRaid(app: FastifyInstance): void {
                 last_seen_at = NOW()
           WHERE id = $1
       RETURNING trophies, sugar, leaf_bits, aphid_milk`,
-        [attackerId, trophyDelta.att, sugarLooted, leafLooted],
+        [attackerId, delta.att, sugarLooted, leafLooted],
       );
       if (attUpdate.rows.length === 0) {
         await client.query('ROLLBACK');
@@ -133,7 +141,7 @@ export function registerRaid(app: FastifyInstance): void {
                   sugar     = GREATEST(0, sugar - $3),
                   leaf_bits = GREATEST(0, leaf_bits - $4)
             WHERE id = $1`,
-          [defenderId, trophyDelta.def, sugarLooted, leafLooted],
+          [defenderId, delta.def, sugarLooted, leafLooted],
         );
       }
 
@@ -158,8 +166,8 @@ export function registerRaid(app: FastifyInstance): void {
           stars,
           sugarLooted,
           leafLooted,
-          trophyDelta.att,
-          defenderId ? trophyDelta.def : 0,
+          delta.att,
+          defenderId ? delta.def : 0,
         ],
       );
 

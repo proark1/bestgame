@@ -1,9 +1,13 @@
 import type { Types } from '@hive/shared';
+import {
+  MAX_UNIT_LEVEL,
+  levelStatPercent,
+  upgradeCostMult,
+} from './progression.js';
 
-// Per-unit upgrade cost. Target: a full upgrade tree takes ~dozens of
-// raids to bankroll, so that progression is paced. Each level roughly
-// doubles the sugar cost; leafBits is a secondary gate that makes
-// multi-level jumps more tangible for cheap units.
+// Per-unit upgrade cost. Per-kind base prices live here; the shape of
+// the cost curve (how price scales with level) lives in progression.ts
+// so balance passes can tune the curve in one place for every unit.
 //
 // Level 1 is free (starter). `upgradeCost(kind, currentLevel)` returns
 // the cost to go from currentLevel → currentLevel + 1.
@@ -13,11 +17,12 @@ export interface UpgradeCost {
   leafBits: number;
 }
 
-// Cap on level so the progression curve stays bounded. Beyond level 10
-// the cost table would be astronomical anyway.
-export const MAX_UNIT_LEVEL = 10;
+export { MAX_UNIT_LEVEL };
 
-// Base sugar cost per unit kind at level 1 → 2. Doubles each level.
+// Base sugar cost per unit kind — the "1.0×" point on the cost curve.
+// The curve multiplier from progression.ts scales this by 0.5× at the
+// first upgrade up to 28.8× at the last, so e.g. a SoldierAnt costs
+// 150 sugar to go L1→L2 and 8640 sugar to go L9→L10.
 const BASE_SUGAR: Partial<Record<Types.UnitKind, number>> = {
   WorkerAnt: 150,
   SoldierAnt: 300,
@@ -57,8 +62,8 @@ export function isUpgradeableUnit(kind: Types.UnitKind): boolean {
 
 export function upgradeCost(kind: Types.UnitKind, currentLevel: number): UpgradeCost | null {
   if (!isUpgradeableUnit(kind)) return null;
-  if (currentLevel >= MAX_UNIT_LEVEL) return null;
-  const multiplier = Math.pow(2, currentLevel - 1); // 1→2 costs 1×, 2→3 costs 2×, …
+  const multiplier = upgradeCostMult(currentLevel);
+  if (multiplier === null) return null;
   return {
     sugar: Math.floor(BASE_SUGAR[kind]! * multiplier),
     leafBits: Math.floor(BASE_LEAF[kind]! * multiplier),
@@ -83,11 +88,10 @@ export function upgradeCatalog(): Record<
   return out;
 }
 
-// Stat scaling when a unit is deployed. Each level adds a scaling
-// factor — kept simple: level N = (1 + 0.2 * (N - 1)) × base. Applied
-// to hp + attackDamage so upgrades are felt on both sides of combat
-// (bigger hp pool, heavier hits).
+// Stat scaling when a unit is deployed. Returns a float for UI use
+// (e.g. "your soldier deals 1.35× damage at L4"). The deterministic
+// sim uses the underlying integer-percent table directly —
+// see shared/src/sim/progression.ts::LEVEL_STAT_PERCENT.
 export function statMultiplier(level: number): number {
-  const clamped = Math.max(1, Math.min(MAX_UNIT_LEVEL, level));
-  return 1 + 0.2 * (clamped - 1);
+  return levelStatPercent(level) / 100;
 }
