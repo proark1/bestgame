@@ -369,6 +369,69 @@ button {
   mix-blend-mode: difference;
 }
 
+.admin-guide {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.admin-guide > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font);
+  color: var(--accent);
+  font-size: 13px;
+  user-select: none;
+}
+.admin-guide > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-guide > summary::before {
+  content: '▸';
+  color: var(--text-dim);
+  margin-right: 8px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.admin-guide[open] > summary::before {
+  transform: rotate(90deg);
+}
+.admin-guide > summary small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.admin-guide ol {
+  margin: 10px 0 0;
+  padding-left: 24px;
+  color: var(--text);
+  font-size: 13px;
+  display: grid;
+  gap: 6px;
+}
+.admin-guide ol li::marker {
+  color: var(--accent);
+  font-family: var(--font);
+  font-weight: 600;
+}
+.admin-guide ol b {
+  color: var(--accent);
+  font-weight: 600;
+}
+.admin-guide ol code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
 .style-lock {
   background: var(--panel);
   border: 1px solid var(--border);

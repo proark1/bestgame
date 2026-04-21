@@ -161,6 +161,8 @@ function render(): void {
   header.append(actions);
   root.append(header);
 
+  root.append(renderGuide());
+
   // Slim progress bar tucked under the header — hidden until a batch is
   // running. Lives in the DOM permanently so state.progressEl is always
   // a valid reference for the handler.
@@ -314,10 +316,45 @@ function composePrompt(description: string, kind: 'unit' | 'building'): string {
   return [
     `Subject: ${description}.`,
     `Style: ${style}`,
-    `Canvas: ${size} pixels, transparent background (alpha), no border, no text, no watermark.`,
+    `Canvas: ${size} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
     `Composition: subject centered, single character/object only, facing viewer, small soft shadow directly below feet. Plenty of headroom.`,
     `Consistency: matches a shared cohesive game atlas — same outline thickness, same palette, same perspective as sibling sprites.`,
   ].join(' ');
+}
+
+const GUIDE_OPEN_KEY = 'hivewars.admin.guide.open';
+
+function renderGuide(): HTMLElement {
+  const details = document.createElement('details');
+  details.className = 'admin-guide';
+  const stored = localStorage.getItem(GUIDE_OPEN_KEY);
+  details.open = stored === null ? true : stored === '1';
+  details.addEventListener('toggle', () => {
+    localStorage.setItem(GUIDE_OPEN_KEY, details.open ? '1' : '0');
+  });
+
+  const summary = document.createElement('summary');
+  summary.innerHTML = '<span>How to get sprites into the game</span><small>step-by-step</small>';
+  details.append(summary);
+
+  const ol = document.createElement('ol');
+  const steps = [
+    'Edit the <b>Global style lock</b> below so every sprite shares the same palette, outline, and perspective.',
+    'For each card, write a short subject description in its text box — it auto-saves when you click away.',
+    'Click <b>Generate</b> on a card (or <b>Generate (review)</b> to fill every missing sprite at once) and pick the best candidate thumbnail.',
+    'Click <b>Remove BG</b> to knock out any leftover backdrop so the sprite is truly transparent. Check the checkerboard shows through.',
+    'Click <b>Save</b> to write the image to <code>client/public/assets/sprites/</code> and the live <code>dist/</code> dir.',
+    'Click <b>Download .zip</b>, extract into <code>client/public/assets/sprites/</code>, then <code>git add</code> and commit so the art survives the next deploy.',
+    'Click <b>Open game</b> and verify the sprite renders cleanly on the terrain with no rectangular patch around it.',
+  ];
+  for (const html of steps) {
+    const li = document.createElement('li');
+    li.innerHTML = html;
+    ol.append(li);
+  }
+  details.append(ol);
+
+  return details;
 }
 
 function missingCards(): SpriteCard[] {
