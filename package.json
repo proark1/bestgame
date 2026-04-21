@@ -8,12 +8,15 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "pnpm -r --filter \"./shared\" --filter \"./protocol\" build && pnpm -r build",
+    "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:determinism": "pnpm --filter @hive/shared test:determinism",
     "dev:client": "pnpm --filter @hive/client dev",
     "dev:api": "pnpm --filter @hive/api dev",
     "dev:arena": "pnpm --filter @hive/arena dev",
+    "start": "pnpm --filter @hive/api start",
+    "start:api": "pnpm --filter @hive/api start",
+    "start:arena": "pnpm --filter @hive/arena start",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "bundle:report": "pnpm --filter @hive/client bundle:report"

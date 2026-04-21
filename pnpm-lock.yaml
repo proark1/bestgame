@@ -64,10 +64,10 @@ importers:
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
-    devDependencies:
       tsx:
         specifier: ^4.19.1
         version: 4.21.0
+    devDependencies:
       typescript:
         specifier: ^5.6.2
         version: 5.9.3
@@ -92,10 +92,10 @@ importers:
       colyseus:
         specifier: ^0.16.0
         version: 0.16.5(@colyseus/auth@0.16.6(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(express@4.22.1))(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/redis-driver@0.16.1(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/redis-presence@0.16.4(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/schema@3.0.76)(@colyseus/uwebsockets-transport@0.16.10(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))
-    devDependencies:
       tsx:
         specifier: ^4.19.1
         version: 4.21.0
+    devDependencies:
       typescript:
         specifier: ^5.6.2
         version: 5.9.3
