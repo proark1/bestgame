@@ -38,8 +38,10 @@ async function main(): Promise<void> {
     scale: {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
-      width: 16 * 48, // tiles × pixels
-      height: 12 * 48,
+      // HUD (56) + 16×12-tile board (576) + deck/footer (~96) + padding.
+      // Scale.FIT preserves aspect while letterboxing on any viewport.
+      width: 16 * 48,
+      height: 56 + 12 * 48 + 96 + 40,
     },
     render: { pixelArt: false, antialias: true },
     // No `physics` block — the shared deterministic sim is our physics;
