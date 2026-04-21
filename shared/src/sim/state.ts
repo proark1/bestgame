@@ -53,4 +53,8 @@ export interface SimConfig {
   initialSnapshot: Base;
   // Seed for the PCG32 — part of the replay contract.
   seed: number;
+  // Per-kind level multipliers applied at unit spawn time. Absent keys
+  // default to level 1 (baseline stats). Must be identical on client
+  // and server to keep the sim deterministic across environments.
+  attackerUnitLevels?: Partial<Record<import('../types/units.js').UnitKind, number>>;
 }

@@ -31,7 +31,7 @@ export function step(
   for (let i = 0; i < inputsThisTick.length; i++) {
     const inp = inputsThisTick[i]!;
     if (inp.type === 'deployPath') {
-      applyDeploy(state, inp.ownerSlot, inp.path);
+      applyDeploy(state, inp.ownerSlot, inp.path, cfg.attackerUnitLevels);
     } else if (inp.type === 'surrender') {
       state.outcome = inp.ownerSlot === 0 ? 'defenderWin' : 'attackerWin';
     }

@@ -22,6 +22,7 @@ export interface PlayerState {
   sugar: number;
   leafBits: number;
   aphidMilk: number;
+  unitLevels: Partial<Record<Types.UnitKind, number>>;
   createdAt: string;
 }
 
@@ -173,6 +174,49 @@ export class Api {
     if (!res.ok) throw new Error(`leaderboard ${res.status}`);
     return (await res.json()) as LeaderboardResponse;
   }
+
+  async getUpgrades(): Promise<UpgradesResponse> {
+    const res = await this.authedFetch('/player/upgrades');
+    if (!res.ok) throw new Error(`upgrades ${res.status}`);
+    return (await res.json()) as UpgradesResponse;
+  }
+
+  async upgradeUnit(kind: Types.UnitKind): Promise<UpgradeUnitResponse> {
+    const res = await this.authedFetch('/player/upgrade-unit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    });
+    if (!res.ok) {
+      let msg = `upgrade ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // fall through
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as UpgradeUnitResponse;
+  }
+}
+
+export interface UnitUpgradeEntry {
+  kind: Types.UnitKind;
+  level: number;
+  maxLevel: number;
+  nextCost: { sugar: number; leafBits: number } | null;
+}
+export interface UpgradesResponse {
+  units: UnitUpgradeEntry[];
+  resources: { sugar: number; leafBits: number };
+}
+export interface UpgradeUnitResponse {
+  ok: true;
+  kind: Types.UnitKind;
+  newLevel: number;
+  unitLevels: Record<string, number>;
+  resources: { sugar: number; leafBits: number };
 }
 
 export interface LeaderboardEntry {
