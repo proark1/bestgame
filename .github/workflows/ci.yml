@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm -r typecheck
+
+  determinism:
+    # The spine of the project. If this drifts across engines, async replays
+    # and live-arena reconciliation are both broken. Run the same scenario
+    # twice and diff hashes.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @hive/shared test:determinism
+
+  determinism-browser:
+    # Second engine check — same scenario must hash identically under the
+    # JavaScriptCore-like environment that Chromium runs in. This catches
+    # engine-specific drift that Node-only tests miss.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @hive/shared exec vitest run --environment=jsdom
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm -r test
+
+  bundle-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm --filter @hive/client build
+      - run: pnpm --filter @hive/client bundle:report

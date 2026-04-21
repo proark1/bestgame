@@ -1,0 +1,25 @@
+{
+  "name": "hive-wars",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Hive Wars — backyard insect colonies, Clash-style 2D casual strategy for Facebook Instant Games and web.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./shared\" --filter \"./protocol\" build && pnpm -r build",
+    "test": "pnpm -r test",
+    "test:determinism": "pnpm --filter @hive/shared test:determinism",
+    "dev:client": "pnpm --filter @hive/client dev",
+    "dev:api": "pnpm --filter @hive/api dev",
+    "dev:arena": "pnpm --filter @hive/arena dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "bundle:report": "pnpm --filter @hive/client bundle:report"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "@types/node": "^22.7.4"
+  }
+}
