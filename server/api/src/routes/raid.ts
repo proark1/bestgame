@@ -162,6 +162,10 @@ export function registerRaid(app: FastifyInstance): void {
         result,
         player: {
           trophies: att.trophies,
+          // BIGINT-from-DB → Number narrowing. Safe for the first ~9
+          // quadrillion sugar; we'll need to upgrade the wire format
+          // before that matters. Logged warning in player.ts handles
+          // the early-warning case.
           sugar: Number(att.sugar),
           leafBits: Number(att.leaf_bits),
           aphidMilk: Number(att.aphid_milk),

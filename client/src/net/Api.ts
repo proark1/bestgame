@@ -130,6 +130,43 @@ export class Api {
     const body = (await res.json()) as { raids: RaidHistoryEntry[] };
     return body.raids;
   }
+
+  async getBuildingCatalog(): Promise<BuildingCatalog> {
+    const res = await this.authedFetch('/player/building/catalog');
+    if (!res.ok) throw new Error(`catalog ${res.status}`);
+    return (await res.json()) as BuildingCatalog;
+  }
+
+  async placeBuilding(args: {
+    kind: Types.BuildingKind;
+    anchor: { x: number; y: number; layer: Types.Layer };
+  }): Promise<PlaceBuildingResponse> {
+    const res = await this.authedFetch('/player/building', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) {
+      let msg = `place ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // leave default
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as PlaceBuildingResponse;
+  }
+
+  async deleteBuilding(buildingId: string): Promise<DeleteBuildingResponse> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(buildingId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw new Error(`delete ${res.status}`);
+    return (await res.json()) as DeleteBuildingResponse;
+  }
 }
 
 export interface MatchResponse {
@@ -161,6 +198,26 @@ export interface RaidSubmitResponse {
     leafBits: number;
     aphidMilk: number;
   };
+}
+
+export type BuildingCatalog = {
+  placeable: Record<
+    string,
+    { sugar: number; leafBits: number; aphidMilk: number }
+  >;
+};
+
+export interface PlaceBuildingResponse {
+  ok: true;
+  building: Types.Building;
+  base: Types.Base;
+  player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
+}
+
+export interface DeleteBuildingResponse {
+  ok: true;
+  base: Types.Base;
+  removed: number;
 }
 
 export interface RaidHistoryEntry {
