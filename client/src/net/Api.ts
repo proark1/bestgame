@@ -285,6 +285,20 @@ export class Api {
     }
     return (await res.json()) as ArenaReserveResponse;
   }
+
+  // Per-unit animation enable flags. Kept lightweight (no auth) so the
+  // boot scene can load it before the session is established. On any
+  // failure we resolve to an empty object — scenes fall back to the
+  // static sprite on a missing key, which is the safe default.
+  async getAnimationSettings(): Promise<Record<string, boolean>> {
+    try {
+      const res = await fetch(`${this.baseUrl}/settings/animation`);
+      if (!res.ok) return {};
+      return (await res.json()) as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  }
 }
 
 export interface ArenaReserveResponse {

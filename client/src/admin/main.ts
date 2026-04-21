@@ -4,11 +4,14 @@
 
 import {
   downloadAllSprites,
+  fetchAnimationSettings,
   fetchPrompts,
   fetchStatus,
   getToken,
+  putAnimationSettings,
   setToken,
   updatePrompt,
+  type AnimationSettings,
   type PromptsFile,
   type SpriteFile,
 } from './api.js';
@@ -54,6 +57,7 @@ interface AdminState {
   cards: SpriteCard[];
   compression: Compression;
   progressEl: HTMLDivElement | null;
+  animation: AnimationSettings | null;
 }
 
 const state: AdminState = {
@@ -62,6 +66,7 @@ const state: AdminState = {
   cards: [],
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
   progressEl: null,
+  animation: null,
 };
 
 const root = document.getElementById('admin-root') as HTMLDivElement;
@@ -124,6 +129,15 @@ async function bootstrap(): Promise<void> {
     if ((err as Error).message === 'unauthorized') return;
     return;
   }
+  // Animation settings are best-effort — the admin panel is still
+  // usable without them (the rest of the sprite pipeline doesn't
+  // depend on the toggle). If the DB is offline the server returns
+  // the defaults with dbPersistence = 'not-configured'.
+  try {
+    state.animation = await fetchAnimationSettings();
+  } catch (err) {
+    console.warn('animation settings unreachable', err);
+  }
   render();
 }
 
@@ -162,6 +176,11 @@ function render(): void {
   root.append(header);
 
   root.append(renderGuide());
+  // The animation panel is compact and useful in both states: whether
+  // the admin toggles the feature, or just wants to confirm that
+  // three walk-cycle strips are on disk. Rendered unconditionally;
+  // it gracefully handles the "no walk sheet yet" case inline.
+  root.append(renderAnimationPanel());
 
   // Slim progress bar tucked under the header — hidden until a batch is
   // running. Lives in the DOM permanently so state.progressEl is always
@@ -320,6 +339,79 @@ function composePrompt(description: string, kind: 'unit' | 'building'): string {
     `Composition: subject centered, single character/object only, facing viewer, small soft shadow directly below feet. Plenty of headroom.`,
     `Consistency: matches a shared cohesive game atlas — same outline thickness, same palette, same perspective as sibling sprites.`,
   ].join(' ');
+}
+
+// Animation toggle panel. One row per animated unit kind; each row has
+// a checkbox that PUTs to /admin/api/settings/animation. Shows a badge
+// when the walk spritesheet is missing from the on-disk listing so the
+// admin knows to generate it before turning the toggle on.
+function renderAnimationPanel(): HTMLElement {
+  const card = document.createElement('section');
+  card.className = 'admin-animation';
+  card.innerHTML = `
+    <header>
+      <h2>Unit animations</h2>
+      <small>Toggle the walk-cycle spritesheet per unit. Generate the strip with the Gemini walkCycles prompt; then flip the switch to see it in-game.</small>
+    </header>
+  `;
+  const settings = state.animation;
+  if (!settings) {
+    const msg = document.createElement('p');
+    msg.className = 'admin-animation-empty';
+    msg.textContent =
+      'Animation settings unreachable. Check the API/DB is up, then reload the admin.';
+    card.append(msg);
+    return card;
+  }
+  if (settings.dbPersistence === 'not-configured') {
+    const msg = document.createElement('p');
+    msg.className = 'admin-animation-warning';
+    msg.textContent =
+      'DATABASE_URL not configured — toggles below are read-only defaults and won\'t persist until the API is connected to Postgres.';
+    card.append(msg);
+  }
+
+  // Helper: does a walk spritesheet exist for this kind, in any source?
+  // The admin `files` list is a merged dist + public + db view, so one
+  // lookup tells us whether the admin has saved a walk strip yet.
+  const hasSheet = (kind: string): boolean =>
+    state.files.some(
+      (f) => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`,
+    );
+
+  const list = document.createElement('ul');
+  list.className = 'admin-animation-list';
+  for (const kind of settings.kinds) {
+    const row = document.createElement('li');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = settings.values[kind] ?? true;
+    checkbox.id = `anim-toggle-${kind}`;
+    checkbox.disabled = settings.dbPersistence === 'not-configured';
+    checkbox.addEventListener('change', async () => {
+      const nextValues: Record<string, boolean> = { ...settings.values };
+      nextValues[kind] = checkbox.checked;
+      try {
+        const res = await putAnimationSettings(nextValues);
+        settings.values = res.values;
+        statusToast(`Animation ${checkbox.checked ? 'on' : 'off'} for ${kind}`, 'success');
+      } catch (err) {
+        checkbox.checked = !checkbox.checked; // revert
+        statusToast(`Could not save: ${(err as Error).message}`, 'error');
+      }
+    });
+    const label = document.createElement('label');
+    label.htmlFor = checkbox.id;
+    label.textContent = kind;
+    const status = document.createElement('span');
+    status.className = 'admin-animation-status';
+    status.textContent = hasSheet(kind) ? 'strip ready' : 'no strip generated yet';
+    status.dataset.hasSheet = hasSheet(kind) ? '1' : '0';
+    row.append(checkbox, label, status);
+    list.append(row);
+  }
+  card.append(list);
+  return card;
 }
 
 const GUIDE_OPEN_KEY = 'hivewars.admin.guide.open';

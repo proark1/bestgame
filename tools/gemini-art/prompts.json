@@ -20,6 +20,11 @@
     "WebSetter": "a spinner spider weaving a glowing silver web between tiny twigs",
     "Ambusher": "a camouflaged spider peeking from under a leaf, only eyes visible"
   },
+  "walkCycles": {
+    "WorkerAnt": "a 4-frame horizontal walk-cycle spritesheet (one 512x128 strip, four 128x128 frames side by side, no gutters between frames), same cheerful worker ant carrying a tiny leaf — identical character, identical scale, identical camera across all four frames. Frame 1: left legs forward, right legs back, body leaning slightly forward. Frame 2: legs crossed, body centered. Frame 3: right legs forward, left legs back, body leaning slightly forward. Frame 4: legs crossed, body centered (mirror of frame 2). Transparent background across the whole strip. Same style lock.",
+    "SoldierAnt": "a 4-frame horizontal walk-cycle spritesheet (one 512x128 strip, four 128x128 frames side by side, no gutters between frames), same sturdy soldier ant with oversized mandibles and paper crown — identical character, identical scale, identical camera across all four frames. Frame 1: left legs forward, right legs back, marching stride. Frame 2: legs crossed, mandibles forward. Frame 3: right legs forward, left legs back. Frame 4: legs crossed, mandibles forward. Transparent background across the whole strip. Same style lock.",
+    "Wasp": "a 4-frame horizontal hover-cycle spritesheet (one 512x128 strip, four 128x128 frames side by side, no gutters between frames), same sleek wasp with bandit mask — identical character, identical scale, identical camera across all four frames. Frames show a wingbeat cycle: wings up / wings halfway down / wings fully down / wings halfway up. Body position constant, legs tucked. Transparent background across the whole strip. Same style lock."
+  },
   "buildings": {
     "QueenChamber": "a majestic glowing queen chamber on layered dirt mound, lit from within, throne-like silhouette",
     "DewCollector": "a shimmering dew drop suspended in a twig cradle, rain-catcher",
