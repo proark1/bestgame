@@ -6,6 +6,7 @@ import { RaidScene } from './scenes/RaidScene.js';
 import { LeaderboardScene } from './scenes/LeaderboardScene.js';
 import { RaidHistoryScene } from './scenes/RaidHistoryScene.js';
 import { UpgradeScene } from './scenes/UpgradeScene.js';
+import { ClanScene } from './scenes/ClanScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
 
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
       new LeaderboardScene(),
       new RaidHistoryScene(),
       new UpgradeScene(),
+      new ClanScene(),
     ],
   });
   // Runtime is attached to the game registry so scenes can pull it
