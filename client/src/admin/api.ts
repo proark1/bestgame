@@ -118,3 +118,26 @@ export async function deleteSprite(key: string): Promise<void> {
     method: 'DELETE',
   });
 }
+
+// Trigger a browser download of the whole sprites folder as a zip. The
+// endpoint sets content-disposition: attachment, so assigning the auth'd
+// URL to an anchor and clicking it would drop the token into history —
+// instead, fetch as a blob with the auth header and hand it to the user
+// via a temporary object URL.
+export async function downloadAllSprites(): Promise<void> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch('/admin/api/download-all', { headers });
+  if (!res.ok) throw new Error(`download ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  a.download = `hive-sprites-${stamp}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

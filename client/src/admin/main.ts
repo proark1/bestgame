@@ -3,6 +3,7 @@
 // so the public game bundle stays lean.
 
 import {
+  downloadAllSprites,
   fetchPrompts,
   fetchStatus,
   getToken,
@@ -52,6 +53,7 @@ interface AdminState {
   files: SpriteFile[];
   cards: SpriteCard[];
   compression: Compression;
+  progressEl: HTMLDivElement | null;
 }
 
 const state: AdminState = {
@@ -59,6 +61,7 @@ const state: AdminState = {
   files: [],
   cards: [],
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
+  progressEl: null,
 };
 
 const root = document.getElementById('admin-root') as HTMLDivElement;
@@ -138,19 +141,35 @@ function render(): void {
   `;
   const actions = document.createElement('div');
   actions.className = 'actions';
-  const genAllBtn = button('Generate all missing', 'btn accent', () =>
+  const automateBtn = button('⚡ Automate all missing', 'btn accent', () =>
+    void automateAllMissing(),
+  );
+  const genAllBtn = button('Generate (review)', 'btn', () =>
     void generateAllMissing(),
   );
-  const viewBtn = button('Open game', 'btn', () => {
+  const downloadZipBtn = button('Download .zip', 'btn', () =>
+    void downloadZip(),
+  );
+  const viewBtn = button('Open game', 'btn ghost', () => {
     window.location.href = '/';
   });
   const logoutBtn = button('Logout', 'btn ghost', () => {
     setToken('');
     window.location.reload();
   });
-  actions.append(genAllBtn, viewBtn, logoutBtn);
+  actions.append(automateBtn, genAllBtn, downloadZipBtn, viewBtn, logoutBtn);
   header.append(actions);
   root.append(header);
+
+  // Slim progress bar tucked under the header — hidden until a batch is
+  // running. Lives in the DOM permanently so state.progressEl is always
+  // a valid reference for the handler.
+  const progress = document.createElement('div');
+  progress.className = 'progress';
+  progress.hidden = true;
+  progress.innerHTML = '<div class="progress-bar"></div><span class="progress-label"></span>';
+  root.append(progress);
+  state.progressEl = progress;
 
   // -- Toolbar --------------------------------------------------------------
   const toolbar = document.createElement('div');
@@ -301,21 +320,99 @@ function composePrompt(description: string, kind: 'unit' | 'building'): string {
   ].join(' ');
 }
 
-async function generateAllMissing(): Promise<void> {
-  const missing = state.cards.filter((c) =>
-    !state.files.some((f) => f.name.replace(/\.(png|webp)$/i, '') === c.key),
+function missingCards(): SpriteCard[] {
+  return state.cards.filter(
+    (c) => !state.files.some((f) => f.name.replace(/\.(png|webp)$/i, '') === c.key),
   );
+}
+
+async function generateAllMissing(): Promise<void> {
+  const missing = missingCards();
   if (missing.length === 0) {
     statusToast('No missing sprites — everything is generated.', 'success');
     return;
   }
   statusToast(`Generating ${missing.length} missing sprite(s)…`);
+  setProgress(0, missing.length, 'Generating');
   // Serialize to avoid quota bursts. Gemini has per-minute limits; 1/sec
   // is conservative and keeps the UI responsive.
-  for (const card of missing) {
-    await card.generate();
+  for (let i = 0; i < missing.length; i++) {
+    setProgress(i, missing.length, `Generating ${missing[i]!.key}`);
+    await missing[i]!.generate();
   }
-  statusToast(`Done.`, 'success');
+  clearProgress();
+  statusToast(`Done. Pick a candidate per card, then Save.`, 'success');
+}
+
+async function automateAllMissing(): Promise<void> {
+  const missing = missingCards();
+  if (missing.length === 0) {
+    statusToast('Nothing to do — every sprite already has a saved image.', 'success');
+    return;
+  }
+  if (
+    !confirm(
+      `Automate ${missing.length} sprite(s)? Each call uses Gemini quota and ` +
+        `auto-saves the first candidate at the current compression settings ` +
+        `(${state.compression.format.toUpperCase()}, q=${state.compression.quality}, ` +
+        `max ${state.compression.maxDim}px).`,
+    )
+  ) {
+    return;
+  }
+  setProgress(0, missing.length, 'Automating');
+  let ok = 0;
+  let failed = 0;
+  for (let i = 0; i < missing.length; i++) {
+    const card = missing[i]!;
+    setProgress(i, missing.length, `Automating ${card.key}`);
+    const success = await card.automate();
+    if (success) ok++;
+    else failed++;
+  }
+  clearProgress();
+  statusToast(
+    failed === 0
+      ? `Automated ${ok} sprite(s). Hit "Download .zip" to commit.`
+      : `Automated ${ok} / failed ${failed}. See individual cards for details.`,
+    failed === 0 ? 'success' : 'error',
+  );
+  // Refresh file listing so the cards' meta blocks reflect the new saves.
+  try {
+    const s = await fetchStatus();
+    state.files = s.files;
+  } catch {
+    // non-fatal
+  }
+}
+
+async function downloadZip(): Promise<void> {
+  try {
+    statusToast('Packaging zip…');
+    await downloadAllSprites();
+    statusToast('Zip downloaded. Extract into client/public/assets/sprites/ and commit.', 'success');
+  } catch (err) {
+    statusToast(`zip failed: ${(err as Error).message}`, 'error');
+  }
+}
+
+function setProgress(done: number, total: number, label: string): void {
+  const el = state.progressEl;
+  if (!el) return;
+  el.hidden = false;
+  const bar = el.querySelector('.progress-bar') as HTMLDivElement;
+  const txt = el.querySelector('.progress-label') as HTMLSpanElement;
+  const pct = total === 0 ? 100 : Math.round((done / total) * 100);
+  bar.style.width = `${pct}%`;
+  txt.textContent = `${label} — ${done} / ${total}`;
+}
+
+function clearProgress(): void {
+  const el = state.progressEl;
+  if (!el) return;
+  setTimeout(() => {
+    el.hidden = true;
+  }, 400);
 }
 
 function button(label: string, className: string, onClick: () => void): HTMLButtonElement {

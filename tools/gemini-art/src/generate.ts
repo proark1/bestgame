@@ -1,28 +1,31 @@
 #!/usr/bin/env node
-// Batch Gemini sprite generator.
-//
-// Calls the Gemini 2.5 Flash Image API (gemini-2.5-flash-image) with the
-// style-locked prompts in prompts.json and writes one PNG per sprite into
-// client/public/assets/sprites/. The client's BootScene picks them up
-// automatically; if an expected sprite is missing, the game falls back
-// to procedurally-drawn placeholders so nothing is ever broken-looking.
-//
-// Runs offline — not on CI. Gemini output is non-deterministic and we
-// want the committed art to be exactly what humans reviewed.
+// One-liner sprite pipeline: generate with Gemini, compress with sharp,
+// write to client/public/assets/sprites/. Commit the result.
 //
 // Usage:
 //   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate
-//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate --force
-//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate --only=unit-SoldierAnt
+//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate -- --missing
+//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate -- --format=png
+//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate -- --quality=92 --max-dim=192
+//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate -- --only=unit-SoldierAnt
+//   GEMINI_API_KEY=... pnpm --filter @hive/gemini-art generate -- --force
 //
-// Caching: each sprite's prompt is hashed; if the hash matches the one
-// stored alongside the PNG, regeneration is skipped. Pass --force to
-// ignore the cache.
+// Caching is keyed on sha1(prompt + format + quality + maxDim). Changing
+// any one of them invalidates the cache entry for that sprite.
+//
+// Pipeline per sprite:
+//   1. Compose prompt (styleLock + subject description)
+//   2. Call Gemini 2.5 Flash Image
+//   3. sharp: resize (fit: inside) + encode to WebP or PNG
+//   4. Write client/public/assets/sprites/<key>.<ext> + .sha1 sidecar
+//   5. Clean up the sibling-extension file if it exists (so BootScene's
+//      prefer-webp-then-png loader never sees two versions of the same key)
 
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 
 interface PromptsFile {
   styleLock: string;
@@ -31,9 +34,19 @@ interface PromptsFile {
   buildings: Record<string, string>;
 }
 
+interface Options {
+  force: boolean;
+  only: string | null;
+  missing: boolean;
+  format: 'webp' | 'png';
+  quality: number;
+  maxDim: number;
+}
+
 interface Job {
   name: string;
   prompt: string;
+  kind: 'unit' | 'building';
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,15 +58,62 @@ const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-2.5-flash-image';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 const MAX_CONCURRENCY = Number(process.env.GEMINI_CONCURRENCY ?? 3);
 
-function parseArgs(argv: string[]): { force: boolean; only: string | null } {
-  let force = false;
-  let only: string | null = null;
+function parseArgs(argv: string[]): Options {
+  const opts: Options = {
+    force: false,
+    only: null,
+    missing: false,
+    format: 'webp',
+    quality: 85,
+    maxDim: 256,
+  };
   for (const a of argv) {
-    if (a === '--force') force = true;
-    else if (a.startsWith('--only=')) only = a.slice('--only='.length);
+    if (a === '--force') opts.force = true;
+    else if (a === '--missing') opts.missing = true;
+    else if (a.startsWith('--only=')) opts.only = a.slice('--only='.length);
+    else if (a.startsWith('--format=')) {
+      const f = a.slice('--format='.length);
+      if (f !== 'webp' && f !== 'png') throw new Error('--format must be webp or png');
+      opts.format = f;
+    } else if (a.startsWith('--quality=')) {
+      const q = Number(a.slice('--quality='.length));
+      if (!(q > 0 && q <= 100)) throw new Error('--quality must be 1..100');
+      opts.quality = q;
+    } else if (a.startsWith('--max-dim=')) {
+      const d = Number(a.slice('--max-dim='.length));
+      if (!(d >= 32 && d <= 2048)) throw new Error('--max-dim must be 32..2048');
+      opts.maxDim = d;
+    } else if (a === '--help' || a === '-h') {
+      console.log(HELP);
+      process.exit(0);
+    } else if (a.startsWith('--')) {
+      throw new Error(`unknown flag: ${a}`);
+    }
   }
-  return { force, only };
+  return opts;
 }
+
+const HELP = `Hive Wars sprite generator
+
+Generates every sprite listed in prompts.json via Gemini, compresses
+it with sharp, and writes it to client/public/assets/sprites/.
+Cached: skipped when the prompt and compression options haven't
+changed. Run after editing prompts.json or when you want fresh art.
+
+Flags:
+  --format=webp|png    output format (default: webp)
+  --quality=N          compression quality 1..100 (default: 85)
+  --max-dim=N          max pixel size per side, 32..2048 (default: 256)
+  --missing            only generate sprites with no file on disk
+  --only=KEY           regenerate just one sprite (e.g. unit-SoldierAnt)
+  --force              ignore cache, regenerate even if identical
+  -h, --help           this help
+
+Env:
+  GEMINI_API_KEY        required
+  GEMINI_IMAGE_MODEL    override model (default: gemini-2.5-flash-image)
+  GEMINI_CONCURRENCY    max parallel generations (default: 3)
+`;
 
 function sha1(s: string): string {
   return createHash('sha1').update(s).digest('hex');
@@ -68,9 +128,17 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function generateOne(apiKey: string, job: Job): Promise<Buffer> {
+async function fileSize(p: string): Promise<number | null> {
+  try {
+    return (await stat(p)).size;
+  } catch {
+    return null;
+  }
+}
+
+async function generateOne(apiKey: string, prompt: string): Promise<Buffer> {
   const body = {
-    contents: [{ role: 'user', parts: [{ text: job.prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       responseModalities: ['IMAGE'],
       temperature: 0.6,
@@ -83,107 +151,36 @@ async function generateOne(apiKey: string, job: Job): Promise<Buffer> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Gemini ${res.status} for ${job.name}: ${text.slice(0, 400)}`);
+    throw new Error(`Gemini ${res.status}: ${text.slice(0, 400)}`);
   }
   const json = (await res.json()) as {
     candidates?: Array<{
-      content?: {
-        parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }>;
-      };
+      content?: { parts?: Array<{ inlineData?: { data?: string } }> };
     }>;
   };
-  const parts = json.candidates?.[0]?.content?.parts ?? [];
-  for (const p of parts) {
-    const data = p.inlineData?.data;
-    if (data) return Buffer.from(data, 'base64');
+  for (const p of json.candidates?.[0]?.content?.parts ?? []) {
+    if (p.inlineData?.data) return Buffer.from(p.inlineData.data, 'base64');
   }
-  throw new Error(`Gemini returned no image data for ${job.name}`);
+  throw new Error('Gemini returned no image data');
 }
 
-async function runBatch(apiKey: string, jobs: Job[], force: boolean): Promise<void> {
-  await mkdir(OUTPUT_DIR, { recursive: true });
-
-  const work: Job[] = [];
-  for (const j of jobs) {
-    const pngPath = join(OUTPUT_DIR, `${j.name}.png`);
-    const hashPath = join(OUTPUT_DIR, `${j.name}.sha1`);
-    if (!force && (await exists(pngPath)) && (await exists(hashPath))) {
-      const prev = (await readFile(hashPath, 'utf8')).trim();
-      if (prev === sha1(j.prompt)) {
-        console.log(`  cached  ${j.name}`);
-        continue;
-      }
-    }
-    work.push(j);
+async function compress(
+  raw: Buffer,
+  opts: Pick<Options, 'format' | 'quality' | 'maxDim'>,
+): Promise<Buffer> {
+  const pipeline = sharp(raw).resize({
+    width: opts.maxDim,
+    height: opts.maxDim,
+    fit: 'inside',
+    withoutEnlargement: true,
+  });
+  if (opts.format === 'webp') {
+    return await pipeline.webp({ quality: opts.quality, effort: 6 }).toBuffer();
   }
-  if (work.length === 0) {
-    console.log('all sprites up to date.');
-    return;
-  }
-
-  console.log(`generating ${work.length} sprite(s) with ${MODEL}`);
-  let next = 0;
-  let generated = 0;
-  let failed = 0;
-  const workers: Promise<void>[] = [];
-  for (let w = 0; w < Math.min(MAX_CONCURRENCY, work.length); w++) {
-    workers.push(
-      (async () => {
-        while (next < work.length) {
-          const job = work[next++]!;
-          try {
-            const png = await generateOne(apiKey, job);
-            await writeFile(join(OUTPUT_DIR, `${job.name}.png`), png);
-            await writeFile(
-              join(OUTPUT_DIR, `${job.name}.sha1`),
-              sha1(job.prompt) + '\n',
-            );
-            generated++;
-            console.log(`  wrote   ${job.name}  (${png.length} B)`);
-          } catch (err) {
-            failed++;
-            console.error(`  FAILED  ${job.name}: ${(err as Error).message}`);
-          }
-        }
-      })(),
-    );
-  }
-  await Promise.all(workers);
-  console.log(`done: ${generated} generated, ${failed} failed, ${jobs.length - work.length} cached`);
-  if (failed > 0) process.exit(1);
-}
-
-async function main(): Promise<void> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error(
-      'GEMINI_API_KEY is required. Get one at https://aistudio.google.com/apikey',
-    );
-    process.exit(1);
-  }
-  const { force, only } = parseArgs(process.argv.slice(2));
-  const prompts = JSON.parse(await readFile(PROMPTS_PATH, 'utf8')) as PromptsFile;
-
-  const jobs: Job[] = [];
-  for (const [name, desc] of Object.entries(prompts.units)) {
-    jobs.push({
-      name: `unit-${name}`,
-      prompt: compose(prompts.styleLock, desc, 'unit'),
-    });
-  }
-  for (const [name, desc] of Object.entries(prompts.buildings)) {
-    jobs.push({
-      name: `building-${name}`,
-      prompt: compose(prompts.styleLock, desc, 'building'),
-    });
-  }
-
-  const filtered = only ? jobs.filter((j) => j.name === only) : jobs;
-  if (filtered.length === 0) {
-    console.error(`no jobs matched --only=${only}`);
-    process.exit(1);
-  }
-  await runBatch(apiKey, filtered, force);
+  // PNG path: preserve alpha, use palette when possible.
+  return await pipeline
+    .png({ compressionLevel: 9, palette: true, quality: opts.quality })
+    .toBuffer();
 }
 
 function compose(styleLock: string, desc: string, kind: 'unit' | 'building'): string {
@@ -195,6 +192,154 @@ function compose(styleLock: string, desc: string, kind: 'unit' | 'building'): st
     `Composition: subject centered, single character/object only, facing viewer, small soft shadow directly below feet. Plenty of headroom.`,
     `Consistency: matches a shared cohesive game atlas — same outline thickness, same palette, same perspective as sibling sprites.`,
   ].join(' ');
+}
+
+async function runBatch(
+  apiKey: string,
+  jobs: Job[],
+  opts: Options,
+): Promise<{ generated: number; cached: number; failed: number; bytesWritten: number }> {
+  await mkdir(OUTPUT_DIR, { recursive: true });
+
+  const signature = (prompt: string): string =>
+    sha1(`${prompt}|${opts.format}|${opts.quality}|${opts.maxDim}`);
+
+  const work: Job[] = [];
+  let cached = 0;
+  for (const j of jobs) {
+    const outPath = join(OUTPUT_DIR, `${j.name}.${opts.format}`);
+    const sigPath = join(OUTPUT_DIR, `${j.name}.sha1`);
+    if (opts.missing && (await exists(outPath))) {
+      cached++;
+      continue;
+    }
+    if (!opts.force && (await exists(outPath)) && (await exists(sigPath))) {
+      const prev = (await readFile(sigPath, 'utf8')).trim();
+      if (prev === signature(j.prompt)) {
+        cached++;
+        continue;
+      }
+    }
+    work.push(j);
+  }
+  if (work.length === 0) {
+    return { generated: 0, cached, failed: 0, bytesWritten: 0 };
+  }
+
+  console.log(
+    `generating ${work.length} sprite(s) with ${MODEL} → ${opts.format.toUpperCase()} q${opts.quality} ≤${opts.maxDim}px`,
+  );
+
+  let next = 0;
+  let generated = 0;
+  let failed = 0;
+  let bytesWritten = 0;
+
+  const worker = async (): Promise<void> => {
+    while (next < work.length) {
+      const job = work[next++]!;
+      try {
+        const raw = await generateOne(apiKey, job.prompt);
+        const out = await compress(raw, opts);
+        const outPath = join(OUTPUT_DIR, `${job.name}.${opts.format}`);
+        const sigPath = join(OUTPUT_DIR, `${job.name}.sha1`);
+        await writeFile(outPath, out);
+        await writeFile(sigPath, signature(job.prompt) + '\n', 'utf8');
+
+        // Remove the sibling-extension file so BootScene only loads one.
+        const sibling = join(
+          OUTPUT_DIR,
+          `${job.name}.${opts.format === 'webp' ? 'png' : 'webp'}`,
+        );
+        try {
+          await unlink(sibling);
+        } catch {
+          // not there
+        }
+
+        generated++;
+        bytesWritten += out.length;
+        const kb = (out.length / 1024).toFixed(1);
+        const ratio = raw.length > 0 ? ((out.length / raw.length) * 100).toFixed(0) : '-';
+        console.log(
+          `  ✓ ${job.name.padEnd(28)} ${opts.format} ${kb.padStart(6)} KB  (${ratio}% of raw)`,
+        );
+      } catch (err) {
+        failed++;
+        console.error(`  ✗ ${job.name}: ${(err as Error).message}`);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENCY, work.length) }, worker),
+  );
+
+  return { generated, cached, failed, bytesWritten };
+}
+
+async function main(): Promise<void> {
+  // Parse args first so --help works without requiring an API key.
+  let opts: Options;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error((err as Error).message);
+    console.error(HELP);
+    process.exit(2);
+  }
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('GEMINI_API_KEY is required. Get one at https://aistudio.google.com/apikey');
+    process.exit(1);
+  }
+
+  const prompts = JSON.parse(await readFile(PROMPTS_PATH, 'utf8')) as PromptsFile;
+  const jobs: Job[] = [];
+  for (const [name, desc] of Object.entries(prompts.units)) {
+    jobs.push({
+      name: `unit-${name}`,
+      prompt: compose(prompts.styleLock, desc, 'unit'),
+      kind: 'unit',
+    });
+  }
+  for (const [name, desc] of Object.entries(prompts.buildings)) {
+    jobs.push({
+      name: `building-${name}`,
+      prompt: compose(prompts.styleLock, desc, 'building'),
+      kind: 'building',
+    });
+  }
+  const filtered = opts.only ? jobs.filter((j) => j.name === opts.only) : jobs;
+  if (filtered.length === 0) {
+    console.error(`no jobs matched --only=${opts.only}`);
+    process.exit(1);
+  }
+
+  const started = Date.now();
+  const stats = await runBatch(apiKey, filtered, opts);
+  const secs = ((Date.now() - started) / 1000).toFixed(1);
+
+  const totalOnDisk =
+    (
+      await Promise.all(
+        filtered.map(async (j) => {
+          const s = await fileSize(join(OUTPUT_DIR, `${j.name}.${opts.format}`));
+          return s ?? 0;
+        }),
+      )
+    ).reduce((a, b) => a + b, 0);
+
+  console.log('');
+  console.log(`Sprites folder: ${OUTPUT_DIR}`);
+  console.log(
+    `Generated ${stats.generated} · Cached ${stats.cached} · Failed ${stats.failed} · ${(
+      stats.bytesWritten / 1024
+    ).toFixed(1)} KB written · ${secs}s`,
+  );
+  console.log(
+    `Total ${filtered.length} sprite(s) on disk: ${(totalOnDisk / 1024).toFixed(1)} KB`,
+  );
+  if (stats.failed > 0) process.exit(1);
 }
 
 void main().catch((err) => {
