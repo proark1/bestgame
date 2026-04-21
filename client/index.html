@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f1b10" />
+    <title>Hive Wars</title>
+    <!-- Facebook Instant Games SDK. When running outside FB, the script load
+         fails silently and the client falls back to guest auth. -->
+    <script src="https://connect.facebook.net/en_US/fbinstant.7.1.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0f1b10;
+        color: #fff;
+        overflow: hidden;
+        height: 100%;
+        font-family: system-ui, -apple-system, sans-serif;
+        touch-action: none;
+      }
+      #game {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f1b10;
+        color: #c3e8b0;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="boot-splash">Loading Hive Wars…</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

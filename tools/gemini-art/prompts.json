@@ -1,0 +1,34 @@
+{
+  "styleLock": "flat 2D cartoon, thick black outlines 3px, saturated pastel palette (mint, lemon, coral, periwinkle, soft brown), top-down 3/4 perspective, lit from top-left at 45 degrees, soft dusty shadow directly below, no background (transparent PNG), 128x128 pixel-clean render suitable for a cozy mobile strategy game, cohesive illustrator-like finish.",
+  "factions": {
+    "Ants": "warm brown bodies, red accents",
+    "Bees": "lemon yellow with black stripes, gauzy wings",
+    "Beetles": "iridescent teal carapace",
+    "Spiders": "deep purple with neon green eyes"
+  },
+  "units": {
+    "WorkerAnt": "a cheerful worker ant, six legs, carrying a tiny leaf over its head, tiny backpack",
+    "SoldierAnt": "a sturdy soldier ant, oversized mandibles, wearing a paper crown, confident stance",
+    "DirtDigger": "a burly ant with comically oversized front claws for digging, goggles, stubborn expression",
+    "Forager": "a fuzzy bee with a tiny satchel of nectar, cute wings",
+    "Wasp": "a sleek wasp with a stinger, bandit mask over eyes, determined glare",
+    "HoneyTank": "a round, armored bee draped in honeycomb plates, slow and imposing",
+    "ShieldBeetle": "a tank-like beetle with a riveted metal shield carapace, small legs",
+    "BombBeetle": "a cute beetle carrying a dandelion-puff bomb above its head, wide eyes",
+    "Roller": "a muscular beetle rolling a dew droplet like a wrecking ball",
+    "Jumper": "a jumping spider, fuzzy legs, cat-like alert pose",
+    "WebSetter": "a spinner spider weaving a glowing silver web between tiny twigs",
+    "Ambusher": "a camouflaged spider peeking from under a leaf, only eyes visible"
+  },
+  "buildings": {
+    "QueenChamber": "a majestic glowing queen chamber on layered dirt mound, lit from within, throne-like silhouette",
+    "DewCollector": "a shimmering dew drop suspended in a twig cradle, rain-catcher",
+    "MushroomTurret": "a red-capped mushroom turret with a small cannon in the stem, white dots",
+    "LeafWall": "a tall overlapping leaf wall woven with spider silk, organic ridge",
+    "PebbleBunker": "a fortress of stacked river pebbles, moss in the cracks",
+    "LarvaNursery": "a cozy domed nursery with glowing larva pods visible through oval windows",
+    "SugarVault": "a wooden vault door with a giant sugar-cube lock, sprinkles around it",
+    "TunnelJunction": "a clean carved earth tunnel entrance, multiple paths radiating out",
+    "DungeonTrap": "a disguised pitfall covered with twigs and leaves, ominous shadow inside"
+  }
+}

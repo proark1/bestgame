@@ -1,0 +1,8 @@
+packages:
+  - client
+  - server/api
+  - server/arena
+  - shared
+  - protocol
+  - tools/gemini-art
+  - tools/bot-tester
