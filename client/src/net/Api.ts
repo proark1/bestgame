@@ -181,6 +181,67 @@ export class Api {
     return (await res.json()) as UpgradesResponse;
   }
 
+  async clanCreate(args: {
+    name: string;
+    tag: string;
+    description?: string;
+    isOpen?: boolean;
+  }): Promise<{ ok: true; clanId: string }> {
+    const res = await this.authedFetch('/clan/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/create');
+    return (await res.json()) as { ok: true; clanId: string };
+  }
+
+  async clanBrowse(): Promise<ClanSummary[]> {
+    const res = await this.authedFetch('/clan/browse');
+    if (!res.ok) throw new Error(`clan/browse ${res.status}`);
+    const j = (await res.json()) as { clans: ClanSummary[] };
+    return j.clans;
+  }
+
+  async clanJoin(clanId: string): Promise<{ ok: true; clanId: string }> {
+    const res = await this.authedFetch('/clan/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clanId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/join');
+    return (await res.json()) as { ok: true; clanId: string };
+  }
+
+  async clanLeave(): Promise<{ ok: true }> {
+    const res = await this.authedFetch('/clan/leave', { method: 'POST' });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/leave');
+    return (await res.json()) as { ok: true };
+  }
+
+  async clanMy(): Promise<ClanMyResponse> {
+    const res = await this.authedFetch('/clan/my');
+    if (!res.ok) throw new Error(`clan/my ${res.status}`);
+    return (await res.json()) as ClanMyResponse;
+  }
+
+  async clanMessages(sinceId: number): Promise<ClanMessage[]> {
+    const res = await this.authedFetch(`/clan/messages?sinceId=${sinceId}`);
+    if (!res.ok) throw new Error(`clan/messages ${res.status}`);
+    const j = (await res.json()) as { messages: ClanMessage[] };
+    return j.messages;
+  }
+
+  async clanMessageSend(content: string): Promise<{ ok: true; id: string }> {
+    const res = await this.authedFetch('/clan/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/message');
+    return (await res.json()) as { ok: true; id: string };
+  }
+
   async upgradeUnit(kind: Types.UnitKind): Promise<UpgradeUnitResponse> {
     const res = await this.authedFetch('/player/upgrade-unit', {
       method: 'POST',
@@ -199,6 +260,54 @@ export class Api {
     }
     return (await res.json()) as UpgradeUnitResponse;
   }
+}
+
+export interface ClanSummary {
+  id: string;
+  name: string;
+  tag: string;
+  description: string;
+  memberCount: number;
+  createdAt: string;
+}
+export interface ClanMember {
+  playerId: string;
+  displayName: string;
+  trophies: number;
+  role: 'leader' | 'member';
+  joinedAt: string;
+}
+export interface ClanMessage {
+  id: string;
+  playerId: string;
+  displayName: string;
+  content: string;
+  createdAt: string;
+}
+export interface ClanMyResponse {
+  clan: {
+    id: string;
+    name: string;
+    tag: string;
+    description: string;
+    isOpen: boolean;
+    leaderId: string | null;
+    createdAt: string;
+  } | null;
+  myRole?: 'leader' | 'member';
+  members?: ClanMember[];
+  messages?: ClanMessage[];
+}
+
+async function errorFromResponse(res: Response, fallback: string): Promise<Error> {
+  let msg = `${fallback} ${res.status}`;
+  try {
+    const j = (await res.json()) as { error?: string };
+    if (j.error) msg = j.error;
+  } catch {
+    // ignore
+  }
+  return new Error(msg);
 }
 
 export interface UnitUpgradeEntry {

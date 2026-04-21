@@ -12,6 +12,7 @@ import { registerAdminHook } from './auth/adminAuth.js';
 import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
 import { registerLeaderboard } from './routes/leaderboard.js';
+import { registerClan } from './routes/clan.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -84,6 +85,7 @@ async function start(): Promise<void> {
       registerRaid(scope);
       registerMatchmaking(scope);
       registerLeaderboard(scope);
+      registerClan(scope);
     },
     { prefix: '/api' },
   );
