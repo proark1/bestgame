@@ -560,10 +560,163 @@ function renderAnimationPanel(): HTMLElement {
     });
 
     row.append(checkbox, label, status, genBtn);
+
+    // Preview + editor block lives on a second grid row, full-width,
+    // so the top row stays compact. The preview only renders once a
+    // strip is on disk; the editor is always available so an admin
+    // can tweak the prompt before the first generate run.
+    const detail = document.createElement('div');
+    detail.className = 'admin-animation-detail';
+
+    if (hasSheet(kind)) {
+      detail.append(renderStripPreview(kind, state.files));
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'admin-animation-preview-empty';
+      empty.textContent = 'No walk strip yet — click Generate to create one.';
+      detail.append(empty);
+    }
+
+    detail.append(renderPromptEditor(kind));
+
+    row.append(detail);
     list.append(row);
   }
   card.append(list);
   return card;
+}
+
+// Static + animated preview of a walk strip. Two side-by-side views:
+//  - The full 512x128 strip scaled to fit the panel, so the admin can
+//    see each frame and catch geometry issues (e.g. Gemini shipped a
+//    3-frame strip or stretched the character off-center).
+//  - A 128x128 div with background-image = strip + a steps(4) CSS
+//    animation on background-position-x. Shows the walk in motion
+//    without needing Phaser to be running — exactly what the game will
+//    render at 8 fps.
+//
+// URLs get a ?v=<mtime> cache-buster so immediately after a regenerate
+// the browser fetches the new bytes instead of re-displaying the
+// cached version.
+function renderStripPreview(kind: string, files: SpriteFile[]): HTMLElement {
+  const file = files.find(
+    (f) => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`,
+  );
+  const wrap = document.createElement('div');
+  wrap.className = 'admin-animation-preview';
+  if (!file) {
+    // Defensive: caller checks hasSheet() first, but if it drifts
+    // we'd rather render a placeholder than throw.
+    return wrap;
+  }
+  const url = `/assets/sprites/${file.name}?v=${file.mtime}`;
+
+  const strip = document.createElement('img');
+  strip.src = url;
+  strip.className = 'admin-animation-preview-strip';
+  strip.alt = `${kind} walk strip`;
+  wrap.append(strip);
+
+  const loop = document.createElement('div');
+  loop.className = 'admin-animation-preview-loop';
+  loop.style.backgroundImage = `url('${url}')`;
+  loop.title = `${kind} — looping at 8 fps (matches in-game)`;
+  wrap.append(loop);
+
+  return wrap;
+}
+
+// Expandable prompt editor. Starts collapsed so the panel stays
+// compact; the <summary> toggles an unobtrusive "Edit prompt" link.
+// "Save prompt" persists to prompts.json; "Save & regenerate" does
+// both in one click — the common workflow when iterating on a kind.
+function renderPromptEditor(kind: string): HTMLElement {
+  const details = document.createElement('details');
+  details.className = 'admin-animation-editor';
+
+  const summary = document.createElement('summary');
+  summary.textContent = 'Tweak prompt';
+  details.append(summary);
+
+  const textarea = document.createElement('textarea');
+  textarea.value = state.prompts?.walkCycles?.[kind] ?? '';
+  textarea.placeholder =
+    'Describe the walk cycle: character, perspective, frame-by-frame leg poses…';
+  textarea.rows = 4;
+  details.append(textarea);
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-animation-editor-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn';
+  saveBtn.textContent = 'Save prompt';
+  saveBtn.addEventListener('click', async () => {
+    await savePromptValue(kind, textarea.value, saveBtn);
+  });
+
+  const saveAndRegenBtn = document.createElement('button');
+  saveAndRegenBtn.className = 'btn accent';
+  saveAndRegenBtn.textContent = 'Save & regenerate';
+  saveAndRegenBtn.addEventListener('click', async () => {
+    if (saveAndRegenBtn.disabled) return;
+    saveAndRegenBtn.disabled = true;
+    const original = saveAndRegenBtn.textContent;
+    try {
+      await savePromptValue(kind, textarea.value, saveBtn);
+      saveAndRegenBtn.textContent = 'Regenerating…';
+      const res = await generateWalkCycle(kind);
+      statusToast(`Saved ${kind} walk strip (${humanBytes(res.size)})`, 'success');
+      // Refresh the whole panel so every badge + preview updates at
+      // once — cheaper than threading per-element refs around.
+      try {
+        const s = await fetchStatus();
+        state.files = s.files;
+      } catch {
+        // ignore
+      }
+      const newPanel = renderAnimationPanel();
+      details.closest('.admin-animation')?.replaceWith(newPanel);
+    } catch (err) {
+      statusToast(`${kind}: ${(err as Error).message}`, 'error');
+      saveAndRegenBtn.textContent = original;
+      saveAndRegenBtn.disabled = false;
+    }
+  });
+
+  actions.append(saveBtn, saveAndRegenBtn);
+  details.append(actions);
+  return details;
+}
+
+// Persist a walkCycles[kind] prompt edit + mirror it into local state
+// so a subsequent generate uses the new value. Caller passes the save
+// button to give inline "Saved" feedback without another toast.
+async function savePromptValue(
+  kind: string,
+  value: string,
+  feedbackBtn: HTMLButtonElement,
+): Promise<void> {
+  const original = feedbackBtn.textContent;
+  feedbackBtn.disabled = true;
+  feedbackBtn.textContent = 'Saving…';
+  try {
+    await updatePrompt({ category: 'walkCycles', key: kind, value });
+    if (state.prompts) {
+      if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
+      state.prompts.walkCycles[kind] = value;
+    }
+    feedbackBtn.textContent = 'Saved ✓';
+    window.setTimeout(() => {
+      feedbackBtn.textContent = original;
+      feedbackBtn.disabled = false;
+    }, 1200);
+  } catch (err) {
+    statusToast(`Save prompt failed: ${(err as Error).message}`, 'error');
+    feedbackBtn.textContent = original;
+    feedbackBtn.disabled = false;
+    throw err;
+  }
 }
 
 const GUIDE_OPEN_KEY = 'hivewars.admin.guide.open';

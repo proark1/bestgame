@@ -544,3 +544,110 @@ button {
   font-size: 11px;
   padding: 4px 10px;
 }
+
+/* Walk-cycle preview + prompt editor live inside each animation row.
+ * The top line (checkbox, label, badge, Generate button) is a grid
+ * row of its own; the detail block below spans the full row width. */
+.admin-animation-list li {
+  grid-template-columns: auto 1fr auto auto;
+  grid-auto-rows: auto;
+  row-gap: 12px;
+}
+.admin-animation-detail {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.admin-animation-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.admin-animation-preview-strip {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  max-height: 96px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.02),
+    rgba(255, 255, 255, 0.02) 6px,
+    rgba(255, 255, 255, 0.04) 6px,
+    rgba(255, 255, 255, 0.04) 12px
+  );
+  border-radius: 4px;
+}
+/* Looping preview: a 96x96 window onto the 512x128 strip, stepping
+ * through the four 128x128 frames at 8 fps. steps(4) makes it tick
+ * discretely instead of smoothly scrolling across the sheet. */
+.admin-animation-preview-loop {
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+  background-repeat: no-repeat;
+  background-size: 384px 96px; /* scale 512x128 → 384x96 so it fits */
+  background-position: 0 0;
+  image-rendering: pixelated;
+  animation: admin-walk-loop 0.5s steps(4) infinite;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+@keyframes admin-walk-loop {
+  from { background-position-x: 0px; }
+  to { background-position-x: -384px; }
+}
+.admin-animation-preview-empty {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.admin-animation-editor summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 11px;
+  list-style: none;
+  padding: 4px 0;
+}
+.admin-animation-editor summary::-webkit-details-marker { display: none; }
+.admin-animation-editor summary::before {
+  content: '▸ ';
+  transition: transform 0.2s;
+}
+.admin-animation-editor[open] summary::before { content: '▾ '; }
+.admin-animation-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: var(--font);
+  font-size: 11px;
+  resize: vertical;
+  min-height: 64px;
+}
+.admin-animation-editor-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.admin-animation-editor-actions .btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}

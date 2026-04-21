@@ -93,7 +93,7 @@ export async function fetchPrompts(): Promise<PromptsFile> {
 }
 
 export async function updatePrompt(args: {
-  category: 'units' | 'buildings' | 'styleLock';
+  category: 'units' | 'buildings' | 'walkCycles' | 'styleLock';
   key?: string;
   value: string;
 }): Promise<void> {
