@@ -37,7 +37,7 @@ export async function compressBase64Image(
   ctx.drawImage(img, 0, 0, width, height);
 
   const mimeType = opts.format === 'webp' ? 'image/webp' : 'image/png';
-  const blob = await toBlob(canvas, mimeType, opts.quality);
+  const blob = await canvasToBlob(canvas, mimeType, opts.quality);
   const sizeBytes = blob.size;
   const base64Out = await blobToBase64(blob);
 
@@ -55,7 +55,10 @@ function fitInto(
   return { width: Math.round(maxDim * ratio), height: maxDim };
 }
 
-async function decodeImage(base64: string, mimeType: string): Promise<ImageBitmap | HTMLImageElement> {
+export async function decodeImage(
+  base64: string,
+  mimeType: string,
+): Promise<ImageBitmap | HTMLImageElement> {
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -71,7 +74,7 @@ async function decodeImage(base64: string, mimeType: string): Promise<ImageBitma
   });
 }
 
-function makeCanvas(w: number, h: number): OffscreenCanvas | HTMLCanvasElement {
+export function makeCanvas(w: number, h: number): OffscreenCanvas | HTMLCanvasElement {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
   const c = document.createElement('canvas');
   c.width = w;
@@ -79,7 +82,7 @@ function makeCanvas(w: number, h: number): OffscreenCanvas | HTMLCanvasElement {
   return c;
 }
 
-async function toBlob(
+export async function canvasToBlob(
   canvas: OffscreenCanvas | HTMLCanvasElement,
   type: string,
   quality: number,
@@ -96,7 +99,7 @@ async function toBlob(
   });
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
+export async function blobToBase64(blob: Blob): Promise<string> {
   const buf = await blob.arrayBuffer();
   const bytes = new Uint8Array(buf);
   // Chunked to avoid argument-length limits on large buffers.

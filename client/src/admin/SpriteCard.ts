@@ -5,6 +5,7 @@
 
 import { compressBase64Image, humanBytes, type CompressedImage } from './compress.js';
 import { deleteSprite, generateImages, saveSprite, type GeminiImage } from './api.js';
+import { removeBackground } from './removeBackground.js';
 
 export interface SpriteCardOptions {
   key: string;
@@ -33,6 +34,7 @@ export class SpriteCard {
   private candidatesEl!: HTMLDivElement;
   private promptEl!: HTMLTextAreaElement;
   private generateBtn!: HTMLButtonElement;
+  private removeBgBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
   private downloadBtn!: HTMLButtonElement;
   private variantsSelect!: HTMLSelectElement;
@@ -207,12 +209,20 @@ export class SpriteCard {
 
     const actions = el('div', 'card-actions');
     this.generateBtn = button('Generate', 'btn accent', () => void this.generate());
+    this.removeBgBtn = button('Remove BG', 'btn', () => void this.removeBackground());
     this.saveBtn = button('Save', 'btn primary', () => void this.save());
     this.downloadBtn = button('Download', 'btn', () => void this.download());
     const delBtn = button('Delete', 'btn ghost danger', () => void this.delete());
+    this.removeBgBtn.disabled = true;
     this.saveBtn.disabled = true;
     this.downloadBtn.disabled = true;
-    actions.append(this.generateBtn, this.saveBtn, this.downloadBtn, delBtn);
+    actions.append(
+      this.generateBtn,
+      this.removeBgBtn,
+      this.saveBtn,
+      this.downloadBtn,
+      delBtn,
+    );
 
     this.root.append(
       head,
@@ -244,6 +254,29 @@ export class SpriteCard {
     });
     this.saveBtn.disabled = this.selectedIdx < 0;
     this.downloadBtn.disabled = this.selectedIdx < 0;
+    this.removeBgBtn.disabled = this.selectedIdx < 0;
+  }
+
+  async removeBackground(): Promise<void> {
+    if (this.busy || this.selectedIdx < 0) return;
+    const src = this.candidates[this.selectedIdx];
+    if (!src) return;
+    this.setBusy(true);
+    this.opts.showStatus(`Removing background for ${this.key}…`);
+    try {
+      const cut = await removeBackground(src.data, src.mimeType);
+      this.candidates[this.selectedIdx] = { data: cut.base64, mimeType: cut.mimeType };
+      this.renderCandidates();
+      await this.prepareCompressed();
+      this.opts.showStatus(`Background removed for ${this.key}`, 'success');
+    } catch (err) {
+      this.opts.showStatus(
+        `remove BG failed: ${(err as Error).message}`,
+        'error',
+      );
+    } finally {
+      this.setBusy(false);
+    }
   }
 
   private async prepareCompressed(): Promise<void> {
