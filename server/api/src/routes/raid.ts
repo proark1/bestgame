@@ -44,7 +44,7 @@ export function registerRaid(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
     const client = await pool.connect();

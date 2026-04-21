@@ -51,6 +51,59 @@ pnpm --filter @hive/client build
 pnpm --filter @hive/client bundle:report
 ```
 
+## Postgres setup (required for persistence)
+
+Without a database the API boots fine but every persistence route
+(`/api/player/*`, `/api/match`, `/api/raid/submit`, `/api/arena/*`,
+admin sprite saves) returns **503 "database not configured"**. That's
+what users see as *"database not connected"* in the UI.
+
+### Railway (production)
+
+1. In your Railway project, **Add Plugin → Postgres**.
+2. Open the API service → **Variables** tab.
+3. Add `DATABASE_URL` and bind it to the Postgres plugin with
+   `${{Postgres.DATABASE_URL}}`. Redeploy.
+4. (Optional) Set `HIVE_AUTH_SECRET` to a 48-byte hex string so guest
+   session tokens survive restarts.
+5. (Optional) If you run the Colyseus arena as a separate service, set
+   `ARENA_SHARED_SECRET` on **both** services. Arena calls
+   `POST /api/arena/_lookup` with that header; without the secret,
+   lookup only accepts loopback traffic (same-host deploys).
+
+Migrations run automatically on boot — check the deploy log for
+`[db] migrations up to date`. Hit `GET /health/db` from a browser to
+verify the live status + get a troubleshooting hint if anything's off.
+
+### Local (Docker Compose)
+
+```sh
+# docker-compose up postgres; then:
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/hive
+pnpm dev:api
+```
+
+A minimal `docker-compose.yml` (save under `./infra/`) needs only:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hive
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ['5432:5432']
+```
+
+### Admin sprites survive redeploys
+
+Admin uploads (`/admin`) now persist bytes in the `sprites` table in
+addition to `client/dist/assets/sprites/`. On the next boot the API
+rehydrates disk from the DB, so Railway redeploys no longer wipe
+generated art. The UI shows `source: db` next to any sprite that's
+backed by the database.
+
 ## Architecture at a glance
 
 ```

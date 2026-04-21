@@ -97,7 +97,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
     const client = await pool.connect();
@@ -193,7 +193,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const limit = Math.max(1, Math.min(50, Number((req.query as { limit?: string } | null)?.limit) || 20));
 
@@ -254,7 +254,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const body = req.body;
     if (!body || !body.base || typeof body.base !== 'object') {
@@ -308,7 +308,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const body = req.body;
     if (
@@ -483,7 +483,7 @@ export function registerPlayer(app: FastifyInstance): void {
       const pool = await getPool();
       if (!pool) {
         reply.code(503);
-        return { error: 'database not configured' };
+        return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
       }
       // sanity check id shape — server-generated ids are b-<12 hex>
       const id = req.params.id;
@@ -565,7 +565,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
     const res = await pool.query<{
       unit_levels: Record<string, number>;
@@ -614,7 +614,7 @@ export function registerPlayer(app: FastifyInstance): void {
       const pool = await getPool();
       if (!pool) {
         reply.code(503);
-        return { error: 'database not configured' };
+        return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
       }
       const body = req.body;
       if (!body || typeof body.kind !== 'string') {

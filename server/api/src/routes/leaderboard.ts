@@ -26,7 +26,7 @@ export function registerLeaderboard(app: FastifyInstance): void {
     const pool = await getPool();
     if (!pool) {
       reply.code(503);
-      return { error: 'database not configured' };
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
     const qLimit = Number((req.query as { limit?: string } | null)?.limit);

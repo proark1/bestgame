@@ -71,3 +71,13 @@ export async function closePool(): Promise<void> {
 export function isConfigured(): boolean {
   return Boolean(process.env.DATABASE_URL);
 }
+
+// Shared 503 body for routes that need persistence. Using one message
+// text everywhere means a user who searches the error lands on the
+// same hint; pointing at /health/db keeps the hint consumable both in
+// a browser DevTools panel and in the admin UI.
+export const DB_NOT_CONFIGURED_ERROR = {
+  error:
+    'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)',
+  hint: 'On Railway: Add Plugin → Postgres, then bind DATABASE_URL = ${{Postgres.DATABASE_URL}} on the API service Variables tab.',
+} as const;

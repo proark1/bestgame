@@ -6,6 +6,13 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geminiGenerateImages } from '../admin/gemini.js';
 import { adminAuthConfigured } from '../auth/adminAuth.js';
+import { getPool } from '../db/pool.js';
+import {
+  deleteSprite,
+  getSprite,
+  listSprites,
+  upsertSprite,
+} from '../db/sprites.js';
 
 // Admin API — authenticated via the registerAdminHook in auth/adminAuth.ts.
 // Routes are mounted at /admin/api/* so the auth prefix match is exact.
@@ -49,22 +56,25 @@ interface SpriteFileMeta {
   name: string;
   size: number;
   mtime: number;
-  source: 'dist' | 'public';
+  source: 'dist' | 'public' | 'db';
 }
 
-// Merged listing of sprite files from both directories. Dist wins on
-// name collisions because it's the live served state; public fills in
-// the long tail (e.g. sprites committed to the repo but not yet
-// re-saved since the last deploy). Consumers include /admin/api/status
-// (what the UI sees) and /admin/api/download-all (what the zip ships).
+// Merged listing across three sources: the DB (source of truth, survives
+// redeploys), the dist directory (what fastify-static actually serves),
+// and the public directory (the committable repo mirror for local dev).
+// Priority on name collisions: db > dist > public — we always trust the
+// DB's bytes since they'll rehydrate disk on the next boot anyway.
+//
+// Consumers: /admin/api/status (what the UI sees) and
+// /admin/api/download-all (what the zip ships).
 async function listAllSprites(): Promise<SpriteFileMeta[]> {
   const merged = new Map<string, SpriteFileMeta>();
-  // Iterate public first so dist entries overwrite when both exist.
-  const sources: Array<[string, 'public' | 'dist']> = [
+  // Iterate lowest-priority sources first; later writes overwrite.
+  const diskSources: Array<[string, 'public' | 'dist']> = [
     [PUBLIC_SPRITES_DIR, 'public'],
     [DIST_SPRITES_DIR, 'dist'],
   ];
-  for (const [dir, source] of sources) {
+  for (const [dir, source] of diskSources) {
     try {
       const names = await readdir(dir);
       const metas = await Promise.all(
@@ -80,14 +90,50 @@ async function listAllSprites(): Promise<SpriteFileMeta[]> {
       // directory may not exist — fine, it'll be created on first save
     }
   }
+  // DB wins last so its bytes are authoritative when present.
+  const pool = await getPool();
+  if (pool) {
+    try {
+      const rows = await listSprites(pool);
+      for (const r of rows) {
+        const name = `${r.key}.${r.format}`;
+        merged.set(name, {
+          name,
+          size: r.size,
+          mtime: r.updatedAt.getTime(),
+          source: 'db',
+        });
+      }
+    } catch {
+      // DB unavailable — disk listing is the best we can do
+    }
+  }
   return Array.from(merged.values());
 }
 
-function resolveSpritePath(meta: SpriteFileMeta): string {
-  return join(
-    meta.source === 'dist' ? DIST_SPRITES_DIR : PUBLIC_SPRITES_DIR,
-    meta.name,
-  );
+// Resolve where the bytes live so download-all knows whether to stream
+// from disk or fetch from DB.
+async function loadSpriteBytes(meta: SpriteFileMeta): Promise<Buffer | null> {
+  if (meta.source === 'db') {
+    const pool = await getPool();
+    if (!pool) return null;
+    const parsed = parseSpriteFileName(meta.name);
+    if (!parsed) return null;
+    const row = await getSprite(pool, parsed.key);
+    return row?.data ?? null;
+  }
+  const dir = meta.source === 'dist' ? DIST_SPRITES_DIR : PUBLIC_SPRITES_DIR;
+  try {
+    return await readFile(join(dir, meta.name));
+  } catch {
+    return null;
+  }
+}
+
+function parseSpriteFileName(name: string): { key: string; format: 'png' | 'webp' } | null {
+  const m = /^(.+)\.(png|webp)$/.exec(name);
+  if (!m) return null;
+  return { key: m[1]!, format: m[2] as 'png' | 'webp' };
 }
 
 interface GenerateBody {
@@ -131,15 +177,22 @@ function sanitizeKey(key: string): string | null {
 
 export function registerAdmin(app: FastifyInstance): void {
   app.get('/admin/api/status', async () => {
-    // Merged view across dist + public so the admin always sees the full
-    // repository state. Dist wins on name collisions (it's the live
-    // served state).
+    // Merged view across DB + dist + public so the admin always sees the
+    // authoritative state. DB wins on collisions — it's what survives
+    // redeploys and what the next boot will rehydrate disk from.
     const files = await listAllSprites();
+    const pool = await getPool();
     return {
       authMode: adminAuthConfigured() ? 'token' : 'loopback-only',
       spritesDir: DIST_SPRITES_DIR,
       mirrorsPublic: publicDirExists(),
-      files: files.map(({ name, size, mtime }) => ({ name, size, mtime })),
+      dbPersistence: pool ? 'connected' : 'not-configured',
+      files: files.map(({ name, size, mtime, source }) => ({
+        name,
+        size,
+        mtime,
+        source,
+      })),
     };
   });
 
@@ -270,9 +323,25 @@ export function registerAdmin(app: FastifyInstance): void {
       return { error: `image size ${buf.length} exceeds ${MAX_SAVE_BYTES}` };
     }
 
-    // Write order matters: dist is what fastify-static serves, so write
-    // there first. If public exists (local-dev workflow), mirror so a
-    // `git add client/public/assets/sprites` captures the same bytes.
+    // Write order matters:
+    //  1. DB — source of truth that survives Railway redeploys.
+    //  2. Dist — what fastify-static serves to the running game.
+    //  3. Public — committable mirror for local dev (best-effort).
+    //
+    // If the DB write fails we still try disk, but return an error so
+    // the admin UI can surface that persistence is degraded. Without
+    // DB the save is ephemeral and will vanish on next redeploy.
+    let persistedToDb = false;
+    const pool = await getPool();
+    if (pool) {
+      try {
+        await upsertSprite(pool, safeKey, body.format, buf);
+        persistedToDb = true;
+      } catch (err) {
+        app.log.error({ err, key: safeKey }, 'sprite DB upsert failed');
+      }
+    }
+
     const siblingExt = body.format === 'webp' ? 'png' : 'webp';
     await mkdir(DIST_SPRITES_DIR, { recursive: true });
     await writeFile(join(DIST_SPRITES_DIR, `${safeKey}.${body.format}`), buf);
@@ -306,6 +375,7 @@ export function registerAdmin(app: FastifyInstance): void {
       ok: true,
       path: `/assets/sprites/${safeKey}.${body.format}`,
       size: buf.length,
+      persistedToDb,
       mirroredToPublic: mirrored,
     };
   });
@@ -314,6 +384,10 @@ export function registerAdmin(app: FastifyInstance): void {
     // Uses the same merged listing as /status so the zip always ships
     // exactly what the admin UI displays. STORE-only entries since
     // WebP/PNG are already compressed.
+    //
+    // For DB-sourced files we append a Buffer directly; disk-sourced
+    // files stream from the filesystem. Both paths share the same
+    // archiver instance.
     const files = await listAllSprites();
     reply
       .header(
@@ -328,12 +402,20 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.raw.destroy(err);
     });
     for (const f of files) {
-      zip.file(resolveSpritePath(f), { name: f.name });
+      if (f.source === 'db') {
+        const bytes = await loadSpriteBytes(f);
+        if (bytes) zip.append(bytes, { name: f.name });
+      } else {
+        const dir = f.source === 'dist' ? DIST_SPRITES_DIR : PUBLIC_SPRITES_DIR;
+        zip.file(join(dir, f.name), { name: f.name });
+      }
     }
     zip.append(
       `# Hive Wars sprite bundle\n\nExtract these ${files.length} file(s) ` +
         `to\n  client/public/assets/sprites/\nthen \`git add\` and commit ` +
-        `so the art survives the next Railway redeploy.\n`,
+        `so the art survives the next Railway redeploy.\n\n` +
+        `(Railway deploys with Postgres attached now auto-persist sprites ` +
+        `in the \`sprites\` table — this zip is a belt-and-braces backup.)\n`,
       { name: 'README.txt' },
     );
     void zip.finalize();
@@ -347,20 +429,30 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.code(400);
       return { error: 'invalid key' };
     }
-    // Remove from both dist and public so admin-delete doesn't leave
-    // a ghost copy that would re-appear after the next build.
-    let removed = 0;
+    // Remove from DB + both on-disk locations so admin-delete doesn't
+    // leave a ghost copy that would re-appear on the next hydration or
+    // rebuild.
+    let dbRemoved = 0;
+    const pool = await getPool();
+    if (pool) {
+      try {
+        dbRemoved = await deleteSprite(pool, safeKey);
+      } catch (err) {
+        app.log.error({ err, key: safeKey }, 'sprite DB delete failed');
+      }
+    }
+    let diskRemoved = 0;
     for (const dir of [DIST_SPRITES_DIR, PUBLIC_SPRITES_DIR]) {
       for (const ext of ['png', 'webp']) {
         try {
           await unlink(join(dir, `${safeKey}.${ext}`));
-          removed++;
+          diskRemoved++;
         } catch {
           // not there
         }
       }
     }
-    return { ok: true, removed };
+    return { ok: true, dbRemoved, diskRemoved };
   });
 
   app.log.info(
