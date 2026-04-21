@@ -352,6 +352,14 @@ export class HomeScene extends Phaser.Scene {
       () => this.scene.start('ClanScene'),
     );
 
+    const arena = this.makeButton(
+      this.scale.width - 440,
+      y,
+      '⚔ Arena',
+      'ui-button-secondary',
+      () => this.scene.start('ArenaScene'),
+    );
+
     const raid = this.makeButton(
       this.scale.width - 220,
       y,
@@ -370,6 +378,7 @@ export class HomeScene extends Phaser.Scene {
       history.y = by;
       upgrades.y = by;
       clan.y = by;
+      arena.y = by;
       raid.y = by;
     });
   }

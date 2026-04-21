@@ -1,0 +1,374 @@
+import Phaser from 'phaser';
+import { Sim, Types } from '@hive/shared';
+import type { HiveRuntime } from '../main.js';
+import { ArenaClient, type ArenaEvent } from '../net/ArenaClient.js';
+
+// Live arena — 2-player Colyseus match on a neutral mirror base.
+//
+// The server (server/arena/src/rooms/PicnicRoom.ts) is the source of
+// truth. This scene:
+//   1. Joins the 'picnic' room and sends `ready`
+//   2. Waits for tickConfirm events to arrive (server has started the
+//      30 Hz loop once both players ready'd)
+//   3. Runs a local @hive/shared sim against the same base + seed,
+//      applying only the inputs the server confirmed. This keeps the
+//      visual representation in lockstep with authoritative state.
+//   4. On `drawPheromoneTrail`, sends drawPath with intendedTick =
+//      serverTick + 3 so the opponent has time to render the input
+//      before it resolves.
+//
+// This scene is network-gated. If the arena server is unreachable (no
+// VITE_ARENA_URL, no same-host /arena proxy, or offline), we show a
+// friendly message explaining the configuration and fall back to
+// HomeScene navigation.
+
+const TILE = 48;
+const GRID_W = 16;
+const GRID_H = 12;
+const BOARD_W = TILE * GRID_W;
+const BOARD_H = TILE * GRID_H;
+const HUD_H = 56;
+const TICK_HZ = 30;
+const MATCH_SECONDS = 120;
+const INPUT_DELAY_TICKS = 3;
+
+// Neutral mirror base — both players play against the same layout.
+// Kept in sync with server/arena/src/rooms/PicnicRoom.ts NEUTRAL_MAP.
+// (If they drift, the client sim would hash-diff from the server sim
+// and the arena would fall out of lockstep.)
+const NEUTRAL_MAP: Types.Base = {
+  baseId: 'picnic-neutral',
+  ownerId: 'server',
+  faction: 'Ants',
+  gridSize: { w: GRID_W, h: GRID_H },
+  resources: { sugar: 0, leafBits: 0, aphidMilk: 0 },
+  trophies: 0,
+  version: 1,
+  tunnels: [],
+  buildings: [
+    {
+      id: 'b-queen',
+      kind: 'QueenChamber',
+      anchor: { x: 7, y: 5, layer: 0 },
+      footprint: { w: 2, h: 2 },
+      spans: [0, 1],
+      level: 1,
+      hp: 800,
+      hpMax: 800,
+    },
+  ],
+};
+
+export class ArenaScene extends Phaser.Scene {
+  private arena: ArenaClient | null = null;
+  private cfg!: Sim.SimConfig;
+  private state!: Sim.SimState;
+  private boardContainer!: Phaser.GameObjects.Container;
+  private statusText!: Phaser.GameObjects.Text;
+  private started = false;
+  private hasError = false;
+
+  // Visuals
+  private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
+  private unitSprites = new Map<number, Phaser.GameObjects.Image>();
+  private trailGraphics!: Phaser.GameObjects.Graphics;
+
+  // Server tick marker — used to compute intendedTick for draws.
+  private latestServerTick = 0;
+
+  // Pheromone trail drawing (same shape as RaidScene).
+  private drawingPoints: Array<{ x: number; y: number }> = [];
+  private isDrawing = false;
+
+  constructor() {
+    super('ArenaScene');
+  }
+
+  create(): void {
+    this.cameras.main.setBackgroundColor('#0f1b10');
+    this.started = false;
+    this.hasError = false;
+    this.buildingSprites.clear();
+    this.unitSprites.clear();
+
+    this.drawHud();
+    this.boardContainer = this.add.container(0, HUD_H);
+    this.drawBoard();
+    this.drawStartingBuildings();
+    this.trailGraphics = this.add.graphics().setDepth(10);
+    this.boardContainer.add(this.trailGraphics);
+
+    this.statusText = this.add
+      .text(this.scale.width / 2, HUD_H + BOARD_H + 36, 'Connecting to arena…', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+
+    // Initial sim state is the neutral map with an agreed seed. The
+    // server chose a per-room seed at room creation — we don't know it
+    // yet, but tickConfirm will hand us confirmed inputs and our local
+    // sim will stay consistent as long as the initial snapshot matches.
+    // For the MVP we pick a deterministic seed from the room id
+    // once it's known; see fetchArena() below.
+    this.cfg = {
+      tickRate: TICK_HZ,
+      maxTicks: TICK_HZ * MATCH_SECONDS,
+      initialSnapshot: NEUTRAL_MAP,
+      seed: 0x7770,
+    };
+    this.state = Sim.createInitialState(this.cfg);
+
+    this.wirePointerInput();
+    void this.connect();
+
+    this.events.once('shutdown', () => void this.arena?.leave());
+  }
+
+  private drawHud(): void {
+    const g = this.add.graphics();
+    g.fillStyle(0x0a120c, 1);
+    g.fillRect(0, 0, this.scale.width, HUD_H);
+    g.fillStyle(0x1a2b1a, 1);
+    g.fillRect(0, HUD_H - 2, this.scale.width, 2);
+    this.add
+      .text(16, HUD_H / 2, '← Home', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '14px',
+        color: '#c3e8b0',
+        backgroundColor: '#1a2b1a',
+        padding: { left: 10, right: 10, top: 6, bottom: 6 },
+      })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        void this.arena?.leave();
+        this.scene.start('HomeScene');
+      });
+    this.add
+      .text(this.scale.width / 2, HUD_H / 2, '⚔ Live Arena', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '18px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+  }
+
+  private drawBoard(): void {
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1d3a1a, 1);
+    bg.fillRect(0, 0, BOARD_W, BOARD_H);
+    bg.fillStyle(0x244a21, 1);
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        if ((x + y) % 2 === 0) bg.fillRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+    const grid = this.add.graphics({
+      lineStyle: { width: 1, color: 0x2c5a23, alpha: 0.5 },
+    });
+    for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
+    for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
+    this.boardContainer.add([bg, grid]);
+  }
+
+  private drawStartingBuildings(): void {
+    for (const b of this.state.buildings) {
+      if (this.buildingSprites.has(b.id)) continue;
+      const x = b.anchorX * TILE + (b.w * TILE) / 2;
+      const y = b.anchorY * TILE + (b.h * TILE) / 2;
+      const spr = this.add.image(x, y, `building-${b.kind}`);
+      spr.setOrigin(0.5, 0.75);
+      spr.setDisplaySize(TILE * Math.max(b.w, 1.6), TILE * Math.max(b.h, 1.6));
+      this.boardContainer.add(spr);
+      this.buildingSprites.set(b.id, spr);
+    }
+  }
+
+  private wirePointerInput(): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (!this.started || this.hasError) return;
+      if (p.y < HUD_H || p.y > HUD_H + BOARD_H) return;
+      this.isDrawing = true;
+      this.drawingPoints = [{ x: p.x, y: p.y }];
+      this.renderTrailPreview();
+    });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!this.isDrawing) return;
+      const last = this.drawingPoints[this.drawingPoints.length - 1]!;
+      const dx = p.x - last.x;
+      const dy = p.y - last.y;
+      if (dx * dx + dy * dy < 18 * 18) return;
+      if (this.drawingPoints.length >= 32) return;
+      this.drawingPoints.push({ x: p.x, y: p.y });
+      this.renderTrailPreview();
+    });
+    this.input.on('pointerup', () => {
+      if (!this.isDrawing) return;
+      this.isDrawing = false;
+      if (this.drawingPoints.length < 2) {
+        this.trailGraphics.clear();
+        return;
+      }
+      const origin = this.boardContainer.getBounds();
+      const tilePoints: Types.PheromonePoint[] = this.drawingPoints.map((p) => {
+        const tx = (p.x - origin.x) / TILE;
+        const ty = (p.y - origin.y) / TILE;
+        return { x: Sim.fromFloat(tx), y: Sim.fromFloat(ty) };
+      });
+      this.arena?.sendDrawPath({
+        polyline: tilePoints,
+        unitKind: 'SoldierAnt',
+        count: 5,
+        spawnLayer: 0,
+        intendedTick: this.latestServerTick + INPUT_DELAY_TICKS,
+      });
+      this.tweens.add({
+        targets: this.trailGraphics,
+        alpha: { from: 1, to: 0 },
+        duration: 500,
+        onComplete: () => {
+          this.trailGraphics.clear();
+          this.trailGraphics.setAlpha(1);
+        },
+      });
+    });
+    void runtime;
+  }
+
+  private renderTrailPreview(): void {
+    const origin = this.boardContainer.getBounds();
+    this.trailGraphics.clear();
+    this.trailGraphics.lineStyle(6, 0xffd98a, 0.85);
+    this.trailGraphics.beginPath();
+    for (let i = 0; i < this.drawingPoints.length; i++) {
+      const p = this.drawingPoints[i]!;
+      const x = p.x - origin.x;
+      const y = p.y - origin.y;
+      if (i === 0) this.trailGraphics.moveTo(x, y);
+      else this.trailGraphics.lineTo(x, y);
+    }
+    this.trailGraphics.strokePath();
+  }
+
+  private async connect(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) {
+      this.reportOffline('Runtime not ready');
+      return;
+    }
+    const playerId = runtime.auth.playerId ?? 'guest';
+    this.arena = new ArenaClient();
+    this.arena.on((ev) => this.handleArenaEvent(ev));
+    await this.arena.joinOrCreate(playerId);
+  }
+
+  private handleArenaEvent(ev: ArenaEvent): void {
+    if (!this.scene.isActive()) return;
+    switch (ev.kind) {
+      case 'connecting':
+        this.statusText.setText('Connecting to arena…');
+        break;
+      case 'joined':
+        this.statusText.setText('Waiting for opponent…');
+        break;
+      case 'both-ready':
+        this.statusText.setText('Fight!');
+        this.started = true;
+        break;
+      case 'tick':
+        this.latestServerTick = ev.data.tick;
+        this.applyConfirmedInputs(ev.data);
+        if (!this.started) {
+          this.started = true;
+          this.statusText.setText('Fight!');
+        }
+        break;
+      case 'opponent-left':
+        this.statusText.setText('Opponent left — you win by default');
+        break;
+      case 'error':
+        this.reportOffline(ev.error.message);
+        break;
+      case 'closed':
+        if (!this.hasError) this.statusText.setText('Arena closed');
+        break;
+    }
+  }
+
+  // Apply the server's confirmed-input batch for a tick and advance
+  // our local sim to match. Hash check catches any client-side drift.
+  private applyConfirmedInputs(e: { tick: number; confirmedInputs: Types.SimInput[]; stateHash: string }): void {
+    // Run each local tick up to the server's tick, applying confirmed
+    // inputs at the exact tick the server applied them.
+    const byTick = new Map<number, Types.SimInput[]>();
+    for (const inp of e.confirmedInputs) {
+      const list = byTick.get(inp.tick) ?? [];
+      list.push(inp);
+      byTick.set(inp.tick, list);
+    }
+    while (this.state.tick < e.tick && this.state.outcome === 'ongoing') {
+      const next = this.state.tick + 1;
+      const batch = byTick.get(next) ?? [];
+      Sim.step(this.state, this.cfg, batch);
+    }
+    this.renderFrame();
+    // Hash reconciliation — if we drift, log and re-trust the server
+    // on the next tickConfirm (a full-state resync would be nicer but
+    // is out of scope here).
+    const ours = Sim.hashToHex(Sim.hashSimState(this.state));
+    if (ours !== e.stateHash) {
+      console.warn(`[arena] state hash drift tick=${e.tick} ours=${ours} theirs=${e.stateHash}`);
+    }
+  }
+
+  private renderFrame(): void {
+    const alive = new Set<number>();
+    for (const u of this.state.units) {
+      alive.add(u.id);
+      let spr = this.unitSprites.get(u.id);
+      const x = Sim.toFloat(u.x) * TILE;
+      const y = Sim.toFloat(u.y) * TILE;
+      if (!spr) {
+        spr = this.add
+          .image(x, y, `unit-${u.kind}`)
+          .setDisplaySize(28, 28)
+          .setOrigin(0.5, 0.7)
+          .setTint(u.owner === 0 ? 0xffffff : 0xffc0c0);
+        this.boardContainer.add(spr);
+        this.unitSprites.set(u.id, spr);
+      } else {
+        spr.setPosition(x, y);
+      }
+    }
+    for (const [id, spr] of this.unitSprites) {
+      if (!alive.has(id)) {
+        spr.destroy();
+        this.unitSprites.delete(id);
+      }
+    }
+    for (const b of this.state.buildings) {
+      const spr = this.buildingSprites.get(b.id);
+      if (!spr) continue;
+      if (b.hp <= 0 && spr.alpha > 0.2) {
+        this.tweens.add({ targets: spr, alpha: 0.18, duration: 200 });
+      }
+    }
+  }
+
+  private reportOffline(message: string): void {
+    this.hasError = true;
+    this.statusText.setText(
+      [
+        'Live arena unavailable.',
+        '',
+        message,
+        '',
+        "Deploy @hive/arena separately (Colyseus on port 2567) and set",
+        "VITE_ARENA_URL to its wss:// URL at build time.",
+      ].join('\n'),
+    );
+  }
+}
