@@ -54,10 +54,15 @@ async function start(): Promise<void> {
   // Serve the built client (Phaser SPA) from the root. If the build hasn't
   // run yet we skip registration so local API-only dev still boots.
   if (existsSync(CLIENT_DIST)) {
+    // wildcard:true registers a GET /* catchall that serves any matching
+    // file under CLIENT_DIST. Explicit routes registered earlier
+    // (/health, /api/*, /admin/api/*) still win — Fastify's router gives
+    // more-specific paths priority. Without the wildcard, /assets/
+    // sprites written by the admin at runtime would 404 even though the
+    // file is on disk.
     await app.register(fastifyStatic, {
       root: CLIENT_DIST,
       prefix: '/',
-      wildcard: false,
     });
     app.log.info(`serving client from ${CLIENT_DIST}`);
 

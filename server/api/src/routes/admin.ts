@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import archiver from 'archiver';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, readdir, stat, writeFile, unlink } from 'node:fs/promises';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { geminiGenerateImages } from '../admin/gemini.js';
@@ -11,8 +12,38 @@ import { adminAuthConfigured } from '../auth/adminAuth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
-const SPRITES_DIR = join(REPO_ROOT, 'client', 'public', 'assets', 'sprites');
+
+// Two possible sprite locations, each with a specific purpose:
+//
+// DIST_SPRITES_DIR — under client/dist, the directory fastify-static
+// actually serves at /assets/sprites/*. This MUST be the primary write
+// target or the running game will 404 on the image the admin just saved
+// (classic "save succeeded, preview is broken" symptom).
+//
+// PUBLIC_SPRITES_DIR — under client/public, the committable source of
+// truth that Vite copies into dist at build time and that the CLI
+// (tools/gemini-art) writes to. We best-effort mirror admin saves here
+// when it exists so that local-dev workflows (admin running against a
+// checked-out repo) get files that can be `git add`-ed directly.
+const DIST_SPRITES_DIR = join(
+  REPO_ROOT,
+  'client',
+  'dist',
+  'assets',
+  'sprites',
+);
+const PUBLIC_SPRITES_DIR = join(
+  REPO_ROOT,
+  'client',
+  'public',
+  'assets',
+  'sprites',
+);
 const PROMPTS_PATH = join(REPO_ROOT, 'tools', 'gemini-art', 'prompts.json');
+
+function publicDirExists(): boolean {
+  return existsSync(join(REPO_ROOT, 'client', 'public'));
+}
 
 interface GenerateBody {
   prompt: string;
@@ -55,24 +86,33 @@ function sanitizeKey(key: string): string | null {
 
 export function registerAdmin(app: FastifyInstance): void {
   app.get('/admin/api/status', async () => {
+    // List what's actually being served. If dist has nothing yet (fresh
+    // deploy, admin never ran), fall back to public so the admin sees
+    // whatever will be copied during the next build.
     let files: Array<{ name: string; size: number; mtime: number }> = [];
-    try {
-      const names = await readdir(SPRITES_DIR);
-      const metas = await Promise.all(
-        names
-          .filter((n) => n.endsWith('.png') || n.endsWith('.webp'))
-          .map(async (n) => {
-            const s = await stat(join(SPRITES_DIR, n));
-            return { name: n, size: s.size, mtime: s.mtimeMs };
-          }),
-      );
-      files = metas;
-    } catch {
-      files = []; // directory may not exist yet
+    for (const dir of [DIST_SPRITES_DIR, PUBLIC_SPRITES_DIR]) {
+      try {
+        const names = await readdir(dir);
+        const metas = await Promise.all(
+          names
+            .filter((n) => n.endsWith('.png') || n.endsWith('.webp'))
+            .map(async (n) => {
+              const s = await stat(join(dir, n));
+              return { name: n, size: s.size, mtime: s.mtimeMs };
+            }),
+        );
+        if (metas.length > 0) {
+          files = metas;
+          break;
+        }
+      } catch {
+        // directory may not exist yet
+      }
     }
     return {
       authMode: adminAuthConfigured() ? 'token' : 'loopback-only',
-      spritesDir: SPRITES_DIR,
+      spritesDir: DIST_SPRITES_DIR,
+      mirrorsPublic: publicDirExists(),
       files,
     };
   });
@@ -204,39 +244,52 @@ export function registerAdmin(app: FastifyInstance): void {
       return { error: `image size ${buf.length} exceeds ${MAX_SAVE_BYTES}` };
     }
 
-    await mkdir(SPRITES_DIR, { recursive: true });
-
-    // Writing both formats is wasteful — we pick the one the admin chose
-    // and clear the sibling so BootScene's prefer-webp-then-png fallback
-    // never ambiguates.
-    const primary = join(SPRITES_DIR, `${safeKey}.${body.format}`);
-    const sibling = join(
-      SPRITES_DIR,
-      `${safeKey}.${body.format === 'webp' ? 'png' : 'webp'}`,
-    );
-    await writeFile(primary, buf);
+    // Write order matters: dist is what fastify-static serves, so write
+    // there first. If public exists (local-dev workflow), mirror so a
+    // `git add client/public/assets/sprites` captures the same bytes.
+    const siblingExt = body.format === 'webp' ? 'png' : 'webp';
+    await mkdir(DIST_SPRITES_DIR, { recursive: true });
+    await writeFile(join(DIST_SPRITES_DIR, `${safeKey}.${body.format}`), buf);
     try {
-      // Remove the sibling if it exists so the loader always gets the latest.
-      await (await import('node:fs/promises')).unlink(sibling);
+      await unlink(join(DIST_SPRITES_DIR, `${safeKey}.${siblingExt}`));
     } catch {
-      // not there — fine.
+      // not there — fine
     }
+
+    let mirrored = false;
+    if (publicDirExists()) {
+      try {
+        await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
+        await writeFile(
+          join(PUBLIC_SPRITES_DIR, `${safeKey}.${body.format}`),
+          buf,
+        );
+        try {
+          await unlink(join(PUBLIC_SPRITES_DIR, `${safeKey}.${siblingExt}`));
+        } catch {
+          // not there
+        }
+        mirrored = true;
+      } catch (err) {
+        // public mirror is best-effort — the game still works from dist
+        app.log.warn({ err }, 'public mirror write failed');
+      }
+    }
+
     return {
       ok: true,
       path: `/assets/sprites/${safeKey}.${body.format}`,
       size: buf.length,
+      mirroredToPublic: mirrored,
     };
   });
 
   app.get('/admin/api/download-all', async (_req, reply) => {
-    // Stream a ZIP of the sprites/ directory. Admin presses this after
-    // generating art on Railway's ephemeral disk, downloads the zip,
-    // and extracts into client/public/assets/sprites/ locally for a
-    // durable git commit. Entries are STORE-only because WebP/PNG are
-    // already compressed — deflating them again would only waste CPU.
+    // Stream a zip of the live sprites (served dir). Entries are
+    // STORE-only because WebP/PNG are already compressed.
     let files: string[] = [];
     try {
-      files = (await readdir(SPRITES_DIR)).filter(
+      files = (await readdir(DIST_SPRITES_DIR)).filter(
         (n) => n.endsWith('.png') || n.endsWith('.webp'),
       );
     } catch {
@@ -255,18 +308,14 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.raw.destroy(err);
     });
     for (const name of files) {
-      zip.file(join(SPRITES_DIR, name), { name });
+      zip.file(join(DIST_SPRITES_DIR, name), { name });
     }
-    // Attach a short README so the zip is self-describing.
     zip.append(
       `# Hive Wars sprite bundle\n\nExtract these ${files.length} file(s) ` +
         `to\n  client/public/assets/sprites/\nthen \`git add\` and commit ` +
         `so the art survives the next Railway redeploy.\n`,
       { name: 'README.txt' },
     );
-    // Trigger finalize without awaiting — Fastify pipes the stream to
-    // the HTTP response and archiver drains on back-pressure. Errors are
-    // surfaced by the 'error' handler above.
     void zip.finalize();
     return reply.send(zip);
   });
@@ -278,14 +327,17 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.code(400);
       return { error: 'invalid key' };
     }
-    const fs = await import('node:fs/promises');
+    // Remove from both dist and public so admin-delete doesn't leave
+    // a ghost copy that would re-appear after the next build.
     let removed = 0;
-    for (const ext of ['png', 'webp']) {
-      try {
-        await fs.unlink(join(SPRITES_DIR, `${safeKey}.${ext}`));
-        removed++;
-      } catch {
-        // not there
+    for (const dir of [DIST_SPRITES_DIR, PUBLIC_SPRITES_DIR]) {
+      for (const ext of ['png', 'webp']) {
+        try {
+          await unlink(join(dir, `${safeKey}.${ext}`));
+          removed++;
+        } catch {
+          // not there
+        }
       }
     }
     return { ok: true, removed };
