@@ -117,4 +117,92 @@ export class AuthClient {
       // ignore
     }
   }
+
+  // Claim the current guest as a real user account. If the caller is
+  // already authenticated, the server attaches their existing player
+  // (base, trophies, resources) to the new user row — progress is
+  // preserved. Subsequent /auth/login from any device returns the
+  // same player.
+  async register(username: string, password: string): Promise<Session> {
+    const res = await fetch(`${this.apiBase}/auth/register`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(this.session?.token
+          ? { authorization: `Bearer ${this.session.token}` }
+          : {}),
+      },
+      body: JSON.stringify({ username, password }),
+    });
+    const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as
+      | { ok: true; playerId: string; token: string; userId: string; username: string }
+      | { error: string };
+    if (!res.ok || !('ok' in body)) {
+      const errMsg = 'error' in body ? body.error : `register ${res.status}`;
+      throw new Error(errMsg);
+    }
+    const session: Session = {
+      playerId: body.playerId,
+      token: body.token,
+      isNew: true,
+    };
+    this.session = session;
+    try {
+      localStorage.setItem(TOKEN_KEY, session.token);
+      localStorage.setItem(PLAYER_KEY, session.playerId);
+    } catch {
+      // ignore
+    }
+    return session;
+  }
+
+  async login(username: string, password: string): Promise<Session> {
+    const res = await fetch(`${this.apiBase}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as
+      | { ok: true; playerId: string; token: string; userId: string; username: string }
+      | { error: string };
+    if (!res.ok || !('ok' in body)) {
+      const errMsg = 'error' in body ? body.error : `login ${res.status}`;
+      throw new Error(errMsg);
+    }
+    const session: Session = {
+      playerId: body.playerId,
+      token: body.token,
+      isNew: false,
+    };
+    this.session = session;
+    try {
+      localStorage.setItem(TOKEN_KEY, session.token);
+      localStorage.setItem(PLAYER_KEY, session.playerId);
+    } catch {
+      // ignore
+    }
+    return session;
+  }
+
+  // Server-truth view of the current session — whether the token
+  // points at a guest or a user-owned player, and the username when
+  // applicable. Scenes use it to flip the account-button label.
+  async fetchMe(): Promise<{
+    playerId: string;
+    userId: string | null;
+    username: string | null;
+    isGuest: boolean;
+  } | null> {
+    if (!this.session?.token) return null;
+    const res = await fetch(`${this.apiBase}/auth/me`, {
+      headers: { authorization: `Bearer ${this.session.token}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      playerId: string;
+      userId: string | null;
+      username: string | null;
+      isGuest: boolean;
+    };
+  }
 }
