@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import type { FBInstantBridge } from '../fbinstant/FBInstantBridge.js';
 import {
   ALL_SPRITE_KEYS,
-  ANIMATED_UNIT_KINDS,
   WALK_CYCLE_FRAME_COUNT,
   WALK_CYCLE_FRAME_H,
   WALK_CYCLE_FRAME_W,
@@ -10,17 +9,47 @@ import {
 } from '../assets/atlas.js';
 import { generateMissingPlaceholders } from '../assets/placeholders.js';
 
-// BootScene — tries the real Gemini-generated sprite for each key (WebP
-// first for size, PNG as fallback), then bakes a procedural placeholder
-// for any slot still missing. Also loads optional walk-cycle
-// spritesheets for the animated units and registers a Phaser animation
-// per kind so scenes can just `.play('walk-<Kind>')`.
+// BootScene — preloads real Gemini-generated sprites for the keys the
+// server's manifest says actually exist, then bakes procedural
+// placeholders for every slot still missing. The manifest fetch lets
+// us skip the 20-file-fan-out-of-404s that flooded the devtools
+// console on every boot before this change.
+//
+// If the manifest fetch fails (no network, old server), we fall back
+// to the old "try every key, let 404s happen" behavior so the game
+// still boots on a server that doesn't have the endpoint yet.
 
-function walkSheetKey(kind: string): string {
-  return `unit-${kind}-walk`;
+const API_BASE: string =
+  typeof import.meta.env.VITE_API_URL === 'string' && import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL
+    : '/api';
+
+interface ManifestSheet {
+  key: string;
+  frames: number;
 }
+
+interface ManifestResponse {
+  images: string[];
+  sheets: ManifestSheet[];
+  updatedAt: number;
+}
+
 function walkAnimKey(kind: string): string {
-  return `walk-${kind}`;
+  // Walk cycles use key `unit-<Kind>-walk`. The anim key mirrors that
+  // minus the `unit-` prefix + `-walk` suffix for brevity at callers.
+  const stripped = kind.replace(/^unit-/, '').replace(/-walk$/, '');
+  return `walk-${stripped}`;
+}
+
+async function fetchManifest(): Promise<ManifestResponse | null> {
+  try {
+    const res = await fetch(`${API_BASE}/sprites/manifest`);
+    if (!res.ok) return null;
+    return (await res.json()) as ManifestResponse;
+  } catch {
+    return null;
+  }
 }
 
 export class BootScene extends Phaser.Scene {
@@ -28,93 +57,120 @@ export class BootScene extends Phaser.Scene {
     super('BootScene');
   }
 
+  private manifest: ManifestResponse | null = null;
+
+  async init(): Promise<void> {
+    // init() completes before preload() runs, so the manifest is in
+    // hand by the time we queue loads. If it fails we leave
+    // `this.manifest` null and preload falls back to the legacy
+    // every-key loader.
+    this.manifest = await fetchManifest();
+  }
+
   preload(): void {
     this.load.on('progress', (p: number) => this.fb.setLoadingProgress(p));
 
-    // Individual-file errors: don't halt the loader — the missing sprite
-    // just gets a procedural placeholder in create(). Expected until
-    // an admin runs Gemini generation for every slot.
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
       console.debug('[boot] sprite missing, placeholder will draw:', file.key);
     });
 
-    // For each key, we kick off TWO loads: a WebP under "<key>.webp" and a
-    // PNG under "<key>" itself. The first to succeed wins by texture-key
-    // resolution order: if the .webp variant loads, it registers under
-    // the suffixed key and we copy it onto the canonical key in create().
-    // That way Phaser's texture cache keeps one entry per sprite and
-    // scene rendering never needs to branch on format.
+    const version = this.manifest?.updatedAt ?? Date.now();
+    const versioned = (path: string): string => `${path}?v=${version}`;
+
+    if (this.manifest) {
+      // Modern path: load exactly what the manifest lists. The
+      // WebP-first/PNG-fallback dance is no longer needed — the
+      // manifest lists one format per key (whichever was saved), and
+      // we probe the disk for the correct extension via a HEAD-free
+      // shortcut: the admin pipeline always saves WebP, so we try
+      // that first; if it's not present (e.g. a legacy PNG), the
+      // singleton fallback load below recovers it.
+      for (const key of this.manifest.images) {
+        this.load.image(key, versioned(`assets/sprites/${key}.webp`));
+        // Paired PNG fallback keyed under a suffix; promoted in
+        // create() only when the primary didn't succeed.
+        this.load.image(`${key}.png-fb`, versioned(`assets/sprites/${key}.png`));
+      }
+      for (const sheet of this.manifest.sheets) {
+        const sheetFrameConfig: Phaser.Types.Loader.FileTypes.ImageFrameConfig = {
+          frameWidth: WALK_CYCLE_FRAME_W,
+          frameHeight: WALK_CYCLE_FRAME_H,
+        };
+        this.load.spritesheet(
+          sheet.key,
+          versioned(`assets/sprites/${sheet.key}.webp`),
+          sheetFrameConfig,
+        );
+        this.load.spritesheet(
+          `${sheet.key}.png-fb`,
+          versioned(`assets/sprites/${sheet.key}.png`),
+          sheetFrameConfig,
+        );
+      }
+      return;
+    }
+
+    // Legacy fallback: no manifest reachable. Try every key in both
+    // formats — this is the pre-change behavior and will fire 404s
+    // for missing sprites but still boots the game.
     for (const key of ALL_SPRITE_KEYS) {
       this.load.image(`${key}.webp`, `assets/sprites/${key}.webp`);
       this.load.image(key, `assets/sprites/${key}.png`);
     }
-
-    // Walk-cycle spritesheets for the animated units. Same WebP-first /
-    // PNG-fallback dance as the static sprites, but loaded as Phaser
-    // spritesheets so the walk animation can cycle frames. `frameConfig`
-    // is the same both times — frame geometry is fixed (see atlas.ts).
-    const sheetFrameConfig: Phaser.Types.Loader.FileTypes.ImageFrameConfig = {
-      frameWidth: WALK_CYCLE_FRAME_W,
-      frameHeight: WALK_CYCLE_FRAME_H,
-    };
-    for (const kind of ANIMATED_UNIT_KINDS) {
-      const key = walkSheetKey(kind);
-      this.load.spritesheet(
-        `${key}.webp`,
-        `assets/sprites/${key}.webp`,
-        sheetFrameConfig,
-      );
-      this.load.spritesheet(key, `assets/sprites/${key}.png`, sheetFrameConfig);
-    }
   }
 
   create(): void {
-    // Promote WebP-loaded textures to the canonical key when the PNG
-    // sibling didn't load. Destroy the .webp alias afterward to keep
-    // the texture cache tidy.
-    for (const key of ALL_SPRITE_KEYS) {
-      const webpKey = `${key}.webp`;
-      if (!this.textures.exists(key) && this.textures.exists(webpKey)) {
-        const img = this.textures.get(webpKey).getSourceImage() as
+    // Promote PNG fallbacks when the primary WebP didn't land. Works
+    // for both manifest and legacy paths because both use the same
+    // suffix convention.
+    const promoteFallback = (primary: string, fallback: string): void => {
+      if (!this.textures.exists(primary) && this.textures.exists(fallback)) {
+        const img = this.textures.get(fallback).getSourceImage() as
           | HTMLImageElement
           | HTMLCanvasElement;
-        this.textures.addImage(key, img as HTMLImageElement);
+        this.textures.addImage(primary, img as HTMLImageElement);
       }
-      if (this.textures.exists(webpKey)) this.textures.remove(webpKey);
-    }
+      if (this.textures.exists(fallback)) this.textures.remove(fallback);
+    };
 
-    // Same promotion for spritesheet variants. Can't reuse
-    // addImage for a sheet (frames would be lost), so when only the
-    // WebP variant loaded we rename it onto the canonical key via
-    // `textures.addSpriteSheet` against the source image.
-    for (const kind of ANIMATED_UNIT_KINDS) {
-      const key = walkSheetKey(kind);
-      const webpKey = `${key}.webp`;
-      if (!this.textures.exists(key) && this.textures.exists(webpKey)) {
-        const src = this.textures.get(webpKey).getSourceImage() as
-          | HTMLImageElement
-          | HTMLCanvasElement;
-        this.textures.addSpriteSheet(key, src as HTMLImageElement, {
-          frameWidth: WALK_CYCLE_FRAME_W,
-          frameHeight: WALK_CYCLE_FRAME_H,
-        });
+    if (this.manifest) {
+      for (const key of this.manifest.images) {
+        promoteFallback(key, `${key}.png-fb`);
       }
-      if (this.textures.exists(webpKey)) this.textures.remove(webpKey);
+      for (const sheet of this.manifest.sheets) {
+        // Promotion path for spritesheets preserves frame geometry by
+        // re-adding as a spritesheet, not a plain image.
+        const primary = sheet.key;
+        const fb = `${sheet.key}.png-fb`;
+        if (!this.textures.exists(primary) && this.textures.exists(fb)) {
+          const src = this.textures.get(fb).getSourceImage() as
+            | HTMLImageElement
+            | HTMLCanvasElement;
+          this.textures.addSpriteSheet(primary, src as HTMLImageElement, {
+            frameWidth: WALK_CYCLE_FRAME_W,
+            frameHeight: WALK_CYCLE_FRAME_H,
+          });
+        }
+        if (this.textures.exists(fb)) this.textures.remove(fb);
 
-      // Register the walk animation if the sheet loaded. When the file
-      // doesn't exist yet (Gemini hasn't generated this one), skip —
-      // scenes fall back to the static image in that case.
-      const animKey = walkAnimKey(kind);
-      if (this.textures.exists(key) && !this.anims.exists(animKey)) {
-        this.anims.create({
-          key: animKey,
-          frames: this.anims.generateFrameNumbers(key, {
-            start: 0,
-            end: WALK_CYCLE_FRAME_COUNT - 1,
-          }),
-          frameRate: WALK_CYCLE_FPS,
-          repeat: -1,
-        });
+        // Register the walk animation if the sheet landed.
+        const animKey = walkAnimKey(sheet.key);
+        if (this.textures.exists(primary) && !this.anims.exists(animKey)) {
+          this.anims.create({
+            key: animKey,
+            frames: this.anims.generateFrameNumbers(primary, {
+              start: 0,
+              end: WALK_CYCLE_FRAME_COUNT - 1,
+            }),
+            frameRate: WALK_CYCLE_FPS,
+            repeat: -1,
+          });
+        }
+      }
+    } else {
+      // Legacy-path WebP promotion, same as before this PR.
+      for (const key of ALL_SPRITE_KEYS) {
+        promoteFallback(key, `${key}.webp`);
       }
     }
 

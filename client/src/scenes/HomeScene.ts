@@ -102,6 +102,13 @@ export class HomeScene extends Phaser.Scene {
     string,
     { sugar: number; leafBits: number; aphidMilk: number }
   > = {};
+  // Per-kind town-builder rules from the server. Empty until
+  // loadCatalog() resolves; when present, picker gates slots by
+  // current Queen level + per-kind caps + layer restriction.
+  private rules: Record<
+    string,
+    { allowedLayers: number[]; quotaByTier: number[] }
+  > = {};
 
   private async loadCatalog(): Promise<void> {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
@@ -109,6 +116,7 @@ export class HomeScene extends Phaser.Scene {
     try {
       const res = await runtime.api.getBuildingCatalog();
       this.catalog = res.placeable;
+      if (res.rules) this.rules = res.rules;
     } catch {
       // Picker will show an empty state
     }
@@ -621,6 +629,30 @@ export class HomeScene extends Phaser.Scene {
 
   private pickerContainer: Phaser.GameObjects.Container | null = null;
 
+  // Queen Chamber level determines the tier index into per-kind
+  // quotas. Reads from the server-backed base snapshot so a freshly
+  // upgraded Queen is reflected on the very next picker open.
+  private currentQueenLevel(): number {
+    const queen = this.serverBase?.buildings.find(
+      (b) => b.kind === 'QueenChamber',
+    );
+    const lvl = queen?.level ?? 1;
+    return Math.max(1, Math.min(5, Math.floor(lvl)));
+  }
+
+  // Aggregate count of each building kind in the current base. We
+  // include destroyed buildings (hp=0) because they still occupy a
+  // slot until the player manually clears them — matches the server's
+  // countOfKind() so client gating + server validation don't disagree.
+  private countBuildingsByKind(): Record<string, number> {
+    const out: Record<string, number> = {};
+    if (!this.serverBase) return out;
+    for (const b of this.serverBase.buildings) {
+      out[b.kind] = (out[b.kind] ?? 0) + 1;
+    }
+    return out;
+  }
+
   private openPicker(tx: number, ty: number): void {
     this.closePicker();
     const kinds = Object.keys(this.catalog) as Types.BuildingKind[];
@@ -700,6 +732,12 @@ export class HomeScene extends Phaser.Scene {
       .on('pointerdown', () => this.closePicker());
     container.add(close);
 
+    // Queen level + current counts drive the per-kind quota gate.
+    // Computed once per picker open; picker is destroyed on commit so
+    // the snapshot staying slightly stale between clicks is fine.
+    const qLevel = this.currentQueenLevel();
+    const counts = this.countBuildingsByKind();
+
     const slotW = (W - 48) / cols;
     kinds.forEach((kind, i) => {
       const col = i % cols;
@@ -712,37 +750,71 @@ export class HomeScene extends Phaser.Scene {
         this.resources.leafBits >= cost.leafBits &&
         this.resources.aphidMilk >= cost.aphidMilk;
 
+      // Rules gates. If the server didn't send rules (old backend),
+      // we fall back to "any layer, unlimited", which matches the old
+      // behavior so the client still boots against a mismatched API.
+      const kindRules = this.rules[kind];
+      const layerOk =
+        !kindRules || kindRules.allowedLayers.includes(this.layer);
+      const cap = kindRules ? kindRules.quotaByTier[qLevel - 1] ?? 0 : 99;
+      const current = counts[kind] ?? 0;
+      const capOk = current < cap;
+      // Three denial reasons, in priority order — the most actionable
+      // one wins so the toast after a tap tells the player exactly
+      // what to do next.
+      const denyReason: string | null = !capOk
+        ? `${kind} cap ${current}/${cap} — upgrade the Queen to unlock more`
+        : !layerOk
+          ? `${kind} belongs on the ${kindRules!.allowedLayers[0] === 0 ? 'surface' : 'underground'} layer — flip layers and try again`
+          : !canAfford
+            ? `Need ${cost.sugar} sugar & ${cost.leafBits} leaf — have ${this.resources.sugar}/${this.resources.leafBits}`
+            : null;
+      const placeable = denyReason === null;
+
       const slotBg = this.add.graphics().setDepth(203);
-      slotBg.fillStyle(canAfford ? 0x233d24 : 0x2a1e1e, 1);
-      slotBg.lineStyle(2, canAfford ? 0x5ba445 : 0xd94c4c, 1);
+      slotBg.fillStyle(placeable ? 0x233d24 : 0x2a1e1e, 1);
+      slotBg.lineStyle(2, placeable ? 0x5ba445 : 0xd94c4c, 1);
       slotBg.fillRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
       slotBg.strokeRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
       container.add(slotBg);
 
       const icon = this.add
-        .image(cx, cy - 22, `building-${kind}`)
-        .setDisplaySize(48, 48)
-        .setDepth(204);
+        .image(cx, cy - 24, `building-${kind}`)
+        .setDisplaySize(40, 40)
+        .setDepth(204)
+        .setAlpha(placeable ? 1 : 0.5);
       container.add(icon);
 
       const nameText = crispText(
         this,
         cx,
-        cy + 12,
+        cy + 4,
         kind.replace(/([A-Z])/g, ' $1').trim(),
         {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '11px',
-          color: canAfford ? '#e6f5d2' : '#c79090',
+          color: placeable ? '#e6f5d2' : '#c79090',
         },
       )
         .setOrigin(0.5)
         .setDepth(204);
       container.add(nameText);
+
+      // Count/cap badge shows right next to the name so the player can
+      // see the "2/3 turrets" state at a glance.
+      const capText = crispText(this, cx, cy + 18, `${current}/${cap}`, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '10px',
+        color: capOk ? '#c3e8b0' : '#d98080',
+      })
+        .setOrigin(0.5)
+        .setDepth(204);
+      container.add(capText);
+
       const costText = crispText(
         this,
         cx,
-        cy + 28,
+        cy + 34,
         `${cost.sugar}🍬 ${cost.leafBits}🍃`,
         {
           fontFamily: 'ui-monospace, monospace',
@@ -758,12 +830,10 @@ export class HomeScene extends Phaser.Scene {
         .zone(cx, cy, slotW - 8, slotH - 8)
         .setOrigin(0.5)
         .setDepth(205)
-        .setInteractive({ useHandCursor: canAfford });
+        .setInteractive({ useHandCursor: placeable });
       hit.on('pointerdown', () => {
-        if (!canAfford) {
-          this.flashToast(
-            `Need ${cost.sugar} sugar & ${cost.leafBits} leaf — have ${this.resources.sugar}/${this.resources.leafBits}`,
-          );
+        if (!placeable) {
+          this.flashToast(denyReason!);
           return;
         }
         void this.commitPlacement(kind, tx, ty);

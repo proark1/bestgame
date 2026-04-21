@@ -10,6 +10,16 @@ import {
   isPlayerPlaceable,
 } from '../game/buildingCosts.js';
 import {
+  MAX_QUEEN_LEVEL,
+  MIN_QUEEN_LEVEL,
+  QUEEN_UPGRADE_COST,
+  buildingRulesPayload,
+  countOfKind,
+  isLayerAllowed,
+  queenLevel,
+  quotaFor,
+} from '../game/buildingRules.js';
+import {
   isUpgradeableUnit,
   upgradeCatalog,
   upgradeCost,
@@ -346,6 +356,35 @@ export function registerPlayer(app: FastifyInstance): void {
       }
       const base = baseRes.rows[0]!.snapshot;
 
+      // Town-builder layer rule: defensive buildings (turrets, walls,
+      // bunkers, dew collectors) live on the surface; the nursery and
+      // vault are safe underground; tunnels and traps span both.
+      if (!isLayerAllowed(body.kind, body.anchor.layer)) {
+        await client.query('ROLLBACK');
+        reply.code(400);
+        return {
+          error: `${body.kind} can't be placed on the ${body.anchor.layer === 0 ? 'surface' : 'underground'} layer`,
+        };
+      }
+
+      // Town-builder quota rule: each kind has a per-Queen-level cap.
+      // Until the Queen upgrades, extra slots stay locked. This is
+      // the core "town hall tier" gating knob borrowed from every
+      // PvP town-builder of the last decade.
+      const qLevel = queenLevel(base);
+      const cap = quotaFor(body.kind, qLevel);
+      const existingOfKind = countOfKind(base, body.kind);
+      if (existingOfKind >= cap) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return {
+          error: `${body.kind} cap reached (${existingOfKind}/${cap}) at Queen level ${qLevel}. Upgrade the Queen to unlock more slots.`,
+          cap,
+          currentCount: existingOfKind,
+          queenLevel: qLevel,
+        };
+      }
+
       // Bounds check inside the base grid.
       if (
         body.anchor.x < 0 ||
@@ -545,7 +584,11 @@ export function registerPlayer(app: FastifyInstance): void {
   );
 
   // Costs + catalog for the client picker. Keeps the source of truth
-  // on the server — clients never compute cost locally.
+  // on the server — clients never compute cost or quotas locally.
+  // `rules` carries the per-kind layer + quota-by-tier table so the
+  // picker can disable slots (wrong layer / over cap) with a clear
+  // inline explanation, rather than round-tripping to the placement
+  // route only to bounce with a 400.
   app.get('/player/building/catalog', async () => {
     return {
       placeable: Object.fromEntries(
@@ -553,8 +596,113 @@ export function registerPlayer(app: FastifyInstance): void {
           isPlayerPlaceable(k as Types.BuildingKind),
         ),
       ),
+      rules: buildingRulesPayload(),
+      maxQueenLevel: MAX_QUEEN_LEVEL,
     };
   });
+
+  // Queen upgrade — the core town-hall-tier loop. Advancing the Queen
+  // raises the per-kind caps in QUOTA_BY_TIER and unlocks kinds that
+  // had zero slots at the previous tier. Costs scale by level.
+  app.post('/player/upgrade-queen', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const baseRes = await client.query<{ snapshot: Types.Base }>(
+        'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+        [playerId],
+      );
+      if (baseRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'base not found' };
+      }
+      const base = baseRes.rows[0]!.snapshot;
+      const currentLevel = queenLevel(base);
+      if (currentLevel >= MAX_QUEEN_LEVEL) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: `Queen already at max level (${MAX_QUEEN_LEVEL})` };
+      }
+      const cost = QUEEN_UPGRADE_COST[currentLevel - 1];
+      if (!cost) {
+        await client.query('ROLLBACK');
+        reply.code(500);
+        return { error: 'queen upgrade cost lookup failed' };
+      }
+
+      // Atomic debit + snapshot mutation. Same pattern as upgrade-unit.
+      const debitRes = await client.query<{
+        sugar: string;
+        leaf_bits: string;
+        aphid_milk: string;
+        trophies: number;
+      }>(
+        `UPDATE players
+            SET sugar = sugar - $2,
+                leaf_bits = leaf_bits - $3,
+                aphid_milk = aphid_milk - $4,
+                last_seen_at = NOW()
+          WHERE id = $1
+            AND sugar >= $2
+            AND leaf_bits >= $3
+            AND aphid_milk >= $4
+      RETURNING sugar, leaf_bits, aphid_milk, trophies`,
+        [playerId, cost.sugar, cost.leafBits, cost.aphidMilk],
+      );
+      if (debitRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(402);
+        return { error: 'insufficient resources', cost };
+      }
+
+      const updated: Types.Base = {
+        ...base,
+        buildings: base.buildings.map((b) =>
+          b.kind === 'QueenChamber' ? { ...b, level: currentLevel + 1 } : b,
+        ),
+        version: (base.version ?? 0) + 1,
+      };
+      await client.query(
+        `UPDATE bases
+            SET snapshot = $2::jsonb,
+                version = version + 1,
+                updated_at = NOW()
+          WHERE player_id = $1`,
+        [playerId, JSON.stringify(updated)],
+      );
+      await client.query('COMMIT');
+      const debited = debitRes.rows[0]!;
+      return {
+        ok: true,
+        newQueenLevel: currentLevel + 1,
+        base: updated,
+        player: {
+          trophies: debited.trophies,
+          sugar: safeBigintToNumber(debited.sugar, 'sugar', app.log),
+          leafBits: safeBigintToNumber(debited.leaf_bits, 'leaf_bits', app.log),
+          aphidMilk: safeBigintToNumber(debited.aphid_milk, 'aphid_milk', app.log),
+        },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'upgrade-queen failed');
+      reply.code(500);
+      return { error: 'queen upgrade failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  void MIN_QUEEN_LEVEL;
 
   // Unit upgrade catalog + current levels. Clients use this to render
   // the upgrade screen; cost scaling is always re-computed server-side

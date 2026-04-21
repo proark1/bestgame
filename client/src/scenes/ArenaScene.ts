@@ -108,6 +108,19 @@ export class ArenaScene extends Phaser.Scene {
     this.drawHud();
     this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
+    // Initial sim state must be constructed BEFORE drawStartingBuildings
+    // tries to iterate this.state.buildings. The reserve flow in
+    // connect() may later replace this.state with the host-snapshot
+    // version; renderInitialBoard() will redraw then. For now this
+    // gives us valid state for the very first frame.
+    this.cfg = {
+      tickRate: TICK_HZ,
+      maxTicks: TICK_HZ * MATCH_SECONDS,
+      initialSnapshot: NEUTRAL_MAP,
+      seed: 0x7770,
+    };
+    this.state = Sim.createInitialState(this.cfg);
+
     this.drawStartingBuildings();
     this.trailGraphics = this.add.graphics().setDepth(10);
     this.boardContainer.add(this.trailGraphics);
@@ -119,20 +132,6 @@ export class ArenaScene extends Phaser.Scene {
         color: '#c3e8b0',
       })
       .setOrigin(0.5);
-
-    // Initial sim state is the neutral map with an agreed seed. The
-    // server chose a per-room seed at room creation — we don't know it
-    // yet, but tickConfirm will hand us confirmed inputs and our local
-    // sim will stay consistent as long as the initial snapshot matches.
-    // For the MVP we pick a deterministic seed from the room id
-    // once it's known; see fetchArena() below.
-    this.cfg = {
-      tickRate: TICK_HZ,
-      maxTicks: TICK_HZ * MATCH_SECONDS,
-      initialSnapshot: NEUTRAL_MAP,
-      seed: 0x7770,
-    };
-    this.state = Sim.createInitialState(this.cfg);
 
     this.wirePointerInput();
     void this.connect();
@@ -188,6 +187,11 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawStartingBuildings(): void {
+    // Defensive: connect() might re-enter after a fast scene reload
+    // and call this before state hydration. Returning silently is
+    // safer than crashing — renderInitialBoard() will retry once the
+    // reserved snapshot arrives.
+    if (!this.state || !this.state.buildings) return;
     for (const b of this.state.buildings) {
       if (this.buildingSprites.has(b.id)) continue;
       const x = b.anchorX * TILE + (b.w * TILE) / 2;
