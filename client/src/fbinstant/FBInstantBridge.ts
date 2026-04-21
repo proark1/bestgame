@@ -46,11 +46,11 @@ export class FBInstantBridge {
     const sdk = window.FBInstant;
     // Off-platform fast path. The FBInstant SDK's `initializeAsync` /
     // `startGameAsync` never resolve outside Facebook's wrapper — they
-    // wait for a parent iframe that isn't there. So we short-circuit if
-    // either (a) the SDK never loaded, or (b) we're the top-level window
-    // (Facebook always hosts the game in an iframe).
-    const isTopLevel = typeof window !== 'undefined' && window.top === window;
-    if (!sdk || isTopLevel) {
+    // wait for a parent iframe that isn't there. Short-circuit unless
+    // we can positively identify a Facebook/Messenger host so third-
+    // party iframe embeds (itch, Poki, Kongregate) don't eat ~6 s
+    // waiting for the two timeouts to fire.
+    if (!sdk || !isFacebookHost()) {
       this.ctx.playerId = readOrCreateGuestId();
       return this.ctx;
     }
@@ -97,6 +97,41 @@ export class FBInstantBridge {
   get context(): HiveInstantContext {
     return this.ctx;
   }
+}
+
+// Positively identify a Facebook-hosted runtime (Facebook, Messenger,
+// or the FB sandbox CDN). When the game is embedded in a non-FB iframe
+// (itch, Poki, Kongregate), the FBInstant script tag still loads and
+// populates window.FBInstant, but its async methods hang indefinitely.
+// Detecting host first avoids the ~6 s of dead timeouts in that case.
+const FB_HOST_PATTERNS = ['facebook.com', 'messenger.com', 'fbsbx.com'];
+
+function hostMatches(url: string | undefined | null): boolean {
+  if (!url) return false;
+  const s = url.toLowerCase();
+  for (const p of FB_HOST_PATTERNS) {
+    if (s.includes(p)) return true;
+  }
+  return false;
+}
+
+function isFacebookHost(): boolean {
+  try {
+    if (hostMatches(document.referrer)) return true;
+    // Chromium exposes the full iframe ancestor chain here; other engines
+    // leave it undefined, so this is best-effort on top of referrer.
+    const origins = (
+      window.location as unknown as { ancestorOrigins?: DOMStringList }
+    ).ancestorOrigins;
+    if (origins) {
+      for (let i = 0; i < origins.length; i++) {
+        if (hostMatches(origins[i])) return true;
+      }
+    }
+  } catch {
+    // Ignore — hostile environments (sandbox, file://) just go guest.
+  }
+  return false;
 }
 
 function readOrCreateGuestId(): string {
