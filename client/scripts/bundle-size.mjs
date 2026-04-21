@@ -26,9 +26,14 @@ async function walk(dir) {
 }
 
 function isInitialChunk(name) {
-  // Anything not explicitly lazy-loaded ships in the first payload.
-  // manualChunks in vite.config.ts emits names like 'arena-*.js' for lazy.
-  return !/(arena|clan|raid)-[^/]+\.js$/.test(name);
+  // Anything not on a game-deferred code-split chunk or under admin.html's
+  // dependency tree ships in the game's first payload. The admin panel is
+  // a separate Vite entry point (admin.html) — not fetched when a regular
+  // player opens the game root.
+  if (/(arena|clan|raid)-[^/]+\.js$/.test(name)) return false;
+  if (/^admin(\.html|[-_./])/.test(name)) return false;
+  if (/assets\/admin[-_.]/.test(name)) return false;
+  return true;
 }
 
 const files = await walk(DIST);
