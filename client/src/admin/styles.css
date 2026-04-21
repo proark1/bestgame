@@ -521,3 +521,26 @@ button {
 .admin-animation-warning {
   color: #f2d06b;
 }
+
+.admin-animation header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-animation-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.admin-animation-list li {
+  /* Layout: [checkbox] [label ...] [status] [button]. The label
+   * keeps the fill; status and button hug the right edge. */
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+}
+.admin-animation-list li .btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}

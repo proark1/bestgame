@@ -7,8 +7,10 @@ import {
   fetchAnimationSettings,
   fetchPrompts,
   fetchStatus,
+  generateImages,
   getToken,
   putAnimationSettings,
+  saveSprite,
   setToken,
   updatePrompt,
   type AnimationSettings,
@@ -16,7 +18,7 @@ import {
   type SpriteFile,
 } from './api.js';
 import { SpriteCard } from './SpriteCard.js';
-import { humanBytes } from './compress.js';
+import { compressBase64Image, humanBytes } from './compress.js';
 
 // Keep in sync with client/src/assets/atlas.ts UNIT_SPRITE_KEYS / BUILDING_SPRITE_KEYS.
 const UNIT_KEYS = [
@@ -341,19 +343,92 @@ function composePrompt(description: string, kind: 'unit' | 'building'): string {
   ].join(' ');
 }
 
-// Animation toggle panel. One row per animated unit kind; each row has
-// a checkbox that PUTs to /admin/api/settings/animation. Shows a badge
-// when the walk spritesheet is missing from the on-disk listing so the
-// admin knows to generate it before turning the toggle on.
+// Walk-cycle spritesheet geometry. Duplicated here (not imported from
+// @hive/client/src/assets/atlas.ts) because the admin bundle is a
+// separate Vite entry point that doesn't share the game's runtime
+// code paths. Keep this block in sync if the strip layout ever
+// changes — the server-side migration (frames CHECK 1..16) and the
+// client loader both enforce the same shape.
+const WALK_STRIP_WIDTH = 512;
+const WALK_STRIP_HEIGHT = 128;
+const WALK_STRIP_FRAME_COUNT = 4;
+
+// Builds the Gemini prompt for a walk-cycle strip. The first line is
+// the per-kind description from prompts.json `walkCycles`; the rest
+// are deterministic constraints lifted out into one place so all
+// three kinds share identical framing rules. Gemini performs much
+// better when we restate "four equal-width frames, identical camera"
+// three different ways — the model occasionally loses track of the
+// frame-count constraint on long prompts, so the redundancy matters.
+function composeWalkCyclePrompt(description: string): string {
+  const style = state.prompts?.styleLock ?? '';
+  return [
+    `Subject: ${description}`,
+    `Style: ${style}`,
+    `Canvas: exactly ${WALK_STRIP_WIDTH}x${WALK_STRIP_HEIGHT} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
+    `Composition: one single horizontal spritesheet strip containing exactly ${WALK_STRIP_FRAME_COUNT} frames arranged left-to-right with no gutters between frames. Each frame is ${WALK_STRIP_HEIGHT}x${WALK_STRIP_HEIGHT} pixels and contains the same character at identical scale, identical camera angle, identical vertical position. Frames differ only in leg/wing pose through one looping cycle.`,
+    `Consistency: matches a shared cohesive game atlas — same outline thickness, same palette, same perspective as the single-frame sibling sprite.`,
+  ].join(' ');
+}
+
+// End-to-end: prompt → Gemini → compress to webp preserving 512×128
+// → save with frames=${WALK_STRIP_FRAME_COUNT}. Caller is responsible
+// for feedback/refresh; returns the saved path on success so bulk
+// runners can tell completed kinds from skipped ones.
+async function generateWalkCycle(
+  kind: string,
+  onProgress?: (note: string) => void,
+): Promise<{ path: string; size: number }> {
+  const bucket = state.prompts?.walkCycles;
+  const description = bucket?.[kind];
+  if (!description || description.trim() === '') {
+    throw new Error(
+      `no walkCycles prompt for ${kind} — add one to tools/gemini-art/prompts.json`,
+    );
+  }
+  const fullPrompt = composeWalkCyclePrompt(description);
+
+  onProgress?.(`${kind}: generating…`);
+  const imgs = await generateImages({ prompt: fullPrompt, variants: 1 });
+  const first = imgs[0];
+  if (!first) throw new Error('Gemini returned no image');
+
+  onProgress?.(`${kind}: compressing…`);
+  // maxDimension = WALK_STRIP_WIDTH keeps the strip at 512×128 (or
+  // shrinks proportionally if Gemini over-delivered). Quality a touch
+  // higher than the 0.85 used for singleton sprites because frame
+  // detail is divided by four — worth the extra bytes.
+  const compressed = await compressBase64Image(first.data, first.mimeType, {
+    format: 'webp',
+    quality: 0.9,
+    maxDimension: WALK_STRIP_WIDTH,
+  });
+
+  onProgress?.(`${kind}: saving…`);
+  const res = await saveSprite({
+    key: `unit-${kind}-walk`,
+    data: compressed.base64,
+    format: 'webp',
+    frames: WALK_STRIP_FRAME_COUNT,
+  });
+  return res;
+}
+
+// Animation toggle + generation panel. One row per animated unit kind:
+// checkbox toggles settings.values[kind]; a "Generate" button runs
+// the full pipeline and updates the strip-ready badge. A top-level
+// "Automate all missing" button iterates the kinds sequentially so
+// the UI can show per-kind progress rather than a single hang.
 function renderAnimationPanel(): HTMLElement {
   const card = document.createElement('section');
   card.className = 'admin-animation';
-  card.innerHTML = `
-    <header>
-      <h2>Unit animations</h2>
-      <small>Toggle the walk-cycle spritesheet per unit. Generate the strip with the Gemini walkCycles prompt; then flip the switch to see it in-game.</small>
-    </header>
+  const header = document.createElement('header');
+  header.innerHTML = `
+    <h2>Unit animations</h2>
+    <small>One-click generate the walk-cycle strip, then toggle to see it in-game. Regenerates overwrite the existing strip.</small>
   `;
+  card.append(header);
+
   const settings = state.animation;
   if (!settings) {
     const msg = document.createElement('p');
@@ -371,18 +446,68 @@ function renderAnimationPanel(): HTMLElement {
     card.append(msg);
   }
 
-  // Helper: does a walk spritesheet exist for this kind, in any source?
-  // The admin `files` list is a merged dist + public + db view, so one
-  // lookup tells us whether the admin has saved a walk strip yet.
   const hasSheet = (kind: string): boolean =>
     state.files.some(
       (f) => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`,
     );
 
+  // After any generation, refresh state.files from /admin/api/status
+  // so the strip-ready badge flips to green without a full page
+  // reload. Swallows errors: a stale status list is strictly cosmetic.
+  const refreshFiles = async (): Promise<void> => {
+    try {
+      const s = await fetchStatus();
+      state.files = s.files;
+    } catch {
+      // ignore — user can reload if the badge doesn't update
+    }
+  };
+
+  // "Automate all missing" kicks off a sequential pass (parallel
+  // would blow past Gemini's concurrent-request ceiling). Kinds with
+  // a strip already on disk are regenerated only on explicit per-row
+  // click; the bulk button is "missing only" by design so a slip of
+  // the mouse doesn't clobber hand-picked variants.
+  const headerActions = document.createElement('div');
+  headerActions.className = 'admin-animation-header-actions';
+  const automateAllBtn = document.createElement('button');
+  automateAllBtn.className = 'btn accent';
+  automateAllBtn.textContent = '⚡ Automate all missing';
+  automateAllBtn.addEventListener('click', async () => {
+    if (automateAllBtn.disabled) return;
+    automateAllBtn.disabled = true;
+    const missing = settings.kinds.filter((k) => !hasSheet(k));
+    if (missing.length === 0) {
+      statusToast('No missing walk strips — nothing to do', 'info');
+      automateAllBtn.disabled = false;
+      return;
+    }
+    let ok = 0;
+    let fail = 0;
+    for (const k of missing) {
+      try {
+        await generateWalkCycle(k, (note) => statusToast(note, 'info'));
+        ok++;
+      } catch (err) {
+        statusToast(`${k}: ${(err as Error).message}`, 'error');
+        fail++;
+      }
+    }
+    await refreshFiles();
+    statusToast(`Walk cycles: ${ok} saved, ${fail} failed`, fail === 0 ? 'success' : 'error');
+    automateAllBtn.disabled = false;
+    // Re-render the panel in place so the badges refresh (cheap: we
+    // own the single <section>, just swap it for a new one).
+    card.replaceWith(renderAnimationPanel());
+  });
+  headerActions.append(automateAllBtn);
+  header.append(headerActions);
+
   const list = document.createElement('ul');
   list.className = 'admin-animation-list';
   for (const kind of settings.kinds) {
     const row = document.createElement('li');
+
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = settings.values[kind] ?? true;
@@ -400,14 +525,41 @@ function renderAnimationPanel(): HTMLElement {
         statusToast(`Could not save: ${(err as Error).message}`, 'error');
       }
     });
+
     const label = document.createElement('label');
     label.htmlFor = checkbox.id;
     label.textContent = kind;
+
     const status = document.createElement('span');
     status.className = 'admin-animation-status';
     status.textContent = hasSheet(kind) ? 'strip ready' : 'no strip generated yet';
     status.dataset.hasSheet = hasSheet(kind) ? '1' : '0';
-    row.append(checkbox, label, status);
+
+    const genBtn = document.createElement('button');
+    genBtn.className = 'btn';
+    genBtn.textContent = hasSheet(kind) ? 'Regenerate' : 'Generate';
+    genBtn.addEventListener('click', async () => {
+      if (genBtn.disabled) return;
+      genBtn.disabled = true;
+      const originalText = genBtn.textContent;
+      try {
+        const res = await generateWalkCycle(kind, (note) => {
+          genBtn.textContent = note.replace(`${kind}: `, '');
+        });
+        statusToast(`Saved ${kind} walk strip (${humanBytes(res.size)})`, 'success');
+        await refreshFiles();
+        // Swap the whole panel so the status badge for every kind
+        // reflects the new listing (cheaper than threading the
+        // element refs around).
+        card.replaceWith(renderAnimationPanel());
+      } catch (err) {
+        statusToast(`${kind}: ${(err as Error).message}`, 'error');
+        genBtn.textContent = originalText;
+        genBtn.disabled = false;
+      }
+    });
+
+    row.append(checkbox, label, status, genBtn);
     list.append(row);
   }
   card.append(list);
