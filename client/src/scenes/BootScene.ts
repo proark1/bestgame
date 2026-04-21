@@ -1,9 +1,12 @@
 import Phaser from 'phaser';
 import type { FBInstantBridge } from '../fbinstant/FBInstantBridge.js';
+import { ALL_SPRITE_KEYS, spritePath } from '../assets/atlas.js';
+import { generateMissingPlaceholders } from '../assets/placeholders.js';
 
-// BootScene — kicks off FB Instant SDK init, loads the minimum atlas
-// needed to show HomeScene, then transitions. Everything heavier (arena,
-// clan, raid replay) is lazy-loaded on demand.
+// BootScene loads any real Gemini-generated sprites from
+// /assets/sprites/<key>.png, then bakes procedural placeholders for any
+// slot that's still missing. This keeps the game visually complete
+// whether or not the art pipeline has been run.
 
 export class BootScene extends Phaser.Scene {
   constructor(private readonly fb: FBInstantBridge) {
@@ -11,18 +14,25 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Placeholder — week-1 has no atlas yet. The Gemini pipeline in
-    // tools/gemini-art/ emits `hive-atlas-v1.json` + `.webp` into
-    // public/assets/; once those land this line becomes:
-    //   this.load.atlas('hive', 'assets/hive-atlas-v1.webp',
-    //                   'assets/hive-atlas-v1.json');
     this.load.on('progress', (p: number) => this.fb.setLoadingProgress(p));
+
+    // Treat per-file errors as "missing" and continue — they'll be
+    // replaced by placeholders in create(). Without this, a single 404
+    // would halt the loader.
+    this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
+      // keep this at debug level; expected until the atlas is generated.
+      console.debug('[boot] sprite missing, placeholder will draw:', file.key);
+    });
+
+    for (const key of ALL_SPRITE_KEYS) {
+      this.load.image(key, spritePath(key));
+    }
   }
 
-  async create(): Promise<void> {
-    // Dismiss the HTML splash once Phaser is up and a scene is live.
-    const splash = document.getElementById('boot-splash');
-    if (splash) splash.remove();
+  create(): void {
+    generateMissingPlaceholders(this, ALL_SPRITE_KEYS);
+    // Dismiss the HTML splash in case main.ts missed it (defense in depth).
+    document.getElementById('boot-splash')?.remove();
     this.scene.start('HomeScene');
   }
 }
