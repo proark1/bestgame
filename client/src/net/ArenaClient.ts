@@ -14,12 +14,58 @@ import type { Types } from '@hive/shared';
 //
 // Default URL: wss://<origin>/arena — works if the arena is deployed
 // behind the same domain. Local dev and split-host deploys override
-// via VITE_ARENA_URL.
+// via VITE_ARENA_URL. See normalizeArenaUrl() for the scheme coercion
+// rules: http→ws, https→wss, bare hostname → wss://hostname.
 
-const DEFAULT_URL = (() => {
-  if (typeof import.meta.env.VITE_ARENA_URL === 'string' && import.meta.env.VITE_ARENA_URL) {
-    return import.meta.env.VITE_ARENA_URL;
+// Accept ws://, wss://, http://, https:// or a bare hostname. Returns
+// null if the input can't be coerced into something WebSocket-like.
+// The main failure modes we've seen in production:
+//   - user pastes `https://arena.example.com` (auto-coerce to wss://)
+//   - user pastes `arena.example.com` (auto-prefix wss://)
+//   - trailing slash / trailing whitespace (trim)
+//   - env var is literal `"undefined"` string (Vite build quirk)
+export function normalizeArenaUrl(raw: string | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') return null;
+  let candidate = trimmed;
+  // If the input has an explicit scheme, it must be one we know how
+  // to coerce. Rejecting ftp://, file://, etc. up front keeps the
+  // bare-hostname branch below from accidentally accepting them as
+  // "wss://ftp://…".
+  const schemeMatch = /^([a-z][a-z0-9+.-]*):\/\//i.exec(candidate);
+  if (schemeMatch) {
+    const scheme = schemeMatch[1]!.toLowerCase();
+    if (!['ws', 'wss', 'http', 'https'].includes(scheme)) return null;
   }
+  // Coerce http(s) → ws(s). Colyseus handles ws/wss natively; feeding
+  // it http(s) occasionally trips its internal URL parsing.
+  if (candidate.startsWith('https://')) candidate = 'wss://' + candidate.slice(8);
+  else if (candidate.startsWith('http://')) candidate = 'ws://' + candidate.slice(7);
+  else if (!/^wss?:\/\//.test(candidate)) {
+    // Bare hostname — assume TLS. Drops the need for users to
+    // remember the `wss://` prefix in the env var.
+    candidate = 'wss://' + candidate;
+  }
+  // Strip a trailing slash so Colyseus's matchmaker path is appended
+  // cleanly (avoids accidental `//` in the request URL).
+  if (candidate.endsWith('/')) candidate = candidate.slice(0, -1);
+  try {
+    const u = new URL(candidate);
+    if (u.protocol !== 'ws:' && u.protocol !== 'wss:') return null;
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+const DEFAULT_URL: string = (() => {
+  const fromEnv = normalizeArenaUrl(
+    typeof import.meta.env.VITE_ARENA_URL === 'string'
+      ? import.meta.env.VITE_ARENA_URL
+      : undefined,
+  );
+  if (fromEnv) return fromEnv;
   if (typeof window !== 'undefined') {
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     return `${scheme}://${window.location.host}/arena`;
@@ -58,6 +104,18 @@ export class ArenaClient {
 
   async joinOrCreate(playerId: string, arenaToken?: string): Promise<void> {
     this.listener?.({ kind: 'connecting' });
+    // Pre-flight URL validation so a malformed VITE_ARENA_URL produces
+    // a readable error — previously Colyseus's internal URL constructor
+    // threw "Failed to construct 'URL': Invalid URL" with no context.
+    if (!normalizeArenaUrl(this.url)) {
+      this.listener?.({
+        kind: 'error',
+        error: new Error(
+          `Arena URL is malformed: "${this.url}". Expected ws://… or wss://…`,
+        ),
+      });
+      return;
+    }
     try {
       this.client = new Client(this.url);
       // arenaToken lets the server bind client → slot deterministically:
@@ -68,7 +126,13 @@ export class ArenaClient {
       if (arenaToken) joinOpts.arenaToken = arenaToken;
       this.room = await this.client.joinOrCreate('picnic', joinOpts);
     } catch (err) {
-      this.listener?.({ kind: 'error', error: err as Error });
+      // Make the URL visible in the message so an admin debugging a
+      // split-host deploy can see exactly what the build baked in.
+      const e = err as Error;
+      const msg = e.message?.includes(this.url)
+        ? e.message
+        : `${e.message ?? 'arena connect failed'} (url=${this.url})`;
+      this.listener?.({ kind: 'error', error: new Error(msg) });
       return;
     }
     // Slot is assigned by the server based on identity (when an
