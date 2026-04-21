@@ -3,6 +3,18 @@ import { FBInstantBridge } from './fbinstant/FBInstantBridge.js';
 import { BootScene } from './scenes/BootScene.js';
 import { HomeScene } from './scenes/HomeScene.js';
 import { RaidScene } from './scenes/RaidScene.js';
+import { AuthClient } from './net/Auth.js';
+import { Api, type PlayerMeResponse } from './net/Api.js';
+
+// Shared runtime bag. Scenes pull auth/api/playerState off of this
+// registry via scene.registry.get('runtime'). Keeps the Phaser Game
+// constructor free of dependency injection plumbing.
+export interface HiveRuntime {
+  fb: FBInstantBridge;
+  auth: AuthClient;
+  api: Api;
+  player: PlayerMeResponse | null;
+}
 
 // Remove the HTML splash shown during initial JS load. Called from two
 // places (after FB init, and from BootScene) so the splash never sticks
@@ -31,6 +43,25 @@ async function main(): Promise<void> {
     console.warn('boot: FB init threw', err);
   }
 
+  const auth = new AuthClient();
+  const api = new Api(auth);
+  const runtime: HiveRuntime = { fb, auth, api, player: null };
+
+  // Try to resume a cached session first; on any failure or first load,
+  // mint a fresh guest session. If auth fails entirely (backend
+  // misconfigured) the client still boots into a guest-local mode with
+  // the hardcoded starter base. Scenes check runtime.player before
+  // using it; null → fall back.
+  try {
+    auth.tryResume();
+    if (!auth.token) {
+      await auth.signInGuest();
+    }
+    runtime.player = await api.getPlayerMe();
+  } catch (err) {
+    console.warn('boot: auth/player failed, continuing guest-local', err);
+  }
+
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game',
@@ -48,6 +79,9 @@ async function main(): Promise<void> {
     // Phaser's built-in physics would add weight and engine-dependent math.
     scene: [new BootScene(fb), new HomeScene(), new RaidScene()],
   });
+  // Runtime is attached to the game registry so scenes can pull it
+  // without constructor wiring.
+  game.registry.set('runtime', runtime);
 
   // Phaser initializes the renderer synchronously in the constructor on AUTO.
   // Dismiss the splash now; BootScene.create() will also dismiss as a

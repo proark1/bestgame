@@ -1,10 +1,16 @@
 import Phaser from 'phaser';
 import { Types } from '@hive/shared';
+import type { HiveRuntime } from '../main.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
 // taps through to the raid. Place/upgrade flow lands next iteration;
 // the week-2 delivery is visual polish + wiring to a playable raid.
+//
+// When runtime.player is present (auth + persistence succeeded at
+// boot), HomeScene renders from the server's base snapshot and the
+// server's resource numbers. Otherwise it falls back to the hardcoded
+// starter base so the game is still playable guest-local.
 
 const TILE = 48;
 const GRID_W = 16;
@@ -50,6 +56,10 @@ export class HomeScene extends Phaser.Scene {
   private leafText!: Phaser.GameObjects.Text;
   private milkText!: Phaser.GameObjects.Text;
   private incomeAccumulator = 0;
+  // If the server handed back a real base snapshot, render that — it
+  // may differ from the STARTER_BUILDINGS fallback (e.g. a player who
+  // has already completed a place/upgrade action). Otherwise null.
+  private serverBase: Types.Base | null = null;
 
   constructor() {
     super('HomeScene');
@@ -57,6 +67,17 @@ export class HomeScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+
+    // Hydrate from runtime if the boot auth succeeded.
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (runtime?.player) {
+      this.serverBase = runtime.player.base;
+      this.resources = {
+        sugar: runtime.player.player.sugar,
+        leafBits: runtime.player.player.leafBits,
+        aphidMilk: runtime.player.player.aphidMilk,
+      };
+    }
 
     // Layout: HUD on top, board below.
     this.drawHud();
@@ -80,11 +101,21 @@ export class HomeScene extends Phaser.Scene {
 
     let sugar = 0;
     let leaf = 0;
-    for (const b of STARTER_BUILDINGS) {
-      const inc = INCOME_PER_SECOND[b.kind];
-      if (!inc) continue;
-      sugar += inc.sugar * seconds;
-      leaf += inc.leafBits * seconds;
+    if (this.serverBase) {
+      for (const b of this.serverBase.buildings) {
+        if (b.hp <= 0) continue;
+        const inc = INCOME_PER_SECOND[b.kind];
+        if (!inc) continue;
+        sugar += inc.sugar * seconds;
+        leaf += inc.leafBits * seconds;
+      }
+    } else {
+      for (const b of STARTER_BUILDINGS) {
+        const inc = INCOME_PER_SECOND[b.kind];
+        if (!inc) continue;
+        sugar += inc.sugar * seconds;
+        leaf += inc.leafBits * seconds;
+      }
     }
     if (sugar === 0 && leaf === 0) return;
     this.resources.sugar += sugar;
@@ -190,19 +221,44 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawBuildings(): void {
+    // Prefer the server's base snapshot. Fall back to the hardcoded
+    // starter layout when running guest-local (DB unavailable).
+    if (this.serverBase) {
+      for (const b of this.serverBase.buildings) {
+        const spans = b.spans ?? null;
+        const spansBoth = spans && spans.length > 1;
+        const onThisLayer =
+          (spansBoth && spans?.includes(this.layer)) ||
+          b.anchor.layer === this.layer;
+        if (!onThisLayer) continue;
+        const x = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
+        const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
+        const spr = this.add.image(x, y, `building-${b.kind}`);
+        spr.setOrigin(0.5, 0.75);
+        spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
+        const tiles = Math.max(b.footprint.w, b.footprint.h);
+        spr.setDisplaySize(tiles * TILE * 1.2, tiles * TILE * 1.2);
+        this.tweens.add({
+          targets: spr,
+          scale: { from: spr.scale, to: spr.scale * 1.03 },
+          duration: 1400 + Math.random() * 800,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+        this.boardContainer.add(spr);
+      }
+      return;
+    }
     for (const b of STARTER_BUILDINGS) {
       const spansBoth = b.kind === 'QueenChamber';
       if (!spansBoth && b.layer !== this.layer) continue;
       const x = b.x * TILE + TILE;
       const y = b.y * TILE + TILE;
       const spr = this.add.image(x, y, `building-${b.kind}`);
-      spr.setOrigin(0.5, 0.75); // anchor near feet
-      const isCrossLayer = spansBoth;
-      spr.setAlpha(
-        isCrossLayer && b.layer !== this.layer ? 0.65 : 1,
-      );
+      spr.setOrigin(0.5, 0.75);
+      spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
       spr.setDisplaySize(96, 96);
-      // subtle idle breathing for a "living" base
       this.tweens.add({
         targets: spr,
         scale: { from: spr.scale, to: spr.scale * 1.03 },
