@@ -535,27 +535,50 @@ export class HomeScene extends Phaser.Scene {
   private static readonly TAP_THRESHOLD_PX = 12;
   private tapDownPos: { x: number; y: number } | null = null;
 
+  // True iff the pointerdown that started the current gesture
+  // happened while the picker was open. Cleared on the matching
+  // pointerup. This latches the "don't open a new picker" decision
+  // at down-time so that even if the picker closes between down and
+  // up (e.g. user taps the × button, which calls closePicker in its
+  // pointerdown handler), the scene-level pointerup won't reopen it.
+  //
+  // The older guard checked `this.pickerContainer` at pointerup time,
+  // which races with the close handler and reopens the picker when
+  // the ordering of scene-level vs game-object-level emissions
+  // differs across devices/Phaser versions.
+  private tapStartedInsidePicker = false;
+  // Backstop for the edge case where the pointerdown event is
+  // swallowed entirely by a touch jitter / multi-touch glitch and we
+  // only see the pointerup. Any pointerup within this window after a
+  // picker closes is treated as the tail of the close gesture.
+  private pickerClosedAtMs = 0;
+  private static readonly PICKER_REOPEN_GRACE_MS = 250;
+
   private wireBoardTap(): void {
-    // Record the pointerdown position so pointerup can verify the
-    // gesture was a tap (small movement), not a drag.
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      // If the picker is open, let the picker's own hit-zones handle
-      // the event. Otherwise the scene-level pointerdown fires even
-      // for taps that landed inside the modal and we re-open the
-      // picker on pointerup.
       if (this.pickerContainer) {
+        this.tapStartedInsidePicker = true;
         this.tapDownPos = null;
         return;
       }
+      this.tapStartedInsidePicker = false;
       this.tapDownPos = { x: p.x, y: p.y };
     });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      // Guard: the picker can open/close mid-gesture (e.g. tapping a
-      // slot commits a placement and closes the picker before pointerup
-      // fires). Without this check the same pointerup that committed
-      // the placement would immediately reopen the picker on the now-
-      // occupied tile — the exact "popup won't close" symptom.
+      // Consume the latched flag exactly once per gesture.
+      if (this.tapStartedInsidePicker) {
+        this.tapStartedInsidePicker = false;
+        return;
+      }
       if (this.pickerContainer) return;
+      // Grace window after close. Defense-in-depth against any
+      // pointerdown we didn't see.
+      if (
+        Date.now() - this.pickerClosedAtMs <
+        HomeScene.PICKER_REOPEN_GRACE_MS
+      ) {
+        return;
+      }
       const down = this.tapDownPos;
       this.tapDownPos = null;
       if (!down) return;
@@ -755,6 +778,9 @@ export class HomeScene extends Phaser.Scene {
     if (this.pickerContainer) {
       this.pickerContainer.destroy(true);
       this.pickerContainer = null;
+      // Stamp the grace window so a pointerup that arrives just after
+      // this call can't open a new picker on the closing tap's tile.
+      this.pickerClosedAtMs = Date.now();
     }
   }
 

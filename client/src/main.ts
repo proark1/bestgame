@@ -67,6 +67,33 @@ async function main(): Promise<void> {
     console.warn('boot: auth/player failed, continuing guest-local', err);
   }
 
+  // HiDPI: bump Phaser's canvas internal resolution to match the
+  // device pixel ratio. Without this, a 768×816 logical canvas gets
+  // CSS-bilinear-upscaled to viewport on a Retina / Pixel display
+  // and everything reads as soft. The zoom config multiplies the
+  // canvas backing buffer (canvas.width/height) by DPR while leaving
+  // game/camera coordinates in logical pixels, so no scene code
+  // needs to change. Capped at 2× — beyond that the GPU fill cost
+  // outweighs the visible sharpness gain on most mobiles.
+  const dpr = Math.min(Math.max(1, window.devicePixelRatio || 1), 2);
+
+  // Phaser text glyphs rasterize at resolution=1 by default. With the
+  // canvas now drawn at DPR resolution, low-res glyph textures still
+  // get bilinear-upscaled and read fuzzy. Patch the factory once so
+  // every scene.add.text(...) call across the app automatically
+  // renders at DPR — no per-callsite changes needed.
+  const _origTextFactory = Phaser.GameObjects.GameObjectFactory.prototype.text;
+  Phaser.GameObjects.GameObjectFactory.prototype.text = function patched(
+    this: Phaser.GameObjects.GameObjectFactory,
+    x: number,
+    y: number,
+    text: string | string[],
+    style?: Phaser.Types.GameObjects.Text.TextStyle,
+  ): Phaser.GameObjects.Text {
+    const t = _origTextFactory.call(this, x, y, text, style);
+    t.setResolution(dpr);
+    return t;
+  };
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game',
@@ -80,6 +107,7 @@ async function main(): Promise<void> {
       // second row of secondary-nav buttons (see HomeScene.drawFooter).
       width: 16 * 48,
       height: 56 + 12 * 48 + 152 + 32,
+      zoom: dpr,
     },
     render: { pixelArt: false, antialias: true, roundPixels: false },
     // No `physics` block — the shared deterministic sim is our physics;
