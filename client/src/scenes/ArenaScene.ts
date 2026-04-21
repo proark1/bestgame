@@ -186,6 +186,16 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  // Called after reserveArena() swaps the sim config to the reserved
+  // snapshot + seed. Wipes the placeholder building sprites that were
+  // spawned from NEUTRAL_MAP so the next drawStartingBuildings pass
+  // reflects the real host base the server is using.
+  private renderInitialBoard(): void {
+    for (const spr of this.buildingSprites.values()) spr.destroy();
+    this.buildingSprites.clear();
+    this.drawStartingBuildings();
+  }
+
   private wirePointerInput(): void {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -274,6 +284,25 @@ export class ArenaScene extends Phaser.Scene {
         this.statusText.setText(
           `Matched vs ${reservation.opponent.displayName} (${reservation.opponent.trophies}🏆) — connecting…`,
         );
+        // Replace the placeholder sim with the same snapshot+seed the
+        // server seeds PicnicRoom with. Without this the client hashes
+        // drift immediately on the first tick: server runs authoritative
+        // ticks on the host's real base while the local sim still
+        // chugs along on NEUTRAL_MAP at seed 0x7770, producing wrong
+        // buildings and wrong outcomes. The reservation carries both
+        // fields precisely so both sides can agree on init state
+        // without a second handshake.
+        this.cfg = {
+          tickRate: TICK_HZ,
+          maxTicks: TICK_HZ * MATCH_SECONDS,
+          initialSnapshot: reservation.hostSnapshot,
+          seed: reservation.seed,
+        };
+        this.state = Sim.createInitialState(this.cfg);
+        // Re-render the board with the new building set so the player
+        // doesn't see a flash of the wrong map before the first
+        // tickConfirm arrives.
+        this.renderInitialBoard();
       } else {
         this.statusText.setText('No opponent online — solo arena test');
       }
