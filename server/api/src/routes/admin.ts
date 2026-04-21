@@ -34,8 +34,21 @@ interface UpdatePromptBody {
 
 const MAX_SAVE_BYTES = 2_000_000; // 2 MB — well above any reasonable 128-256 px sprite.
 const ALLOWED_KEY_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
+// Closed set. New buckets require a deliberate code change — prevents
+// prototype-pollution via surprise categories like __proto__/constructor
+// and also stops ad-hoc keys from growing prompts.json unbounded.
+const ALLOWED_BUCKET_CATEGORIES = new Set<'units' | 'buildings' | 'factions'>([
+  'units',
+  'buildings',
+  'factions',
+]);
+// JavaScript's special inherited-property names. Even with a bucket
+// allowlist we reject these as sub-keys — the prompts.json bucket object
+// is iterated elsewhere, so polluting it is still a bad idea.
+const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function sanitizeKey(key: string): string | null {
+  if (DANGEROUS_KEYS.has(key)) return null;
   return ALLOWED_KEY_RE.test(key) ? key : null;
 }
 
@@ -80,6 +93,12 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.code(400);
       return { error: 'bad request' };
     }
+    // Bound the value size — prompts.json is committed to the repo and
+    // an unbounded write would let an authenticated admin balloon it.
+    if (body.value.length > 4096) {
+      reply.code(413);
+      return { error: 'value exceeds 4096 chars' };
+    }
     let json: Record<string, unknown>;
     try {
       json = JSON.parse(await readFile(PROMPTS_PATH, 'utf8'));
@@ -87,17 +106,51 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.code(500);
       return { error: `read: ${(err as Error).message}` };
     }
+
     if (body.category === 'styleLock') {
-      json.styleLock = body.value;
-    } else {
-      const bucket = (json[body.category] ?? {}) as Record<string, string>;
-      if (!body.key) {
+      // Object.defineProperty avoids any __proto__ shenanigans even
+      // though "styleLock" is a hardcoded literal here — belt-and-braces.
+      Object.defineProperty(json, 'styleLock', {
+        value: body.value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    } else if (
+      ALLOWED_BUCKET_CATEGORIES.has(
+        body.category as 'units' | 'buildings' | 'factions',
+      )
+    ) {
+      const safeKey = body.key ? sanitizeKey(body.key) : null;
+      if (!safeKey) {
         reply.code(400);
-        return { error: 'key required for this category' };
+        return { error: 'valid key required (matches [a-z0-9][a-z0-9-_]{1,63}, not __proto__/constructor)' };
       }
-      bucket[body.key] = body.value;
-      json[body.category] = bucket;
+      // Read the existing bucket via hasOwn so we never walk a prototype
+      // chain, and start from a null-proto object if the key is new.
+      const hasBucket = Object.prototype.hasOwnProperty.call(json, body.category);
+      const raw = hasBucket ? (json[body.category] as unknown) : null;
+      const bucket =
+        raw && typeof raw === 'object'
+          ? Object.assign(Object.create(null) as Record<string, string>, raw)
+          : (Object.create(null) as Record<string, string>);
+      Object.defineProperty(bucket, safeKey, {
+        value: body.value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      Object.defineProperty(json, body.category, {
+        value: bucket,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    } else {
+      reply.code(400);
+      return { error: 'invalid category' };
     }
+
     await writeFile(PROMPTS_PATH, JSON.stringify(json, null, 2) + '\n', 'utf8');
     return { ok: true };
   });

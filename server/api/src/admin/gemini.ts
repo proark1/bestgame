@@ -5,6 +5,17 @@
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models';
 
+// Closed set of Gemini image models we're willing to hit. Anything else
+// is refused — stops a malicious admin body from redirecting the URL
+// construction to an unexpected endpoint (SSRF defense-in-depth) and
+// also protects against silent breakage when the API evolves.
+const ALLOWED_MODELS = new Set([
+  'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image-preview',
+  'imagen-3.0-generate-002',
+]);
+export const DEFAULT_MODEL = 'gemini-2.5-flash-image';
+
 export interface GeminiImage {
   mimeType: string;
   data: string; // base64 PNG/WebP
@@ -26,8 +37,15 @@ export async function geminiGenerateImages(
       'GEMINI_API_KEY not configured on the server. Set it in the deployment environment.',
     );
   }
-  const model = req.model ?? 'gemini-2.5-flash-image';
-  const endpoint = `${GEMINI_ENDPOINT}/${model}:generateContent?key=${encodeURIComponent(
+  const model = req.model ?? DEFAULT_MODEL;
+  if (!ALLOWED_MODELS.has(model)) {
+    throw new Error(
+      `model "${model}" not allowed. Allowed: ${[...ALLOWED_MODELS].join(', ')}`,
+    );
+  }
+  // encodeURIComponent guards against malformed model strings ever reaching
+  // this far; the allowlist above is the primary defense.
+  const endpoint = `${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
     apiKey,
   )}`;
   const variants = Math.max(1, Math.min(4, Math.floor(req.variants || 1)));
