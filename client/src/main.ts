@@ -106,15 +106,23 @@ async function main(): Promise<void> {
     backgroundColor: '#0f1b10',
     scale: {
       mode: Phaser.Scale.FIT,
-      autoCenter: Phaser.Scale.CENTER_BOTH,
-      // HUD (56) + 16×12-tile board (576) + two-row footer (~152) + padding.
-      // Scale.FIT preserves aspect while letterboxing on any viewport.
-      // No `zoom` here — see the comment above; zoom + FIT broke the
-      // pointer alignment on every input-driven scene.
+      // No autoCenter — #game centers via CSS flexbox. Phaser's
+      // autoCenter:CENTER_BOTH applies CSS margins, and the input
+      // manager's offset calculation has been observed to disagree
+      // with those margins on some browser / DPR combinations,
+      // producing a pointer-vs-visual offset. Flexbox centering is
+      // transparent to the input manager.
       width: 16 * 48,
       height: 56 + 12 * 48 + 152 + 32,
     },
-    render: { pixelArt: false, antialias: true, roundPixels: false },
+    render: {
+      pixelArt: false,
+      antialias: true,
+      // Bilinear filtering on downscaled sprites reads cleaner than
+      // nearest-neighbor at the sizes we render; the game is flat
+      // cartoon art, not pixel art.
+      roundPixels: false,
+    },
     // No `physics` block — the shared deterministic sim is our physics;
     // Phaser's built-in physics would add weight and engine-dependent math.
     scene: [
