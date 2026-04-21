@@ -9,6 +9,11 @@ import { registerRaid } from './routes/raid.js';
 import { registerMatchmaking } from './routes/matchmaking.js';
 import { registerAdmin } from './routes/admin.js';
 import { registerAdminHook } from './auth/adminAuth.js';
+import { registerAuth } from './routes/auth.js';
+import { registerPlayer } from './routes/player.js';
+import { registerPlayerAuthHook } from './auth/playerAuth.js';
+import { getPool, isConfigured } from './db/pool.js';
+import { runMigrations } from './db/migrate.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -36,6 +41,35 @@ async function start(): Promise<void> {
   // Healthcheck stays at /health (Railway's ready probe points here).
   registerHealth(app);
 
+  // Run database migrations up-front so routes can count on the schema
+  // being present. If DATABASE_URL isn't configured we log and keep
+  // going — persistence routes will 503 but the rest of the API still
+  // serves. /health stays up regardless so the Railway probe is happy.
+  if (isConfigured()) {
+    const pool = await getPool();
+    if (pool) {
+      try {
+        await runMigrations(pool, (msg) => app.log.info(msg));
+        app.log.info('[db] migrations up to date');
+      } catch (err) {
+        app.log.error({ err }, '[db] migrations failed');
+        process.exit(1);
+      }
+    } else {
+      app.log.warn(
+        '[db] DATABASE_URL set but pool init failed; persistence routes will 503',
+      );
+    }
+  } else {
+    app.log.warn(
+      '[db] DATABASE_URL not set — persistence routes will return 503',
+    );
+  }
+
+  // Player bearer auth hook: populate req.playerId from Authorization.
+  // Routes that need it call requirePlayer() which 401s when absent.
+  registerPlayerAuthHook(app);
+
   // Admin routes (with bearer auth). Hook intercepts /admin/api/* requests
   // before they resolve; the routes themselves live at /admin/api/*.
   registerAdminHook(app);
@@ -44,6 +78,8 @@ async function start(): Promise<void> {
   // Game JSON API lives under /api/*.
   await app.register(
     async (scope) => {
+      registerAuth(scope);
+      registerPlayer(scope);
       registerRaid(scope);
       registerMatchmaking(scope);
     },
