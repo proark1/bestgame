@@ -120,10 +120,14 @@ export class FBInstantBridge {
         });
         return 'web-share';
       } catch (err) {
-        // AbortError happens when the user dismisses the share sheet —
-        // NOT an error we surface. Anything else falls through to clipboard.
+        // Only AbortError means "user dismissed the share sheet" — that
+        // counts as success (the OS UI showed; user chose no). Every
+        // other error (including NotAllowedError, which means the share
+        // UI was BLOCKED — no transient activation, Permissions-Policy,
+        // etc.) falls through so the clipboard tier can still give the
+        // user a way to share.
         const name = (err as Error).name ?? '';
-        if (name === 'AbortError' || name === 'NotAllowedError') {
+        if (name === 'AbortError') {
           return 'web-share';
         }
         console.warn('navigator.share failed, falling back:', err);

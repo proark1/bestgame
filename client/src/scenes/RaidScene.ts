@@ -781,12 +781,15 @@ export class RaidScene extends Phaser.Scene {
       `${this.state.attackerSugarLooted} sugar + ${this.state.attackerLeafBitsLooted} leaf looted.`;
     try {
       const mode = await runtime.fb.shareRaidResult({ text });
+      // User may have tapped Back-to-home while the share sheet was up;
+      // touching a torn-down scene would throw.
+      if (!this.scene.isActive()) return;
       if (mode === 'clipboard') this.flashShareToast('Copied to clipboard');
       else if (mode === 'unavailable')
         this.flashShareToast('Share unavailable here');
     } catch (err) {
       console.warn('share failed', err);
-      this.flashShareToast('Share failed');
+      if (this.scene.isActive()) this.flashShareToast('Share failed');
     }
   }
 
