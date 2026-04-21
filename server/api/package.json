@@ -16,6 +16,7 @@
     "@hive/protocol": "workspace:*",
     "@hive/shared": "workspace:*",
     "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.1",
     "fastify": "^5.0.0",
     "tsx": "^4.19.1"
   },
