@@ -260,9 +260,32 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
     const playerId = runtime.auth.playerId ?? 'guest';
+
+    // Ask the API to pair us with an opponent first. The reserve call
+    // is idempotent, so both clients independently arrive at the same
+    // arenaToken and end up in the same Colyseus room. A null result
+    // means no opponent online — fall back to the neutral-map flow so
+    // the scene is still reachable for solo testing.
+    let arenaToken: string | undefined;
+    try {
+      const reservation = await runtime.api.reserveArena();
+      if (reservation) {
+        arenaToken = reservation.arenaToken;
+        this.statusText.setText(
+          `Matched vs ${reservation.opponent.displayName} (${reservation.opponent.trophies}🏆) — connecting…`,
+        );
+      } else {
+        this.statusText.setText('No opponent online — solo arena test');
+      }
+    } catch (err) {
+      // Don't block arena entry on reserve failure — dev paths without
+      // a DB connection still want to exercise the Colyseus netcode.
+      this.statusText.setText(`Reserve failed (${(err as Error).message}); solo test`);
+    }
+
     this.arena = new ArenaClient();
     this.arena.on((ev) => this.handleArenaEvent(ev));
-    await this.arena.joinOrCreate(playerId);
+    await this.arena.joinOrCreate(playerId, arenaToken);
   }
 
   private handleArenaEvent(ev: ArenaEvent): void {

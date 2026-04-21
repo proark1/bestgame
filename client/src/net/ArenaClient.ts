@@ -56,21 +56,26 @@ export class ArenaClient {
     this.listener = listener;
   }
 
-  async joinOrCreate(playerId: string): Promise<void> {
+  async joinOrCreate(playerId: string, arenaToken?: string): Promise<void> {
     this.listener?.({ kind: 'connecting' });
     try {
       this.client = new Client(this.url);
-      this.room = await this.client.joinOrCreate('picnic', { playerId });
+      // arenaToken lets the server bind client → slot deterministically:
+      // host (lower UUID) always becomes slot 0, challenger is slot 1.
+      // Without a token the server falls back to first-come-first-
+      // serve on the neutral map (dev / solo-test path).
+      const joinOpts: { playerId: string; arenaToken?: string } = { playerId };
+      if (arenaToken) joinOpts.arenaToken = arenaToken;
+      this.room = await this.client.joinOrCreate('picnic', joinOpts);
     } catch (err) {
       this.listener?.({ kind: 'error', error: err as Error });
       return;
     }
-    // Slot is assigned by the server based on join order. We read it
-    // from the first state change; until then we optimistically assume
-    // slot 0 (first player in).
-    // NOTE: PicnicRoom uses Phaser @schema; we only care about the
-    // onMessage channel in the client. Slot tracking here is a
-    // placeholder — a richer server would expose `slot` explicitly.
+    // Slot is assigned by the server based on identity (when an
+    // arenaToken is supplied) or join order (neutral-map fallback).
+    // Client-side we don't yet read the assigned slot back — the
+    // server-authoritative sim hashes every 4 ticks so a mismatch
+    // surfaces as a reconcile, not a silent split-brain.
     this.listener?.({ kind: 'joined', slot: 0 });
 
     this.room.onMessage('tickConfirm', (data: ArenaTickEvent) => {

@@ -111,7 +111,7 @@ describe('hydrateSpritesToDisk', () => {
     expect(names).not.toContain('unit-Forager.png');
   });
 
-  it('silently skips non-existent target directories', async () => {
+  it('silently skips non-existent "mirror" target directories', async () => {
     const pool = makePool([
       {
         key: 'unit-X',
@@ -124,12 +124,39 @@ describe('hydrateSpritesToDisk', () => {
     const result = await hydrateSpritesToDisk(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       pool as any,
-      ['/definitely/does/not/exist/ever'],
+      [{ dir: '/definitely/does/not/exist/ever', mode: 'mirror' }],
       () => undefined,
     );
     expect(result).toEqual({ written: 0, skipped: 0 });
-    // The spread-over-targets pattern intentionally doesn't throw so a
-    // deployed bundle without a public/ mirror still boots cleanly.
+    // 'mirror' mode = "use this dir only if it already exists"; safe
+    // for a production bundle without a client/public/ checkout.
+  });
+
+  it('creates a missing "create" target directory and writes bytes', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'hive-sprites-parent-'));
+    const target = join(parent, 'nested', 'missing', 'sprites');
+    const pool = makePool([
+      {
+        key: 'unit-Wasp',
+        format: 'webp',
+        data: Buffer.from('fresh-deploy-bytes'),
+        size: 18,
+        updated_at: new Date(),
+      },
+    ]);
+    const result = await hydrateSpritesToDisk(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pool as any,
+      [{ dir: target, mode: 'create' }],
+      () => undefined,
+    );
+    expect(result).toEqual({ written: 1, skipped: 0 });
+    const bytes = await readFile(join(target, 'unit-Wasp.webp'));
+    expect(bytes.toString()).toBe('fresh-deploy-bytes');
+    // This is the regression guard for the "fresh Railway deploy has
+    // no dist/assets/sprites directory" bug: without mkdir-on-create
+    // the write would silently no-op and DB-backed sprites would
+    // vanish after every redeploy.
   });
 
   it('returns zero for both when the DB has no sprites', async () => {

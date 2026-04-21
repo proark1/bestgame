@@ -92,13 +92,25 @@ export async function deleteSprite(pool: pg.Pool, key: string): Promise<number> 
   return res.rowCount ?? 0;
 }
 
-// On-boot hydration: write every row in `sprites` out to distDir.
-// Skips files that already exist with a matching size + mtime ≥ updated_at,
-// so re-runs are cheap. Callers pass both DIST and PUBLIC so dev workflows
-// get the committable mirror too.
+// On-boot hydration target. 'create' targets are mkdir'd if missing
+// so a fresh deploy (where nothing has written to client/dist/assets/
+// sprites/ yet) still gets its bytes; 'mirror' targets only hydrate
+// if the parent already exists, so a production bundle without a
+// client/public/ checkout isn't polluted with a surprise directory.
+export interface HydrateTarget {
+  dir: string;
+  mode: 'create' | 'mirror';
+}
+
+// On-boot hydration: write every row in `sprites` out to each target
+// directory. Skips files already on disk with a matching size + mtime
+// ≥ updated_at so re-runs are cheap.
+//
+// Accepts the legacy `string[]` shape for back-compat with older
+// callers (each entry defaults to 'mirror' to preserve old behavior).
 export async function hydrateSpritesToDisk(
   pool: pg.Pool,
-  targetDirs: string[],
+  targets: Array<HydrateTarget | string>,
   log: (msg: string) => void,
 ): Promise<{ written: number; skipped: number }> {
   const rows = await listSprites(pool);
@@ -106,26 +118,34 @@ export async function hydrateSpritesToDisk(
     return { written: 0, skipped: 0 };
   }
 
+  const normalized: HydrateTarget[] = targets.map((t) =>
+    typeof t === 'string' ? { dir: t, mode: 'mirror' } : t,
+  );
+
   let written = 0;
   let skipped = 0;
-  for (const dir of targetDirs) {
-    if (!existsSync(dir)) {
-      // `public/` under a deployed bundle may genuinely not exist — skip
-      // silently; dist is the authoritative target.
+  for (const target of normalized) {
+    if (target.mode === 'mirror' && !existsSync(target.dir)) {
+      // Optional mirror directory doesn't exist — skip silently. The
+      // 'create' mode below is used for the authoritative dist target.
       continue;
     }
-    await mkdir(dir, { recursive: true });
+    // Always mkdir recursively (idempotent when the dir is present).
+    // This is the fix that lets a fresh Railway deploy — which starts
+    // with no client/dist/assets/sprites/ directory at all — still
+    // rehydrate DB-backed admin sprites onto the served path.
+    await mkdir(target.dir, { recursive: true });
     const existingNames = new Set<string>();
     try {
-      const names = await readdir(dir);
+      const names = await readdir(target.dir);
       for (const n of names) existingNames.add(n);
     } catch {
-      // fine
+      // fine — we just created it and nothing's inside
     }
 
     for (const row of rows) {
       const filename = `${row.key}.${row.format}`;
-      const path = join(dir, filename);
+      const path = join(target.dir, filename);
       if (existingNames.has(filename)) {
         try {
           const s = await stat(path);
@@ -146,7 +166,7 @@ export async function hydrateSpritesToDisk(
       const siblingExt = row.format === 'webp' ? 'png' : 'webp';
       const siblingName = `${row.key}.${siblingExt}`;
       if (existingNames.has(siblingName)) {
-        await unlink(join(dir, siblingName)).catch(() => undefined);
+        await unlink(join(target.dir, siblingName)).catch(() => undefined);
       }
     }
   }

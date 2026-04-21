@@ -61,7 +61,58 @@ export function registerArena(app: FastifyInstance): void {
       return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
-    // Pull our own trophy count + base as the challenger's state.
+    // Rendezvous rule: if any unexpired, unfinished reservation already
+    // names THIS player as host or challenger, return it verbatim so
+    // both callers end up with the same arenaToken and meet in the
+    // same Colyseus room. Without this, two simultaneous reserve calls
+    // each mint their own token and never rendezvous.
+    //
+    // LIMIT 1 is safe because token uniqueness + "unfinished" filter
+    // guarantees at most one active reservation per player pair, and
+    // we prefer the oldest so the first caller's token wins.
+    const existing = await pool.query<{
+      token: string;
+      seed: string;
+      host_player_id: string;
+      challenger_player_id: string;
+      host_snapshot: Types.Base;
+      challenger_snapshot: Types.Base;
+    }>(
+      `SELECT token, seed, host_player_id, challenger_player_id,
+              host_snapshot, challenger_snapshot
+         FROM arena_matches
+        WHERE (host_player_id = $1 OR challenger_player_id = $1)
+          AND expires_at > NOW()
+          AND finished_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1`,
+      [playerId],
+    );
+    if (existing.rows.length > 0) {
+      const r = existing.rows[0]!;
+      const oppId =
+        r.host_player_id === playerId ? r.challenger_player_id : r.host_player_id;
+      const oppRow = await pool.query<{
+        display_name: string;
+        trophies: number;
+      }>('SELECT display_name, trophies FROM players WHERE id = $1', [oppId]);
+      const opp = oppRow.rows[0];
+      const rendezvous: ReserveResponse = {
+        arenaToken: r.token,
+        role: r.host_player_id === playerId ? 'host' : 'challenger',
+        seed: Number(r.seed),
+        opponent: {
+          playerId: oppId,
+          displayName: opp?.display_name ?? 'Unknown',
+          trophies: opp?.trophies ?? 0,
+        },
+        hostSnapshot: r.host_snapshot,
+        challengerSnapshot: r.challenger_snapshot,
+      };
+      return rendezvous;
+    }
+
+    // No rendezvous yet — try to create a fresh reservation.
     const self = await pool.query<{
       trophies: number;
       display_name: string;
@@ -79,10 +130,9 @@ export function registerArena(app: FastifyInstance): void {
     }
     const me = self.rows[0]!;
 
-    // Opponent query: trophy-banded, freshly-active, excludes self.
-    // We ORDER BY last_seen_at so live-PvP preferentially pairs with
-    // whoever is online right now — that gives the best chance both
-    // clients actually connect to the Colyseus room.
+    // Opponent query: trophy-banded, freshly-active, excludes self AND
+    // excludes anyone already tied up in another active reservation
+    // (they'll hit the rendezvous branch above on their next call).
     const opp = await pool.query<{
       id: string;
       display_name: string;
@@ -95,6 +145,12 @@ export function registerArena(app: FastifyInstance): void {
         WHERE p.id <> $1
           AND p.trophies BETWEEN $2 AND $3
           AND p.last_seen_at > NOW() - ($4 || ' minutes')::INTERVAL
+          AND NOT EXISTS (
+            SELECT 1 FROM arena_matches m
+             WHERE (m.host_player_id = p.id OR m.challenger_player_id = p.id)
+               AND m.expires_at > NOW()
+               AND m.finished_at IS NULL
+          )
         ORDER BY p.last_seen_at DESC
         LIMIT 1`,
       [

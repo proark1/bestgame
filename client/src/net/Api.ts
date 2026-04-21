@@ -260,6 +260,44 @@ export class Api {
     }
     return (await res.json()) as UpgradeUnitResponse;
   }
+
+  // Live PvP: reserve a room slot against a trophy-banded opponent and
+  // get back the arenaToken both clients use to rendezvous in the
+  // Colyseus picnic room. Idempotent server-side: if we already have
+  // an active reservation (as host OR challenger), the same token
+  // comes back on the next call.
+  async reserveArena(): Promise<ArenaReserveResponse | null> {
+    const res = await this.authedFetch('/arena/reserve', { method: 'POST' });
+    if (res.status === 409) {
+      // No opponent online — caller falls back to a bot arena or
+      // retries after a short delay.
+      return null;
+    }
+    if (!res.ok) {
+      let msg = `arena reserve ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // fall through
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as ArenaReserveResponse;
+  }
+}
+
+export interface ArenaReserveResponse {
+  arenaToken: string;
+  role: 'host' | 'challenger';
+  seed: number;
+  opponent: {
+    playerId: string;
+    displayName: string;
+    trophies: number;
+  };
+  hostSnapshot: Types.Base;
+  challengerSnapshot: Types.Base;
 }
 
 export interface ClanSummary {

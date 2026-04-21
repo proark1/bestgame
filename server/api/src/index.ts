@@ -58,13 +58,19 @@ async function start(): Promise<void> {
         // Pull every admin-uploaded sprite out of the DB and onto the
         // served disk directory so fastify-static returns them right
         // away — no per-request DB read in the hot path.
+        //
+        // Dist is 'create' because a fresh Railway deploy starts with
+        // NO client/dist/assets/sprites/ directory — hydration has to
+        // make it. Public is 'mirror': only populated when the repo
+        // checkout exists (local dev), never auto-created in a
+        // production bundle.
         try {
           const clientDist = join(__dirname, '..', '..', '..', 'client');
           await hydrateSpritesToDisk(
             pool,
             [
-              join(clientDist, 'dist', 'assets', 'sprites'),
-              join(clientDist, 'public', 'assets', 'sprites'),
+              { dir: join(clientDist, 'dist', 'assets', 'sprites'), mode: 'create' },
+              { dir: join(clientDist, 'public', 'assets', 'sprites'), mode: 'mirror' },
             ],
             (msg) => app.log.info(msg),
           );

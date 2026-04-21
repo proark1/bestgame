@@ -120,6 +120,11 @@ interface PicnicCreateOptions {
   arenaToken?: string;
 }
 
+interface PicnicJoinOptions {
+  playerId?: string;
+  arenaToken?: string;
+}
+
 export class PicnicRoom extends Room<PicnicState> {
   override maxClients = 2;
 
@@ -188,8 +193,53 @@ export class PicnicRoom extends Room<PicnicState> {
     });
   }
 
-  override onJoin(client: Client): void {
-    // Slot assignment by join order. Spectators rejected via maxClients=2.
+  // Tracks which slots have been filled so a second connection
+  // claiming the same identity is rejected. The key is the playerId
+  // from join options; the value is the slot we assigned.
+  private slotByPlayerId = new Map<string, 0 | 1>();
+
+  override onJoin(client: Client, options: PicnicJoinOptions = {}): void {
+    // For a DB-backed room we know which player is host and which is
+    // challenger because /api/arena/_lookup returned both ids at
+    // onCreate time. Bind slot to identity, not to first-arrival — a
+    // latency race otherwise inverts the persisted winner_slot from
+    // what the reservation row says.
+    const playerId =
+      typeof options.playerId === 'string' && options.playerId.length > 0
+        ? options.playerId
+        : null;
+
+    if (this.mapSource === 'db') {
+      const hostId = this.state.hostPlayerId;
+      const challengerId = this.state.challengerPlayerId;
+      if (!playerId) {
+        // DB room without identity → reject; local dev should call
+        // joinOrCreate without an arenaToken so the fallback path runs.
+        client.leave(4001);
+        return;
+      }
+      let slot: 0 | 1;
+      if (playerId === hostId) slot = 0;
+      else if (playerId === challengerId) slot = 1;
+      else {
+        // A third party trying to crash the reserved match.
+        client.leave(4001);
+        return;
+      }
+      if (this.slotByPlayerId.has(playerId)) {
+        // Same identity joining twice — could be a reconnect attempt,
+        // but we don't support mid-match reconnection yet. Reject so
+        // the opponent isn't stuck behind a ghost client.
+        client.leave(4002);
+        return;
+      }
+      this.slotByPlayerId.set(playerId, slot);
+      client.userData = { slot };
+      return;
+    }
+
+    // Fallback (NEUTRAL_MAP / dev): first-come-first-serve by join order.
+    // maxClients=2 bounds this to [0, 1].
     client.userData = { slot: this.clients.length - 1 };
   }
 
