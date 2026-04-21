@@ -1,7 +1,13 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Types } from '@hive/shared';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import {
+  BUILDING_DEFAULTS,
+  BUILDING_PLACEMENT_COSTS,
+  isPlayerPlaceable,
+} from '../game/buildingCosts.js';
 
 // /api/player/me — returns the authenticated player + their base, with
 // offline income trickled forward based on elapsed time since
@@ -258,5 +264,253 @@ export function registerPlayer(app: FastifyInstance): void {
       return { error: 'base not found for player' };
     }
     return { ok: true, version: 'incremented' };
+  });
+
+  // POST /api/player/building — place a new building.
+  // Body: { kind, anchor: { x, y, layer } }
+  // Server owns the id, footprint, HP, cost validation, resource debit.
+  // All in a single transaction so a crash mid-flight never leaves a
+  // half-placed building or silently-debited player.
+  interface PlaceBuildingBody {
+    kind: Types.BuildingKind;
+    anchor: { x: number; y: number; layer: Types.Layer };
+  }
+  app.post<{ Body: PlaceBuildingBody }>('/player/building', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const body = req.body;
+    if (
+      !body || !body.kind || !body.anchor ||
+      typeof body.anchor.x !== 'number' ||
+      typeof body.anchor.y !== 'number' ||
+      (body.anchor.layer !== 0 && body.anchor.layer !== 1)
+    ) {
+      reply.code(400);
+      return { error: 'kind + anchor{x,y,layer} required' };
+    }
+    if (!isPlayerPlaceable(body.kind)) {
+      reply.code(400);
+      return { error: `${body.kind} is not player-placeable` };
+    }
+    const defaults = BUILDING_DEFAULTS[body.kind];
+    const cost = BUILDING_PLACEMENT_COSTS[body.kind];
+    if (!defaults || !cost) {
+      reply.code(400);
+      return { error: 'unknown building kind' };
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const baseRes = await client.query<{ snapshot: Types.Base }>(
+        'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+        [playerId],
+      );
+      if (baseRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'base not found' };
+      }
+      const base = baseRes.rows[0]!.snapshot;
+
+      // Bounds check inside the base grid.
+      if (
+        body.anchor.x < 0 ||
+        body.anchor.y < 0 ||
+        body.anchor.x + defaults.w > base.gridSize.w ||
+        body.anchor.y + defaults.h > base.gridSize.h
+      ) {
+        await client.query('ROLLBACK');
+        reply.code(400);
+        return { error: 'building extends outside grid' };
+      }
+
+      // Collision check on the target layer. Dual-layer (QueenChamber)
+      // would need both layers checked, but players can't place one.
+      for (const existing of base.buildings) {
+        const ex = existing.anchor.x;
+        const ey = existing.anchor.y;
+        const ew = existing.footprint.w;
+        const eh = existing.footprint.h;
+        const sameLayer =
+          existing.anchor.layer === body.anchor.layer ||
+          existing.spans?.includes(body.anchor.layer);
+        if (!sameLayer) continue;
+        const overlaps =
+          body.anchor.x < ex + ew &&
+          body.anchor.x + defaults.w > ex &&
+          body.anchor.y < ey + eh &&
+          body.anchor.y + defaults.h > ey;
+        if (overlaps) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: 'tile occupied' };
+        }
+      }
+      if (base.buildings.length >= 40) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'base at building cap (40)' };
+      }
+
+      // Debit resources first (fails atomically if insufficient).
+      const debitRes = await client.query<{
+        trophies: number;
+        sugar: string;
+        leaf_bits: string;
+        aphid_milk: string;
+      }>(
+        `UPDATE players
+            SET sugar      = sugar - $2,
+                leaf_bits  = leaf_bits - $3,
+                aphid_milk = aphid_milk - $4,
+                last_seen_at = NOW()
+          WHERE id = $1
+            AND sugar >= $2
+            AND leaf_bits >= $3
+            AND aphid_milk >= $4
+      RETURNING trophies, sugar, leaf_bits, aphid_milk`,
+        [playerId, cost.sugar, cost.leafBits, cost.aphidMilk],
+      );
+      if (debitRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(402); // Payment Required
+        return { error: 'insufficient resources', cost };
+      }
+
+      // Build the Types.Building row, mutate the snapshot, persist.
+      const id = `b-${randomBytes(6).toString('hex')}`;
+      const newBuilding: Types.Building = {
+        id,
+        kind: body.kind,
+        anchor: body.anchor,
+        footprint: { w: defaults.w, h: defaults.h },
+        level: 1,
+        hp: defaults.hp,
+        hpMax: defaults.hp,
+        ...(defaults.spans ? { spans: defaults.spans } : {}),
+      };
+      const updatedBase: Types.Base = {
+        ...base,
+        buildings: [...base.buildings, newBuilding],
+        version: (base.version ?? 0) + 1,
+      };
+      await client.query(
+        `UPDATE bases
+            SET snapshot = $2::jsonb,
+                version = version + 1,
+                updated_at = NOW()
+          WHERE player_id = $1`,
+        [playerId, JSON.stringify(updatedBase)],
+      );
+
+      await client.query('COMMIT');
+      const debited = debitRes.rows[0]!;
+      return {
+        ok: true,
+        building: newBuilding,
+        base: updatedBase,
+        player: {
+          trophies: debited.trophies,
+          sugar: Number(debited.sugar),
+          leafBits: Number(debited.leaf_bits),
+          aphidMilk: Number(debited.aphid_milk),
+        },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/building POST failed');
+      reply.code(500);
+      return { error: 'placement failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>(
+    '/player/building/:id',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      // sanity check id shape — server-generated ids are b-<12 hex>
+      const id = req.params.id;
+      if (!/^[a-z0-9][a-z0-9-_]{1,63}$/i.test(id)) {
+        reply.code(400);
+        return { error: 'invalid building id' };
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const before = base.buildings.length;
+        // Protect the QueenChamber — deleting it would brick the base.
+        const target = base.buildings.find((b) => b.id === id);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        if (target.kind === 'QueenChamber') {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'cannot delete the Queen Chamber' };
+        }
+        const updated: Types.Base = {
+          ...base,
+          buildings: base.buildings.filter((b) => b.id !== id),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        return { ok: true, base: updated, removed: before - updated.buildings.length };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'player/building DELETE failed');
+        reply.code(500);
+        return { error: 'delete failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // Costs + catalog for the client picker. Keeps the source of truth
+  // on the server — clients never compute cost locally.
+  app.get('/player/building/catalog', async () => {
+    return {
+      placeable: Object.fromEntries(
+        Object.entries(BUILDING_PLACEMENT_COSTS).filter(([k]) =>
+          isPlayerPlaceable(k as Types.BuildingKind),
+        ),
+      ),
+    };
   });
 }

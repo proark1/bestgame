@@ -87,9 +87,29 @@ export class HomeScene extends Phaser.Scene {
     this.drawBoard();
     this.drawBuildings();
     this.drawFooter();
+    this.wireBoardTap();
+    // Kick off catalog fetch (non-blocking) — it's cached per scene
+    // enter. If it fails, the picker shows a network error.
+    void this.loadCatalog();
 
     this.scale.on('resize', this.handleResize, this);
     this.handleResize();
+  }
+
+  private catalog: Record<
+    string,
+    { sugar: number; leafBits: number; aphidMilk: number }
+  > = {};
+
+  private async loadCatalog(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const res = await runtime.api.getBuildingCatalog();
+      this.catalog = res.placeable;
+    } catch {
+      // Picker will show an empty state
+    }
   }
 
   override update(_time: number, deltaMs: number): void {
@@ -354,5 +374,242 @@ export class HomeScene extends Phaser.Scene {
     // Center the board container horizontally when the scale allows.
     const xOffset = Math.max(0, (this.scale.width - BOARD_W) / 2);
     this.boardContainer.setX(xOffset);
+  }
+
+  // --- Build mode: tap empty tile → picker modal → place --------------------
+
+  private wireBoardTap(): void {
+    // Single pointerup handler on the scene — compute the tile under
+    // the pointer, decide if it's empty, and either open the picker or
+    // no-op. We don't use per-tile interactive zones because the board
+    // also hosts building sprites; a single scene-level handler is
+    // simpler and covers both gesture-cancel and taps on empty space.
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      // Ignore clicks in the HUD or footer strip.
+      if (p.y < HUD_H || p.y > HUD_H + BOARD_H) return;
+      const boardBounds = this.boardContainer.getBounds();
+      const boardX = p.x - boardBounds.x;
+      const boardY = p.y - boardBounds.y;
+      if (boardX < 0 || boardX >= BOARD_W || boardY < 0 || boardY >= BOARD_H) return;
+      const tx = Math.floor(boardX / TILE);
+      const ty = Math.floor(boardY / TILE);
+      if (this.isTileOccupied(tx, ty, this.layer)) return;
+      this.openPicker(tx, ty);
+    });
+  }
+
+  private isTileOccupied(tx: number, ty: number, layer: Types.Layer): boolean {
+    const buildings = this.serverBase?.buildings ?? [];
+    for (const b of buildings) {
+      const onLayer =
+        b.anchor.layer === layer || b.spans?.includes(layer);
+      if (!onLayer) continue;
+      if (
+        tx >= b.anchor.x &&
+        tx < b.anchor.x + b.footprint.w &&
+        ty >= b.anchor.y &&
+        ty < b.anchor.y + b.footprint.h
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private pickerContainer: Phaser.GameObjects.Container | null = null;
+
+  private openPicker(tx: number, ty: number): void {
+    this.closePicker();
+    const kinds = Object.keys(this.catalog) as Types.BuildingKind[];
+    if (kinds.length === 0) {
+      this.flashToast('Loading catalog…');
+      return;
+    }
+    const W = Math.min(640, this.scale.width - 32);
+    const H = Math.min(360, this.scale.height - 80);
+    const ox = (this.scale.width - W) / 2;
+    const oy = (this.scale.height - H) / 2;
+
+    const bg = this.add.graphics().setDepth(200);
+    bg.fillStyle(0x000000, 0.6);
+    bg.fillRect(0, 0, this.scale.width, this.scale.height);
+    const card = this.add.graphics().setDepth(201);
+    card.fillStyle(0x1a2b1a, 0.98);
+    card.lineStyle(3, 0xffd98a, 1);
+    card.fillRoundedRect(ox, oy, W, H, 14);
+    card.strokeRoundedRect(ox, oy, W, H, 14);
+
+    const container = this.add.container(0, 0).setDepth(202);
+    container.add([bg, card]);
+
+    const title = this.add
+      .text(
+        this.scale.width / 2,
+        oy + 18,
+        `Place building at (${tx}, ${ty}, ${this.layer === 0 ? 'surface' : 'underground'})`,
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '14px',
+          color: '#ffd98a',
+        },
+      )
+      .setOrigin(0.5, 0).setDepth(203);
+    container.add(title);
+
+    // Close button
+    const close = this.add
+      .text(ox + W - 14, oy + 14, '×', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '22px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(1, 0).setDepth(203).setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.closePicker());
+    container.add(close);
+
+    const cols = 4;
+    const slotW = (W - 48) / cols;
+    const slotH = 110;
+    kinds.forEach((kind, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cx = ox + 24 + col * slotW + slotW / 2;
+      const cy = oy + 60 + row * (slotH + 12) + slotH / 2;
+      const cost = this.catalog[kind]!;
+      const canAfford =
+        this.resources.sugar >= cost.sugar &&
+        this.resources.leafBits >= cost.leafBits &&
+        this.resources.aphidMilk >= cost.aphidMilk;
+
+      const slotBg = this.add.graphics().setDepth(203);
+      slotBg.fillStyle(canAfford ? 0x233d24 : 0x2a1e1e, 1);
+      slotBg.lineStyle(2, canAfford ? 0x5ba445 : 0xd94c4c, 1);
+      slotBg.fillRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
+      slotBg.strokeRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
+      container.add(slotBg);
+
+      const icon = this.add
+        .image(cx, cy - 22, `building-${kind}`)
+        .setDisplaySize(48, 48)
+        .setDepth(204);
+      container.add(icon);
+
+      const nameText = this.add
+        .text(cx, cy + 12, kind.replace(/([A-Z])/g, ' $1').trim(), {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '11px',
+          color: canAfford ? '#e6f5d2' : '#c79090',
+        })
+        .setOrigin(0.5)
+        .setDepth(204);
+      container.add(nameText);
+      const costText = this.add
+        .text(
+          cx,
+          cy + 28,
+          `${cost.sugar}🍬 ${cost.leafBits}🍃`,
+          {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '10px',
+            color: canAfford ? '#c3e8b0' : '#d98080',
+          },
+        )
+        .setOrigin(0.5)
+        .setDepth(204);
+      container.add(costText);
+
+      const hit = this.add
+        .zone(cx, cy, slotW - 8, slotH - 8)
+        .setOrigin(0.5)
+        .setDepth(205)
+        .setInteractive({ useHandCursor: canAfford });
+      hit.on('pointerdown', () => {
+        if (!canAfford) {
+          this.flashToast(
+            `Need ${cost.sugar} sugar & ${cost.leafBits} leaf — have ${this.resources.sugar}/${this.resources.leafBits}`,
+          );
+          return;
+        }
+        void this.commitPlacement(kind, tx, ty);
+      });
+      container.add(hit);
+    });
+
+    this.pickerContainer = container;
+  }
+
+  private closePicker(): void {
+    if (this.pickerContainer) {
+      this.pickerContainer.destroy(true);
+      this.pickerContainer = null;
+    }
+  }
+
+  private async commitPlacement(
+    kind: Types.BuildingKind,
+    tx: number,
+    ty: number,
+  ): Promise<void> {
+    this.closePicker();
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) {
+      this.flashToast('Offline — cannot place');
+      return;
+    }
+    try {
+      const res = await runtime.api.placeBuilding({
+        kind,
+        anchor: { x: tx, y: ty, layer: this.layer },
+      });
+      // Patch runtime so the next scene enter sees the new state.
+      if (runtime.player) {
+        runtime.player.base = res.base;
+        runtime.player.player.sugar = res.player.sugar;
+        runtime.player.player.leafBits = res.player.leafBits;
+        runtime.player.player.aphidMilk = res.player.aphidMilk;
+        runtime.player.player.trophies = res.player.trophies;
+      }
+      this.serverBase = res.base;
+      this.resources = {
+        sugar: res.player.sugar,
+        leafBits: res.player.leafBits,
+        aphidMilk: res.player.aphidMilk,
+      };
+      this.sugarText.setText(this.resources.sugar.toString());
+      this.leafText.setText(this.resources.leafBits.toString());
+      // Re-render buildings.
+      this.boardContainer.removeAll(true);
+      this.drawBoard();
+      this.drawBuildings();
+      this.flashToast(`Placed ${kind}`);
+    } catch (err) {
+      this.flashToast((err as Error).message);
+    }
+  }
+
+  private toast: Phaser.GameObjects.Text | null = null;
+  private flashToast(msg: string): void {
+    this.toast?.destroy();
+    const t = this.add
+      .text(this.scale.width / 2, this.scale.height - 40, msg, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#0f1b10',
+        backgroundColor: '#ffd98a',
+        padding: { left: 10, right: 10, top: 6, bottom: 6 },
+      })
+      .setOrigin(0.5)
+      .setDepth(500);
+    this.toast = t;
+    this.tweens.add({
+      targets: t,
+      alpha: { from: 1, to: 0 },
+      delay: 1800,
+      duration: 400,
+      onComplete: () => {
+        t.destroy();
+        if (this.toast === t) this.toast = null;
+      },
+    });
   }
 }
