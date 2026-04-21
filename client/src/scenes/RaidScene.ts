@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Sim, Types } from '@hive/shared';
 import { bakeTrailDot } from '../assets/placeholders.js';
+import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
 
@@ -129,7 +130,18 @@ export class RaidScene extends Phaser.Scene {
   private boardContainer!: Phaser.GameObjects.Container;
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
   private buildingHpBars = new Map<number, Phaser.GameObjects.Graphics>();
-  private unitSprites = new Map<number, Phaser.GameObjects.Image>();
+  // Sprites can be either a static Image or an animated Sprite (walk
+  // cycle) depending on the kind + admin toggle. Both share the same
+  // x/y/alpha/setDisplaySize surface we touch each tick, so the Map
+  // stores the common base type.
+  private unitSprites = new Map<
+    number,
+    Phaser.GameObjects.Image | Phaser.GameObjects.Sprite
+  >();
+  // Populated from GET /api/settings/animation at scene create.
+  // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
+  // (this Record has it set to true) AND (the walk texture loaded).
+  private animationEnabled: Record<string, boolean> = {};
   private trailEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
 
   // Trail drawing state.
@@ -172,6 +184,17 @@ export class RaidScene extends Phaser.Scene {
     this.buildingSprites.clear();
     this.buildingHpBars.clear();
     this.unitSprites.clear();
+    this.animationEnabled = {};
+    // Fetch admin toggles without blocking scene start. By the time the
+    // first unit spawns (usually a couple of ticks in), the settings
+    // have resolved and animated kinds get walk-cycle sprites; before
+    // that, everyone's static, which is the safe fallback anyway.
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (rt) {
+      void rt.api.getAnimationSettings().then((s) => {
+        this.animationEnabled = s;
+      });
+    }
     this.pendingInputs = [];
     this.raidInputs = [];
     this.simTickElapsed = 0;
@@ -487,6 +510,46 @@ export class RaidScene extends Phaser.Scene {
     return this.deckEntries[this.selectedDeckIdx]!;
   }
 
+  // Spawn the right visual for a unit. Three conditions must all be
+  // true to render the walk-cycle animation:
+  //
+  //   1. The kind is in the hand-curated animated list (only 3 ship today).
+  //   2. The admin hasn't disabled it via /admin/api/settings/animation.
+  //   3. The walk spritesheet actually loaded (Gemini may not have
+  //      generated it yet, or the asset might be missing on disk).
+  //
+  // Any miss → fall back to the static `unit-${kind}` image. The
+  // fallback path is the one every non-animated unit uses today, so
+  // there's zero behavioral change for Beetle / Spider / DirtDigger /
+  // etc. — the feature is purely additive.
+  private makeUnitSprite(
+    kind: Types.UnitKind,
+    x: number,
+    y: number,
+  ): Phaser.GameObjects.Image | Phaser.GameObjects.Sprite {
+    const isAnimatedKind = (ANIMATED_UNIT_KINDS as readonly string[]).includes(kind);
+    const enabled = this.animationEnabled[kind] !== false;
+    const sheetKey = `unit-${kind}-walk`;
+    const animKey = `walk-${kind}`;
+    if (
+      isAnimatedKind &&
+      enabled &&
+      this.textures.exists(sheetKey) &&
+      this.anims.exists(animKey)
+    ) {
+      const spr = this.add
+        .sprite(x, y, sheetKey)
+        .setDisplaySize(28, 28)
+        .setOrigin(0.5, 0.7);
+      spr.play(animKey);
+      return spr;
+    }
+    return this.add
+      .image(x, y, `unit-${kind}`)
+      .setDisplaySize(28, 28)
+      .setOrigin(0.5, 0.7);
+  }
+
   private renderTrailPreview(): void {
     const origin = this.boardContainer.getBounds();
     this.trailGraphics.clear();
@@ -551,7 +614,7 @@ export class RaidScene extends Phaser.Scene {
       const x = Sim.toFloat(u.x) * TILE;
       const y = Sim.toFloat(u.y) * TILE;
       if (!spr) {
-        spr = this.add.image(x, y, `unit-${u.kind}`).setDisplaySize(28, 28).setOrigin(0.5, 0.7);
+        spr = this.makeUnitSprite(u.kind, x, y);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
       } else {

@@ -13,6 +13,15 @@ import {
   listSprites,
   upsertSprite,
 } from '../db/sprites.js';
+import {
+  ANIMATED_UNIT_KINDS,
+  DEFAULT_UNIT_ANIMATION,
+  SETTING_UNIT_ANIMATION,
+  getSetting,
+  putSetting,
+  type AnimatedUnitKind,
+  type UnitAnimationSettings,
+} from '../db/settings.js';
 
 // Admin API — authenticated via the registerAdminHook in auth/adminAuth.ts.
 // Routes are mounted at /admin/api/* so the auth prefix match is exact.
@@ -57,6 +66,10 @@ interface SpriteFileMeta {
   size: number;
   mtime: number;
   source: 'dist' | 'public' | 'db';
+  // Set only for DB-sourced sprites. Disk entries default to undefined
+  // (= 1 frame) because we don't store frame metadata on-disk; the DB
+  // is authoritative for anything that needs the spritesheet flag.
+  frames?: number;
 }
 
 // Merged listing across three sources: the DB (source of truth, survives
@@ -102,6 +115,7 @@ async function listAllSprites(): Promise<SpriteFileMeta[]> {
           size: r.size,
           mtime: r.updatedAt.getTime(),
           source: 'db',
+          frames: r.frames,
         });
       }
     } catch {
@@ -147,10 +161,15 @@ interface SaveBody {
   key: string;
   data: string; // base64 (no data: prefix)
   format: 'png' | 'webp';
+  // Horizontal spritesheet frame count. Default 1 = single static
+  // image (backwards compatible with the existing admin UI); >1 means
+  // the image is a horizontal strip of N equal-width frames that the
+  // client loads as a Phaser spritesheet.
+  frames?: number;
 }
 
 interface UpdatePromptBody {
-  category: 'units' | 'buildings' | 'factions' | 'styleLock';
+  category: 'units' | 'buildings' | 'factions' | 'walkCycles' | 'styleLock';
   key?: string;
   value: string;
 }
@@ -160,11 +179,9 @@ const ALLOWED_KEY_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
 // Closed set. New buckets require a deliberate code change — prevents
 // prototype-pollution via surprise categories like __proto__/constructor
 // and also stops ad-hoc keys from growing prompts.json unbounded.
-const ALLOWED_BUCKET_CATEGORIES = new Set<'units' | 'buildings' | 'factions'>([
-  'units',
-  'buildings',
-  'factions',
-]);
+const ALLOWED_BUCKET_CATEGORIES = new Set<
+  'units' | 'buildings' | 'factions' | 'walkCycles'
+>(['units', 'buildings', 'factions', 'walkCycles']);
 // JavaScript's special inherited-property names. Even with a bucket
 // allowlist we reject these as sub-keys — the prompts.json bucket object
 // is iterated elsewhere, so polluting it is still a bad idea.
@@ -187,11 +204,12 @@ export function registerAdmin(app: FastifyInstance): void {
       spritesDir: DIST_SPRITES_DIR,
       mirrorsPublic: publicDirExists(),
       dbPersistence: pool ? 'connected' : 'not-configured',
-      files: files.map(({ name, size, mtime, source }) => ({
+      files: files.map(({ name, size, mtime, source, frames }) => ({
         name,
         size,
         mtime,
         source,
+        ...(typeof frames === 'number' ? { frames } : {}),
       })),
     };
   });
@@ -238,7 +256,7 @@ export function registerAdmin(app: FastifyInstance): void {
       });
     } else if (
       ALLOWED_BUCKET_CATEGORIES.has(
-        body.category as 'units' | 'buildings' | 'factions',
+        body.category as 'units' | 'buildings' | 'factions' | 'walkCycles',
       )
     ) {
       const safeKey = body.key ? sanitizeKey(body.key) : null;
@@ -331,11 +349,20 @@ export function registerAdmin(app: FastifyInstance): void {
     // If the DB write fails we still try disk, but return an error so
     // the admin UI can surface that persistence is degraded. Without
     // DB the save is ephemeral and will vanish on next redeploy.
+    // Clamp the frame count. Anything outside [1, 16] is treated as a
+    // typo from the admin UI rather than honored; >16 frames isn't
+    // something Gemini can consistently produce and blows the sprite
+    // size budget anyway.
+    const frameCount =
+      typeof body.frames === 'number' && Number.isFinite(body.frames)
+        ? Math.max(1, Math.min(16, Math.floor(body.frames)))
+        : 1;
+
     let persistedToDb = false;
     const pool = await getPool();
     if (pool) {
       try {
-        await upsertSprite(pool, safeKey, body.format, buf);
+        await upsertSprite(pool, safeKey, body.format, buf, frameCount);
         persistedToDb = true;
       } catch (err) {
         app.log.error({ err, key: safeKey }, 'sprite DB upsert failed');
@@ -454,6 +481,59 @@ export function registerAdmin(app: FastifyInstance): void {
     }
     return { ok: true, dbRemoved, diskRemoved };
   });
+
+  // Animation toggle read/write. The public GET /api/settings/animation
+  // serves the same JSON to the client; this admin version is the only
+  // path that can mutate it. If DB is offline we return defaults so
+  // the admin UI is still usable for at-rest inspection.
+  app.get('/admin/api/settings/animation', async () => {
+    const pool = await getPool();
+    if (!pool) {
+      return {
+        kinds: ANIMATED_UNIT_KINDS,
+        values: DEFAULT_UNIT_ANIMATION,
+        dbPersistence: 'not-configured' as const,
+      };
+    }
+    const row = await getSetting<UnitAnimationSettings>(
+      pool,
+      SETTING_UNIT_ANIMATION,
+    );
+    return {
+      kinds: ANIMATED_UNIT_KINDS,
+      values: row ?? DEFAULT_UNIT_ANIMATION,
+      dbPersistence: 'connected' as const,
+    };
+  });
+
+  interface UpdateAnimationBody {
+    values: UnitAnimationSettings;
+  }
+  app.put<{ Body: UpdateAnimationBody }>(
+    '/admin/api/settings/animation',
+    async (req, reply) => {
+      const body = req.body;
+      if (!body || typeof body.values !== 'object' || body.values === null) {
+        reply.code(400);
+        return { error: 'values object required' };
+      }
+      // Server owns the shape: ignore unknown keys and coerce values
+      // to booleans. Anything else would let the admin UI pollute the
+      // JSONB blob with arbitrary nested objects.
+      const sanitized: UnitAnimationSettings = {};
+      for (const kind of ANIMATED_UNIT_KINDS) {
+        const v = body.values[kind as AnimatedUnitKind];
+        if (typeof v === 'boolean') sanitized[kind as AnimatedUnitKind] = v;
+      }
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+      }
+      await putSetting(pool, SETTING_UNIT_ANIMATION, sanitized);
+      return { ok: true, values: sanitized };
+    },
+  );
 
   app.log.info(
     `admin API mounted (${

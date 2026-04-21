@@ -16,6 +16,7 @@ export interface SpriteRow {
   key: string;
   format: SpriteFormat;
   size: number;
+  frames: number;
   updatedAt: Date;
 }
 
@@ -28,22 +29,26 @@ export async function upsertSprite(
   key: string,
   format: SpriteFormat,
   data: Buffer,
+  frames: number = 1,
 ): Promise<SpriteRow> {
+  const safeFrames = Math.max(1, Math.min(16, Math.floor(frames)));
   const res = await pool.query<{ updated_at: Date }>(
-    `INSERT INTO sprites (key, format, data, size, updated_at)
-     VALUES ($1, $2, $3, $4, NOW())
+    `INSERT INTO sprites (key, format, data, size, frames, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
      ON CONFLICT (key) DO UPDATE
         SET format = EXCLUDED.format,
             data = EXCLUDED.data,
             size = EXCLUDED.size,
+            frames = EXCLUDED.frames,
             updated_at = NOW()
      RETURNING updated_at`,
-    [key, format, data, data.length],
+    [key, format, data, data.length, safeFrames],
   );
   return {
     key,
     format,
     size: data.length,
+    frames: safeFrames,
     updatedAt: res.rows[0]!.updated_at,
   };
 }
@@ -53,12 +58,16 @@ export async function listSprites(pool: pg.Pool): Promise<SpriteRow[]> {
     key: string;
     format: SpriteFormat;
     size: number;
+    frames: number;
     updated_at: Date;
-  }>('SELECT key, format, size, updated_at FROM sprites ORDER BY key');
+  }>(
+    'SELECT key, format, size, frames, updated_at FROM sprites ORDER BY key',
+  );
   return res.rows.map((r) => ({
     key: r.key,
     format: r.format,
     size: r.size,
+    frames: r.frames,
     updatedAt: r.updated_at,
   }));
 }
@@ -72,10 +81,12 @@ export async function getSprite(
     format: SpriteFormat;
     data: Buffer;
     size: number;
+    frames: number;
     updated_at: Date;
-  }>('SELECT key, format, data, size, updated_at FROM sprites WHERE key = $1', [
-    key,
-  ]);
+  }>(
+    'SELECT key, format, data, size, frames, updated_at FROM sprites WHERE key = $1',
+    [key],
+  );
   if (res.rows.length === 0) return null;
   const r = res.rows[0]!;
   return {
@@ -83,6 +94,7 @@ export async function getSprite(
     format: r.format,
     data: r.data,
     size: r.size,
+    frames: r.frames,
     updatedAt: r.updated_at,
   };
 }

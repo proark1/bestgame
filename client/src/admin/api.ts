@@ -114,11 +114,38 @@ export async function saveSprite(args: {
   key: string;
   data: string;
   format: 'png' | 'webp';
+  // Optional: horizontal spritesheet frame count. Defaults to 1 on
+  // server-side. Set to 4 when saving a walk-cycle strip so the
+  // client loads it as a Phaser spritesheet.
+  frames?: number;
 }): Promise<{ path: string; size: number }> {
   return req<{ path: string; size: number; ok: true }>('/admin/api/save', {
     method: 'POST',
     json: args,
   });
+}
+
+// Animation toggle read/write. `kinds` is the server-owned allowlist
+// of which units can be animated; `values` is the current per-kind on/
+// off state. Unknown kinds in the PUT body are silently dropped by
+// the server to keep the JSONB blob shape-stable.
+export interface AnimationSettings {
+  kinds: readonly string[];
+  values: Record<string, boolean>;
+  dbPersistence: 'connected' | 'not-configured';
+}
+
+export async function fetchAnimationSettings(): Promise<AnimationSettings> {
+  return req<AnimationSettings>('/admin/api/settings/animation');
+}
+
+export async function putAnimationSettings(
+  values: Record<string, boolean>,
+): Promise<{ ok: true; values: Record<string, boolean> }> {
+  return req<{ ok: true; values: Record<string, boolean> }>(
+    '/admin/api/settings/animation',
+    { method: 'PUT', json: { values } },
+  );
 }
 
 export async function deleteSprite(key: string): Promise<void> {

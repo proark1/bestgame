@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Sim, Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { ArenaClient, type ArenaEvent } from '../net/ArenaClient.js';
+import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
 //
@@ -70,7 +71,11 @@ export class ArenaScene extends Phaser.Scene {
 
   // Visuals
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
-  private unitSprites = new Map<number, Phaser.GameObjects.Image>();
+  private unitSprites = new Map<
+    number,
+    Phaser.GameObjects.Image | Phaser.GameObjects.Sprite
+  >();
+  private animationEnabled: Record<string, boolean> = {};
   private trailGraphics!: Phaser.GameObjects.Graphics;
 
   // Server tick marker — used to compute intendedTick for draws.
@@ -90,6 +95,15 @@ export class ArenaScene extends Phaser.Scene {
     this.hasError = false;
     this.buildingSprites.clear();
     this.unitSprites.clear();
+    this.animationEnabled = {};
+    // Settings is a best-effort non-blocking fetch; we fall back to
+    // static sprites if it hasn't resolved by the time units spawn.
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (rt) {
+      void rt.api.getAnimationSettings().then((s) => {
+        this.animationEnabled = s;
+      });
+    }
 
     this.drawHud();
     this.boardContainer = this.add.container(0, HUD_H);
@@ -188,6 +202,38 @@ export class ArenaScene extends Phaser.Scene {
 
   // Called after reserveArena() swaps the sim config to the reserved
   // snapshot + seed. Wipes the placeholder building sprites that were
+  // Mirror of RaidScene.makeUnitSprite — the three conditions to get
+  // the walk-cycle animation are identical (kind is animated + admin
+  // toggle on + spritesheet actually loaded), and the fallback is the
+  // same static Image as before.
+  private makeUnitSprite(
+    kind: Types.UnitKind,
+    x: number,
+    y: number,
+  ): Phaser.GameObjects.Image | Phaser.GameObjects.Sprite {
+    const isAnimatedKind = (ANIMATED_UNIT_KINDS as readonly string[]).includes(kind);
+    const enabled = this.animationEnabled[kind] !== false;
+    const sheetKey = `unit-${kind}-walk`;
+    const animKey = `walk-${kind}`;
+    if (
+      isAnimatedKind &&
+      enabled &&
+      this.textures.exists(sheetKey) &&
+      this.anims.exists(animKey)
+    ) {
+      const spr = this.add
+        .sprite(x, y, sheetKey)
+        .setDisplaySize(28, 28)
+        .setOrigin(0.5, 0.7);
+      spr.play(animKey);
+      return spr;
+    }
+    return this.add
+      .image(x, y, `unit-${kind}`)
+      .setDisplaySize(28, 28)
+      .setOrigin(0.5, 0.7);
+  }
+
   // spawned from NEUTRAL_MAP so the next drawStartingBuildings pass
   // reflects the real host base the server is using.
   private renderInitialBoard(): void {
@@ -384,11 +430,8 @@ export class ArenaScene extends Phaser.Scene {
       const x = Sim.toFloat(u.x) * TILE;
       const y = Sim.toFloat(u.y) * TILE;
       if (!spr) {
-        spr = this.add
-          .image(x, y, `unit-${u.kind}`)
-          .setDisplaySize(28, 28)
-          .setOrigin(0.5, 0.7)
-          .setTint(u.owner === 0 ? 0xffffff : 0xffc0c0);
+        spr = this.makeUnitSprite(u.kind, x, y);
+        spr.setTint(u.owner === 0 ? 0xffffff : 0xffc0c0);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
       } else {

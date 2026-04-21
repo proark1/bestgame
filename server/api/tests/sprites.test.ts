@@ -15,18 +15,22 @@ interface FakeRow {
   format: 'png' | 'webp';
   data: Buffer;
   size: number;
+  // Default to 1 when not specified — all existing tests predate the
+  // frames column and expect static sprites, so the mock fills it in.
+  frames?: number;
   updated_at: Date;
 }
 
 function makePool(rows: FakeRow[]): { query: (sql: string, params?: unknown[]) => Promise<unknown> } {
+  const stamped = rows.map((r) => ({ frames: 1, ...r }));
   return {
     query: async (sql: string, params?: unknown[]) => {
-      if (sql.startsWith('SELECT key, format, size, updated_at')) {
-        return { rows };
+      if (sql.startsWith('SELECT key, format, size, frames, updated_at')) {
+        return { rows: stamped };
       }
-      if (sql.startsWith('SELECT key, format, data, size, updated_at')) {
+      if (sql.startsWith('SELECT key, format, data, size, frames, updated_at')) {
         const wanted = (params as [string])[0];
-        const row = rows.find((r) => r.key === wanted);
+        const row = stamped.find((r) => r.key === wanted);
         return { rows: row ? [row] : [] };
       }
       throw new Error(`unexpected sql: ${sql}`);
