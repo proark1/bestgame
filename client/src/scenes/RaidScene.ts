@@ -141,9 +141,13 @@ export class RaidScene extends Phaser.Scene {
   private starsText!: Phaser.GameObjects.Text;
   private lootText!: Phaser.GameObjects.Text;
   private deckContainers: Phaser.GameObjects.Container[] = [];
+  // Parallel array to deckContainers — avoids monkey-patching the
+  // container with a labelText property.
+  private deckLabels: Phaser.GameObjects.Text[] = [];
 
   private simTickElapsed = 0; // fractional tick accumulator
   private started = false;
+  private resultShown = false;
 
   constructor() {
     super('RaidScene');
@@ -151,7 +155,21 @@ export class RaidScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+    // Reset all per-run state. Scene instances are reused across raids,
+    // so previous-run state must be cleared here or it'll leak.
     this.deckEntries = DECK.map((d) => ({ ...d }));
+    this.deckContainers = [];
+    this.deckLabels = [];
+    this.buildingSprites.clear();
+    this.buildingHpBars.clear();
+    this.unitSprites.clear();
+    this.pendingInputs = [];
+    this.simTickElapsed = 0;
+    this.resultShown = false;
+    this.started = false;
+    this.selectedDeckIdx = 0;
+    this.drawingPoints = [];
+    this.isDrawing = false;
 
     this.cfg = {
       tickRate: 30,
@@ -342,8 +360,8 @@ export class RaidScene extends Phaser.Scene {
           });
         });
 
-      (container as unknown as { labelText: Phaser.GameObjects.Text }).labelText = label;
       this.deckContainers.push(container);
+      this.deckLabels.push(label);
     }
   }
 
@@ -394,11 +412,7 @@ export class RaidScene extends Phaser.Scene {
       });
       const burst = Math.min(entry.count, 5);
       entry.count -= burst;
-      const label = (
-        this.deckContainers[this.selectedDeckIdx]! as unknown as {
-          labelText: Phaser.GameObjects.Text;
-        }
-      ).labelText;
+      const label = this.deckLabels[this.selectedDeckIdx]!;
       label.setText(`${entry.label} ×${entry.count}`);
 
       this.pendingInputs.push({
@@ -528,8 +542,8 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private showResult(): void {
-    if ((this as unknown as { _shown?: boolean })._shown) return;
-    (this as unknown as { _shown?: boolean })._shown = true;
+    if (this.resultShown) return;
+    this.resultShown = true;
 
     const stars = this.currentStars();
     const overlay = this.add.graphics().setDepth(100);

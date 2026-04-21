@@ -187,12 +187,13 @@ export class HomeScene extends Phaser.Scene {
       () => this.scene.start('RaidScene'),
     );
 
-    // Anchor to bottom on resize
+    // Anchor to bottom on resize. Phaser.GameObjects.Container exposes `y`
+    // directly, so no casts needed.
     this.events.on('prerender', () => {
       const by = HUD_H + BOARD_H + 28;
       this.layerLabel.setY(by);
-      (toggle as unknown as { y: number }).y = by;
-      (raid as unknown as { y: number }).y = by;
+      toggle.y = by;
+      raid.y = by;
     });
   }
 
