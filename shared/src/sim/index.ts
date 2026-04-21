@@ -5,3 +5,4 @@ export * from './state.js';
 export * from './init.js';
 export * from './hash.js';
 export * from './step.js';
+export * from './progression.js';
