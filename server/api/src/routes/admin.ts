@@ -45,6 +45,51 @@ function publicDirExists(): boolean {
   return existsSync(join(REPO_ROOT, 'client', 'public'));
 }
 
+interface SpriteFileMeta {
+  name: string;
+  size: number;
+  mtime: number;
+  source: 'dist' | 'public';
+}
+
+// Merged listing of sprite files from both directories. Dist wins on
+// name collisions because it's the live served state; public fills in
+// the long tail (e.g. sprites committed to the repo but not yet
+// re-saved since the last deploy). Consumers include /admin/api/status
+// (what the UI sees) and /admin/api/download-all (what the zip ships).
+async function listAllSprites(): Promise<SpriteFileMeta[]> {
+  const merged = new Map<string, SpriteFileMeta>();
+  // Iterate public first so dist entries overwrite when both exist.
+  const sources: Array<[string, 'public' | 'dist']> = [
+    [PUBLIC_SPRITES_DIR, 'public'],
+    [DIST_SPRITES_DIR, 'dist'],
+  ];
+  for (const [dir, source] of sources) {
+    try {
+      const names = await readdir(dir);
+      const metas = await Promise.all(
+        names
+          .filter((n) => n.endsWith('.png') || n.endsWith('.webp'))
+          .map(async (n): Promise<SpriteFileMeta> => {
+            const s = await stat(join(dir, n));
+            return { name: n, size: s.size, mtime: s.mtimeMs, source };
+          }),
+      );
+      for (const m of metas) merged.set(m.name, m);
+    } catch {
+      // directory may not exist — fine, it'll be created on first save
+    }
+  }
+  return Array.from(merged.values());
+}
+
+function resolveSpritePath(meta: SpriteFileMeta): string {
+  return join(
+    meta.source === 'dist' ? DIST_SPRITES_DIR : PUBLIC_SPRITES_DIR,
+    meta.name,
+  );
+}
+
 interface GenerateBody {
   prompt: string;
   variants?: number;
@@ -86,34 +131,15 @@ function sanitizeKey(key: string): string | null {
 
 export function registerAdmin(app: FastifyInstance): void {
   app.get('/admin/api/status', async () => {
-    // List what's actually being served. If dist has nothing yet (fresh
-    // deploy, admin never ran), fall back to public so the admin sees
-    // whatever will be copied during the next build.
-    let files: Array<{ name: string; size: number; mtime: number }> = [];
-    for (const dir of [DIST_SPRITES_DIR, PUBLIC_SPRITES_DIR]) {
-      try {
-        const names = await readdir(dir);
-        const metas = await Promise.all(
-          names
-            .filter((n) => n.endsWith('.png') || n.endsWith('.webp'))
-            .map(async (n) => {
-              const s = await stat(join(dir, n));
-              return { name: n, size: s.size, mtime: s.mtimeMs };
-            }),
-        );
-        if (metas.length > 0) {
-          files = metas;
-          break;
-        }
-      } catch {
-        // directory may not exist yet
-      }
-    }
+    // Merged view across dist + public so the admin always sees the full
+    // repository state. Dist wins on name collisions (it's the live
+    // served state).
+    const files = await listAllSprites();
     return {
       authMode: adminAuthConfigured() ? 'token' : 'loopback-only',
       spritesDir: DIST_SPRITES_DIR,
       mirrorsPublic: publicDirExists(),
-      files,
+      files: files.map(({ name, size, mtime }) => ({ name, size, mtime })),
     };
   });
 
@@ -285,16 +311,10 @@ export function registerAdmin(app: FastifyInstance): void {
   });
 
   app.get('/admin/api/download-all', async (_req, reply) => {
-    // Stream a zip of the live sprites (served dir). Entries are
-    // STORE-only because WebP/PNG are already compressed.
-    let files: string[] = [];
-    try {
-      files = (await readdir(DIST_SPRITES_DIR)).filter(
-        (n) => n.endsWith('.png') || n.endsWith('.webp'),
-      );
-    } catch {
-      files = [];
-    }
+    // Uses the same merged listing as /status so the zip always ships
+    // exactly what the admin UI displays. STORE-only entries since
+    // WebP/PNG are already compressed.
+    const files = await listAllSprites();
     reply
       .header(
         'content-disposition',
@@ -307,8 +327,8 @@ export function registerAdmin(app: FastifyInstance): void {
       app.log.error({ err }, 'zip error');
       reply.raw.destroy(err);
     });
-    for (const name of files) {
-      zip.file(join(DIST_SPRITES_DIR, name), { name });
+    for (const f of files) {
+      zip.file(resolveSpritePath(f), { name: f.name });
     }
     zip.append(
       `# Hive Wars sprite bundle\n\nExtract these ${files.length} file(s) ` +
