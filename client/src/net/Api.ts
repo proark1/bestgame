@@ -167,6 +167,25 @@ export class Api {
     if (!res.ok) throw new Error(`delete ${res.status}`);
     return (await res.json()) as DeleteBuildingResponse;
   }
+
+  async getLeaderboard(limit = 50): Promise<LeaderboardResponse> {
+    const res = await this.authedFetch(`/leaderboard?limit=${limit}`);
+    if (!res.ok) throw new Error(`leaderboard ${res.status}`);
+    return (await res.json()) as LeaderboardResponse;
+  }
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  playerId: string;
+  displayName: string;
+  faction: string;
+  trophies: number;
+}
+export interface LeaderboardResponse {
+  top: LeaderboardEntry[];
+  me: LeaderboardEntry | null;
+  limit: number;
 }
 
 export interface MatchResponse {

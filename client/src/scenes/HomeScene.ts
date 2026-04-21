@@ -320,6 +320,22 @@ export class HomeScene extends Phaser.Scene {
       },
     );
 
+    const leaderboard = this.makeButton(
+      380,
+      y,
+      '🏆 Ranks',
+      'ui-button-secondary',
+      () => this.scene.start('LeaderboardScene'),
+    );
+
+    const history = this.makeButton(
+      530,
+      y,
+      '📜 Recent',
+      'ui-button-secondary',
+      () => this.scene.start('RaidHistoryScene'),
+    );
+
     const raid = this.makeButton(
       this.scale.width - 220,
       y,
@@ -334,6 +350,8 @@ export class HomeScene extends Phaser.Scene {
       const by = HUD_H + BOARD_H + 28;
       this.layerLabel.setY(by);
       toggle.y = by;
+      leaderboard.y = by;
+      history.y = by;
       raid.y = by;
     });
   }
