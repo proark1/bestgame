@@ -15,6 +15,7 @@ import { registerLeaderboard } from './routes/leaderboard.js';
 import { registerClan } from './routes/clan.js';
 import { registerArena } from './routes/arena.js';
 import { registerSettings } from './routes/settings.js';
+import { registerSpritesManifest } from './routes/sprites.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -116,6 +117,7 @@ async function start(): Promise<void> {
       registerClan(scope);
       registerArena(scope);
       registerSettings(scope);
+      registerSpritesManifest(scope);
     },
     { prefix: '/api' },
   );

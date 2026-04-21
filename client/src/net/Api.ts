@@ -286,6 +286,25 @@ export class Api {
     return (await res.json()) as ArenaReserveResponse;
   }
 
+  // Advance the Queen one tier. Fails with 409 at max level and 402
+  // when the player can't afford the cost.
+  async upgradeQueen(): Promise<UpgradeQueenResponse> {
+    const res = await this.authedFetch('/player/upgrade-queen', {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      let msg = `queen upgrade ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // fall through
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as UpgradeQueenResponse;
+  }
+
   // Per-unit animation enable flags. Kept lightweight (no auth) so the
   // boot scene can load it before the session is established. On any
   // failure we resolve to an empty object — scenes fall back to the
@@ -429,7 +448,24 @@ export type BuildingCatalog = {
     string,
     { sugar: number; leafBits: number; aphidMilk: number }
   >;
+  // Per-kind rules shipped with the catalog so the picker can
+  // disable unplaceable slots (wrong layer / over cap) with a clear
+  // inline hint, rather than round-tripping to /player/building and
+  // bouncing with an error. Absent on old servers that predate the
+  // town-builder-tier work.
+  rules?: Record<
+    string,
+    { allowedLayers: number[]; quotaByTier: number[] }
+  >;
+  maxQueenLevel?: number;
 };
+
+export interface UpgradeQueenResponse {
+  ok: true;
+  newQueenLevel: number;
+  base: Types.Base;
+  player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
+}
 
 export interface PlaceBuildingResponse {
   ok: true;
