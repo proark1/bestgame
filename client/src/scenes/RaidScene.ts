@@ -594,6 +594,16 @@ export class RaidScene extends Phaser.Scene {
       const match = await runtime.api.requestMatch(
         runtime.player?.player.trophies ?? 100,
       );
+      // Race guard: if the player already started committing inputs
+      // against the fallback bot base before this response arrived,
+      // swapping the sim state mid-raid would corrupt the replay
+      // (matchToken would point at one base, inputs collected against
+      // another). Keep the bot fight and let the raid run its course
+      // — the only cost is the match token becomes an unused
+      // pending_matches row that expires in 15 min.
+      if (this.raidInputs.length > 0 || this.isDrawing || this.submitted) {
+        return;
+      }
       this.matchContext = match;
       // Rebuild sim against the real opponent's snapshot.
       this.cfg = {
@@ -610,7 +620,6 @@ export class RaidScene extends Phaser.Scene {
       for (const bar of this.buildingHpBars.values()) bar.destroy();
       this.buildingHpBars.clear();
       this.drawBuildingsFromState();
-      // Nice-to-have: show the opponent's display name above the HUD
       this.add
         .text(this.scale.width / 2, 4, `vs ${match.opponent.displayName}`, {
           fontFamily: 'ui-monospace, monospace',
@@ -636,9 +645,7 @@ export class RaidScene extends Phaser.Scene {
     if (!runtime || !this.matchContext) return;
     try {
       const res = await runtime.api.submitRaid({
-        defenderId: this.matchContext.defenderId,
-        baseSnapshot: this.matchContext.baseSnapshot,
-        seed: this.matchContext.seed,
+        matchToken: this.matchContext.matchToken,
         inputs: this.raidInputs,
         clientResultHash: Sim.hashToHex(Sim.hashSimState(this.state)),
       });

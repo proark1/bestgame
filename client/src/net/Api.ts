@@ -98,12 +98,14 @@ export class Api {
   }
 
   async submitRaid(args: {
-    defenderId: string | null;
-    baseSnapshot: Types.Base;
-    seed: number;
+    matchToken: string;
     inputs: Types.SimInput[];
     clientResultHash: string;
   }): Promise<RaidSubmitResponse> {
+    // The server owns the (defenderId, seed, baseSnapshot) tuple —
+    // all we submit is the match token + our input timeline + the
+    // result hash we computed locally. That prevents a malicious
+    // client from spoofing the defender's base to farm loot.
     const res = await this.authedFetch('/raid/submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -131,9 +133,14 @@ export class Api {
 }
 
 export interface MatchResponse {
+  // Opaque token the server uses to look up the authoritative base on
+  // raid/submit. The client must not forge or re-use this.
+  matchToken: string;
   defenderId: string | null;
   trophiesSought: number;
   seed: number;
+  // baseSnapshot here is for rendering only — the server holds the real
+  // one and ignores whatever the client sends back on submit.
   baseSnapshot: Types.Base;
   opponent: { isBot: boolean; displayName: string; trophies: number };
 }
