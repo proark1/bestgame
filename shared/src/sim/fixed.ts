@@ -94,11 +94,15 @@ export function atan2Turns(dy: Fixed, dx: Fixed): Fixed {
   if (dx === 0 && dy === 0) return 0;
   // Full-turn angle with 8192 resolution — coarse but fine for gameplay.
   // We use cross/dot signs to pick the quadrant.
+  //
+  // FIXED_ONE (65536) / SINE_RESOLUTION (8192) = 8 exactly, so converting
+  // a table index to a Fixed "turn" is a `<< 3` — integer-only, keeps the
+  // FPU out of the sim.
   let lo = 0;
   let hi = SINE_RESOLUTION;
   while (hi - lo > 1) {
     const mid = (lo + hi) >>> 1;
-    const a = (mid / SINE_RESOLUTION) * FIXED_ONE;
+    const a = mid << 3;
     const sx = cosTurns(a);
     const sy = sinTurns(a);
     // Compare cross product sign to determine side.
@@ -106,7 +110,7 @@ export function atan2Turns(dy: Fixed, dx: Fixed): Fixed {
     if (cross >= 0) hi = mid;
     else lo = mid;
   }
-  return ((lo * FIXED_ONE) / SINE_RESOLUTION) | 0;
+  return (lo << 3) | 0;
 }
 
 // Manhattan and Chebyshev distance — pathfinding helpers.

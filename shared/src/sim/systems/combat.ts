@@ -37,8 +37,11 @@ export function combatSystem(state: SimState): void {
       continue;
     }
     const stats = UNIT_STATS[u.kind];
-    const bx = fromInt(b.anchorX) + fromInt(b.w) / 2;
-    const by = fromInt(b.anchorY) + fromInt(b.h) / 2;
+    // Building center: anchor + footprint/2. Using `>> 1` on the Fixed
+    // footprint width keeps this in integer math; plain `/ 2` would lean
+    // on the FPU and drift across engines.
+    const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+    const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
     const d2: Fixed = dist2(u.x, u.y, bx, by);
     const rangeSq = mul(stats.attackRange, stats.attackRange);
     if (d2 > rangeSq) {
@@ -86,8 +89,8 @@ export function combatSystem(state: SimState): void {
       continue;
     }
     // Acquire nearest living attacker unit within range and same layer.
-    const bx = fromInt(b.anchorX) + fromInt(b.w) / 2;
-    const by = fromInt(b.anchorY) + fromInt(b.h) / 2;
+    const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+    const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
     const rangeSq = mul(bstats.attackRange, bstats.attackRange);
     let bestIdx = -1;
     let bestD2: Fixed = rangeSq + 1;

@@ -11,10 +11,10 @@ import type { SimState } from '../state.js';
 // insertion order; both invariants are preserved by deploy.ts.
 
 export function pheromoneFollowSystem(state: SimState): void {
-  const pathsById = new Map<number, number>();
-  for (let i = 0; i < state.paths.length; i++) {
-    pathsById.set(state.paths[i]!.pathId, i);
-  }
+  // Linear path lookup. We intentionally avoid allocating a Map per tick
+  // (GC-timing-sensitive — violates the sim's no-per-tick-alloc rule).
+  // With the design cap of ~16 concurrent paths and ~30 units, the inner
+  // O(paths) scan is trivial (~500 comparisons in the worst case).
 
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
@@ -22,12 +22,17 @@ export function pheromoneFollowSystem(state: SimState): void {
     if (u.pathId < 0) continue;
     if (u.targetBuildingId !== 0) continue; // combat owns it now
 
-    const pathIdx = pathsById.get(u.pathId);
-    if (pathIdx === undefined) {
+    let path = null as (typeof state.paths)[number] | null;
+    for (let j = 0; j < state.paths.length; j++) {
+      if (state.paths[j]!.pathId === u.pathId) {
+        path = state.paths[j]!;
+        break;
+      }
+    }
+    if (!path) {
       u.pathId = -1;
       continue;
     }
-    const path = state.paths[pathIdx]!;
     const stats = UNIT_STATS[u.kind];
     let budget: Fixed = stats.speed; // distance remaining to travel this tick
 
@@ -86,8 +91,8 @@ export function pheromoneFollowSystem(state: SimState): void {
         const canReach =
           b.layer === u.layer || (b.spans && b.spans.includes(u.layer));
         if (!canReach) continue;
-        const bx = fromInt(b.anchorX) + fromInt(b.w) / 2;
-        const by = fromInt(b.anchorY) + fromInt(b.h) / 2;
+        const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+        const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
         const d2 = dist2(u.x, u.y, bx, by);
         if (d2 < bestDist2) {
           bestDist2 = d2;
