@@ -29,6 +29,11 @@ export interface PromptsFile {
   factions: Record<string, string>;
   units: Record<string, string>;
   buildings: Record<string, string>;
+  // Walk-cycle prompts for the animated units. Parallel to `units`
+  // but produces a 512x128 horizontal spritesheet strip instead of a
+  // single 128x128 sprite. Absent on old bundles that predate the
+  // animation feature.
+  walkCycles?: Record<string, string>;
 }
 
 export interface GeminiImage {
