@@ -49,7 +49,10 @@ const BASE_LEAF: Partial<Record<Types.UnitKind, number>> = {
 };
 
 export function isUpgradeableUnit(kind: Types.UnitKind): boolean {
-  return kind in BASE_SUGAR;
+  // hasOwnProperty.call guards against a client sending a prototype
+  // name like "toString" or "__proto__" — those would pass the naked
+  // `in` operator and trip upgradeCost's string lookups.
+  return Object.prototype.hasOwnProperty.call(BASE_SUGAR, kind);
 }
 
 export function upgradeCost(kind: Types.UnitKind, currentLevel: number): UpgradeCost | null {

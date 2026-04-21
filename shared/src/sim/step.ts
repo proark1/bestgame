@@ -40,8 +40,9 @@ export function step(
   if (state.outcome === 'ongoing') {
     // 2. Units advance along their pheromone paths.
     pheromoneFollowSystem(state);
-    // 3. Combat resolution (unit<->building).
-    combatSystem(state);
+    // 3. Combat resolution (unit<->building). Level multipliers are
+    // threaded in so attacker damage scales with upgrades.
+    combatSystem(state, cfg.attackerUnitLevels);
     // 4. Cull dead — but preserve id-sorted invariant. Since we only delete
     //    entries, and they were sorted by id, the remaining slice stays sorted.
     let w = 0;

@@ -597,8 +597,8 @@ export function registerPlayer(app: FastifyInstance): void {
     return {
       units: entries,
       resources: {
-        sugar: Number(row.sugar),
-        leafBits: Number(row.leaf_bits),
+        sugar: safeBigintToNumber(row.sugar, 'sugar', app.log),
+        leafBits: safeBigintToNumber(row.leaf_bits, 'leaf_bits', app.log),
       },
     };
   });
@@ -692,8 +692,8 @@ export function registerPlayer(app: FastifyInstance): void {
           newLevel: currentLevel + 1,
           unitLevels: r.unit_levels,
           resources: {
-            sugar: Number(r.sugar),
-            leafBits: Number(r.leaf_bits),
+            sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
           },
         };
       } catch (err) {

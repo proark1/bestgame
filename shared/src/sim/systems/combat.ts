@@ -2,6 +2,7 @@ import { abs, add, sub, mul, div, dist2, fromInt } from '../fixed.js';
 import type { Fixed } from '../fixed.js';
 import { BUILDING_STATS, UNIT_STATS } from '../stats.js';
 import type { SimState } from '../state.js';
+import type { UnitKind } from '../../types/units.js';
 
 // Combat system — resolves unit↔building and building↔unit attacks.
 // Runs after pheromoneFollow so targeting is up to date.
@@ -10,7 +11,21 @@ import type { SimState } from '../state.js';
 // (hits resolve instantly), no healing. Add in week 2 once determinism gate
 // is stable.
 
-export function combatSystem(state: SimState): void {
+// Integer-only stat scaling (matches applyDeploy). Applied to attacker-
+// owned units' attack damage so upgrades hit harder as levels rise.
+function scaleFixedByPercent(value: Fixed, percent: number): Fixed {
+  return (mul(value, fromInt(percent)) / 100) | 0;
+}
+function levelPercent(level: number | undefined): number {
+  if (!level || level <= 1) return 100;
+  const capped = Math.min(10, Math.floor(level));
+  return 100 + 20 * (capped - 1);
+}
+
+export function combatSystem(
+  state: SimState,
+  attackerUnitLevels?: Partial<Record<UnitKind, number>>,
+): void {
   // Unit attacks building.
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
@@ -64,9 +79,16 @@ export function combatSystem(state: SimState): void {
       }
       continue;
     }
-    // In range — attack.
+    // In range — attack. Attacker-owned units' damage scales with
+    // their per-kind upgrade level (matches the HP scaling in
+    // applyDeploy). Defender buildings reach this site too but they
+    // don't take the level path — building damage is handled below.
     if (u.attackCooldown === 0) {
-      b.hp = sub(b.hp, stats.attackDamage);
+      const dmg =
+        u.owner === 0
+          ? scaleFixedByPercent(stats.attackDamage, levelPercent(attackerUnitLevels?.[u.kind]))
+          : stats.attackDamage;
+      b.hp = sub(b.hp, dmg);
       u.attackCooldown = stats.attackCooldownTicks;
       if (b.hp <= 0) {
         b.hp = 0;

@@ -21,6 +21,7 @@ export class UpgradeScene extends Phaser.Scene {
   private scrollStartOffset = 0;
   private units: UnitUpgradeEntry[] = [];
   private resources = { sugar: 0, leafBits: 0 };
+  private errorText: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super('UpgradeScene');
@@ -264,18 +265,23 @@ export class UpgradeScene extends Phaser.Scene {
       if (local) local.level = res.newLevel;
       this.render();
     } catch (err) {
-      // Show an inline error at top of the viewport.
-      this.add
-        .text(
-          this.scale.width / 2,
-          this.viewportTop - 16,
-          (err as Error).message,
-          {
-            fontFamily: 'ui-monospace, monospace',
-            fontSize: '12px',
-            color: '#d94c4c',
-          },
-        )
+      this.showError((err as Error).message);
+    }
+  }
+
+  // A single error text element is reused across upgrade failures —
+  // repeated taps on an unaffordable button otherwise stack text and
+  // never clean up.
+  private showError(msg: string): void {
+    if (this.errorText) {
+      this.errorText.setText(msg).setVisible(true);
+    } else {
+      this.errorText = this.add
+        .text(this.scale.width / 2, this.viewportTop - 16, msg, {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '12px',
+          color: '#d94c4c',
+        })
         .setOrigin(0.5);
     }
   }
