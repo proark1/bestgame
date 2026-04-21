@@ -42,6 +42,12 @@ export const BUILDING_DEFAULTS: Record<
   DungeonTrap:    { w: 1, h: 1, hp: 100 },
 };
 
+// Hard ceiling on buildings per base. Shared between POST
+// /api/player/building (which rejects placement past this) and PUT
+// /api/player/base (which rejects a sync past this). Keeping one
+// source of truth avoids the "can sync 60 but can't place new" bug.
+export const MAX_BUILDINGS_PER_BASE = 60;
+
 // Players can't hand-place a Queen Chamber (one-per-base, granted at
 // account creation). Everything else is fair game.
 export const PLAYER_PLACEABLE: readonly Types.BuildingKind[] = [

@@ -378,13 +378,28 @@ export class HomeScene extends Phaser.Scene {
 
   // --- Build mode: tap empty tile → picker modal → place --------------------
 
+  // Tap/drag threshold in screen pixels. A pointer that moves further
+  // than this between down and up is interpreted as a drag (pan / path
+  // draw / accidental scroll) and should NOT open the picker.
+  private static readonly TAP_THRESHOLD_PX = 12;
+  private tapDownPos: { x: number; y: number } | null = null;
+
   private wireBoardTap(): void {
-    // Single pointerup handler on the scene — compute the tile under
-    // the pointer, decide if it's empty, and either open the picker or
-    // no-op. We don't use per-tile interactive zones because the board
-    // also hosts building sprites; a single scene-level handler is
-    // simpler and covers both gesture-cancel and taps on empty space.
+    // Record the pointerdown position so pointerup can verify the
+    // gesture was a tap (small movement), not a drag.
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      this.tapDownPos = { x: p.x, y: p.y };
+    });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const down = this.tapDownPos;
+      this.tapDownPos = null;
+      if (!down) return;
+      const dx = p.x - down.x;
+      const dy = p.y - down.y;
+      if (dx * dx + dy * dy > HomeScene.TAP_THRESHOLD_PX * HomeScene.TAP_THRESHOLD_PX) {
+        // Drag, not a tap — e.g. user panning the camera in the future.
+        return;
+      }
       // Ignore clicks in the HUD or footer strip.
       if (p.y < HUD_H || p.y > HUD_H + BOARD_H) return;
       const boardBounds = this.boardContainer.getBounds();
@@ -425,8 +440,16 @@ export class HomeScene extends Phaser.Scene {
       this.flashToast('Loading catalog…');
       return;
     }
+    // Size the modal to the content. Grid is cols × rows; height
+    // follows the row count so adding new building kinds never spills
+    // off the bottom.
+    const cols = 4;
+    const slotH = 110;
+    const rows = Math.ceil(kinds.length / cols);
     const W = Math.min(640, this.scale.width - 32);
-    const H = Math.min(360, this.scale.height - 80);
+    const naturalH = 60 + rows * (slotH + 12) + 32;
+    const maxH = this.scale.height - 80;
+    const H = Math.min(naturalH, maxH);
     const ox = (this.scale.width - W) / 2;
     const oy = (this.scale.height - H) / 2;
 
@@ -467,9 +490,7 @@ export class HomeScene extends Phaser.Scene {
       .on('pointerdown', () => this.closePicker());
     container.add(close);
 
-    const cols = 4;
     const slotW = (W - 48) / cols;
-    const slotH = 110;
     kinds.forEach((kind, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);

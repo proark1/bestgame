@@ -6,8 +6,26 @@ import { requirePlayer } from '../auth/playerAuth.js';
 import {
   BUILDING_DEFAULTS,
   BUILDING_PLACEMENT_COSTS,
+  MAX_BUILDINGS_PER_BASE,
   isPlayerPlaceable,
 } from '../game/buildingCosts.js';
+
+// Resource columns are BIGINT, so DB values come back as strings. JS
+// Number loses precision past 2^53 (~9 quadrillion); once a long-lived
+// economy crosses that, the wire shape will have to switch to string
+// or BigInt end-to-end.
+//
+// We wrap the conversion in this helper so the precision ceiling is
+// surfaced in logs the moment a real economy approaches it, without
+// silently truncating or crashing today's gameplay. Change the wire
+// format in a focused PR the first time this warning fires.
+function safeBigintToNumber(value: string, column: string, logger?: { warn: (obj: object, msg: string) => void }): number {
+  const n = Number(value);
+  if (n > Number.MAX_SAFE_INTEGER) {
+    logger?.warn({ value, column }, 'resource value exceeds MAX_SAFE_INTEGER — wire format needs upgrade');
+  }
+  return n;
+}
 
 // /api/player/me — returns the authenticated player + their base, with
 // offline income trickled forward based on elapsed time since
@@ -135,9 +153,9 @@ export function registerPlayer(app: FastifyInstance): void {
           displayName: player.display_name,
           faction: player.faction,
           trophies: player.trophies,
-          sugar: Number(newSugar),
-          leafBits: Number(newLeaf),
-          aphidMilk: Number(newMilk),
+          sugar: safeBigintToNumber(newSugar.toString(), 'sugar', app.log),
+          leafBits: safeBigintToNumber(newLeaf.toString(), 'leaf_bits', app.log),
+          aphidMilk: safeBigintToNumber(newMilk.toString(), 'aphid_milk', app.log),
           createdAt: player.created_at.toISOString(),
         },
         base: base.snapshot,
@@ -207,8 +225,8 @@ export function registerPlayer(app: FastifyInstance): void {
           (r.attacker_id === playerId ? r.defender_name : r.attacker_name) ??
           (r.defender_id === null ? 'Beetle Outpost (bot)' : 'Unknown'),
         stars: r.stars,
-        sugarLooted: Number(r.sugar_looted),
-        leafLooted: Number(r.leaf_looted),
+        sugarLooted: safeBigintToNumber(r.sugar_looted, 'sugar_looted', app.log),
+        leafLooted: safeBigintToNumber(r.leaf_looted, 'leaf_looted', app.log),
         trophyDelta:
           r.attacker_id === playerId
             ? r.attacker_trophies_delta
@@ -239,7 +257,7 @@ export function registerPlayer(app: FastifyInstance): void {
     const base = body.base;
     if (
       !Array.isArray(base.buildings) ||
-      base.buildings.length > 60 ||
+      base.buildings.length > MAX_BUILDINGS_PER_BASE ||
       !base.gridSize ||
       typeof base.gridSize.w !== 'number' ||
       typeof base.gridSize.h !== 'number' ||
@@ -331,17 +349,32 @@ export function registerPlayer(app: FastifyInstance): void {
         return { error: 'building extends outside grid' };
       }
 
-      // Collision check on the target layer. Dual-layer (QueenChamber)
-      // would need both layers checked, but players can't place one.
+      // Collision check. The candidate building occupies every layer in
+      // its `spans` (or just its anchor layer for single-layer buildings
+      // like the current player-placeable set); an existing building
+      // blocks every layer in ITS spans. Walk every candidate layer and
+      // bail on the first overlap so forward-compatibility with future
+      // multi-layer placeable kinds is built in.
+      const candidateLayers = new Set<Types.Layer>(
+        defaults.spans ?? [body.anchor.layer],
+      );
       for (const existing of base.buildings) {
+        const existingLayers = new Set<Types.Layer>(
+          existing.spans ?? [existing.anchor.layer],
+        );
+        // Quick reject if the layer sets don't intersect.
+        let layersIntersect = false;
+        for (const layer of candidateLayers) {
+          if (existingLayers.has(layer)) {
+            layersIntersect = true;
+            break;
+          }
+        }
+        if (!layersIntersect) continue;
         const ex = existing.anchor.x;
         const ey = existing.anchor.y;
         const ew = existing.footprint.w;
         const eh = existing.footprint.h;
-        const sameLayer =
-          existing.anchor.layer === body.anchor.layer ||
-          existing.spans?.includes(body.anchor.layer);
-        if (!sameLayer) continue;
         const overlaps =
           body.anchor.x < ex + ew &&
           body.anchor.x + defaults.w > ex &&
@@ -353,10 +386,10 @@ export function registerPlayer(app: FastifyInstance): void {
           return { error: 'tile occupied' };
         }
       }
-      if (base.buildings.length >= 40) {
+      if (base.buildings.length >= MAX_BUILDINGS_PER_BASE) {
         await client.query('ROLLBACK');
         reply.code(409);
-        return { error: 'base at building cap (40)' };
+        return { error: `base at building cap (${MAX_BUILDINGS_PER_BASE})` };
       }
 
       // Debit resources first (fails atomically if insufficient).
@@ -418,9 +451,9 @@ export function registerPlayer(app: FastifyInstance): void {
         base: updatedBase,
         player: {
           trophies: debited.trophies,
-          sugar: Number(debited.sugar),
-          leafBits: Number(debited.leaf_bits),
-          aphidMilk: Number(debited.aphid_milk),
+          sugar: safeBigintToNumber(debited.sugar, 'sugar', app.log),
+          leafBits: safeBigintToNumber(debited.leaf_bits, 'leaf_bits', app.log),
+          aphidMilk: safeBigintToNumber(debited.aphid_milk, 'aphid_milk', app.log),
         },
       };
     } catch (err) {
