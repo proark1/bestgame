@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
+import { crispText } from '../ui/text.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -67,6 +68,7 @@ export class HomeScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+    this.drawAmbient();
 
     // Hydrate from runtime — scene is re-entered after each raid, so this
     // re-reads the latest player state (which RaidScene patches after a
@@ -156,44 +158,72 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
+  // Scene-wide ambient: a soft top-to-bottom gradient behind everything,
+  // plus a faint horizon glow so the HUD/footer strips don't read as
+  // flat rectangles floating over dead ground. Cheap: 22 stacked bands
+  // + a single radial fog ellipse.
+  private drawAmbient(): void {
+    const g = this.add.graphics().setDepth(-100);
+    const top = 0x162317;
+    const bot = 0x070d08;
+    const BANDS = 22;
+    for (let i = 0; i < BANDS; i++) {
+      const t = i / (BANDS - 1);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const gc = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
+      g.fillStyle((r << 16) | (gc << 8) | b, 1);
+      g.fillRect(
+        0,
+        Math.floor((i * this.scale.height) / BANDS),
+        this.scale.width,
+        Math.ceil(this.scale.height / BANDS) + 1,
+      );
+    }
+    // Subtle warm glow behind the board area so the play field sits in
+    // a "pool of light" — reads as intentional rather than a slab of
+    // the same dark green as the chrome.
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(0xffd98a, 0.04);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + BOARD_H / 2, BOARD_W * 1.1, BOARD_H * 1.15);
+  }
+
   private drawHud(): void {
+    // Two-band HUD: solid dark base + a thin brass accent line along
+    // the bottom edge so the HUD reads as its own plane rather than
+    // blending into the board's dark green.
     const hud = this.add.graphics();
     hud.fillStyle(0x0a120c, 1);
     hud.fillRect(0, 0, this.scale.width, HUD_H);
-    hud.fillStyle(0x1a2b1a, 1);
-    hud.fillRect(0, HUD_H - 2, this.scale.width, 2);
+    hud.fillStyle(0x5c4020, 1);
+    hud.fillRect(0, HUD_H - 3, this.scale.width, 1);
+    hud.fillStyle(0xffd98a, 0.35);
+    hud.fillRect(0, HUD_H - 2, this.scale.width, 1);
 
-    this.add
-      .text(16, HUD_H / 2, 'HIVE WARS', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '18px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0, 0.5);
+    crispText(this, 16, HUD_H / 2, 'HIVE WARS', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '18px',
+      color: '#ffd98a',
+      fontStyle: 'bold',
+    }).setOrigin(0, 0.5);
 
     // Resource badges (right-aligned). We build the texts first so class
     // fields are populated before the income tick runs.
-    this.sugarText = this.add
-      .text(0, 0, this.resources.sugar.toString(), {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: '#e6f5d2',
-      })
-      .setOrigin(1, 0.5);
-    this.leafText = this.add
-      .text(0, 0, this.resources.leafBits.toString(), {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: '#e6f5d2',
-      })
-      .setOrigin(1, 0.5);
-    this.milkText = this.add
-      .text(0, 0, this.resources.aphidMilk.toString(), {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: '#e6f5d2',
-      })
-      .setOrigin(1, 0.5);
+    this.sugarText = crispText(this, 0, 0, this.resources.sugar.toString(), {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '16px',
+      color: '#e6f5d2',
+    }).setOrigin(1, 0.5);
+    this.leafText = crispText(this, 0, 0, this.resources.leafBits.toString(), {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '16px',
+      color: '#e6f5d2',
+    }).setOrigin(1, 0.5);
+    this.milkText = crispText(this, 0, 0, this.resources.aphidMilk.toString(), {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '16px',
+      color: '#e6f5d2',
+    }).setOrigin(1, 0.5);
 
     const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
       { icon: 'ui-resource-sugar', text: this.sugarText },
@@ -213,24 +243,94 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawBoard(): void {
-    // Board background with layer-specific tint
+    // Layer-aware palette. Surface = mossy daylight greens; underground
+    // = warm cave tones with amber lighting.
+    const palette =
+      this.layer === 0
+        ? {
+            baseA: 0x274a21,
+            baseB: 0x1d3a1a,
+            grid: 0x2c5a23,
+            decorA: 0x8bbd62,
+            decorB: 0x4a7a2a,
+            frame: 0x3d5e2a,
+            highlight: 0x8fd273,
+          }
+        : {
+            baseA: 0x35241a,
+            baseB: 0x1f150e,
+            grid: 0x5a3e23,
+            decorA: 0xb88c4a,
+            decorB: 0x7a5830,
+            frame: 0x5a3a20,
+            highlight: 0xd1a060,
+          };
+
     const bg = this.add.graphics();
-    const surface = 0x1d3a1a;
-    const underground = 0x2a1e15;
-    bg.fillStyle(this.layer === 0 ? surface : underground, 1);
-    bg.fillRect(0, 0, BOARD_W, BOARD_H);
+    // Vertical gradient fake via stacked bands. `fillGradientStyle`
+    // would be ideal but Graphics' gradients draw solid on most
+    // backends; stacking 18 bands reads as a smooth ramp visually
+    // without per-pixel cost.
+    const BANDS = 18;
+    for (let i = 0; i < BANDS; i++) {
+      const t = i / (BANDS - 1);
+      const r1 = (palette.baseA >> 16) & 0xff;
+      const g1 = (palette.baseA >> 8) & 0xff;
+      const b1 = palette.baseA & 0xff;
+      const r2 = (palette.baseB >> 16) & 0xff;
+      const g2 = (palette.baseB >> 8) & 0xff;
+      const b2 = palette.baseB & 0xff;
+      const r = Math.round(r1 + (r2 - r1) * t);
+      const g = Math.round(g1 + (g2 - g1) * t);
+      const b = Math.round(b1 + (b2 - b1) * t);
+      bg.fillStyle((r << 16) | (g << 8) | b, 1);
+      bg.fillRect(
+        0,
+        Math.floor((i * BOARD_H) / BANDS),
+        BOARD_W,
+        Math.ceil(BOARD_H / BANDS) + 1,
+      );
+    }
 
-    // Soft vignette stripes for depth
-    bg.fillStyle(0x000000, 0.12);
-    for (let y = 0; y < BOARD_H; y += TILE * 2) bg.fillRect(0, y, BOARD_W, 2);
+    // Corner vignette — darkens the edges so the eye focuses on the
+    // center of the base. Four triangular gradients built out of
+    // overlapping alpha-rects, cheap and GPU-friendly.
+    bg.fillStyle(0x000000, 0.28);
+    for (let i = 0; i < 6; i++) {
+      const edge = 6 - i;
+      bg.fillRect(0, 0, edge, BOARD_H);
+      bg.fillRect(BOARD_W - edge, 0, edge, BOARD_H);
+      bg.fillRect(0, 0, BOARD_W, edge);
+      bg.fillRect(0, BOARD_H - edge, BOARD_W, edge);
+    }
 
-    // Grid
+    // Deterministic decoration scatter. Seeded off the layer so the
+    // pattern is different between surface and underground but stable
+    // across redraws (no random flicker when you flip layers).
+    const deco = this.add.graphics();
+    const seedBase = this.layer === 0 ? 0x12345 : 0x6789a;
+    let seed = seedBase;
+    const rnd = (): number => {
+      // 32-bit xorshift — good enough for pattern placement, avoids
+      // pulling in the shared PCG. Self-contained so the decoration
+      // never desyncs from anything gameplay-relevant.
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return ((seed >>> 0) / 0xffffffff);
+    };
+    for (let i = 0; i < 90; i++) {
+      const x = rnd() * BOARD_W;
+      const y = rnd() * BOARD_H;
+      const r = 1 + rnd() * 2.5;
+      const useA = rnd() < 0.55;
+      deco.fillStyle(useA ? palette.decorA : palette.decorB, 0.22 + rnd() * 0.18);
+      deco.fillCircle(x, y, r);
+    }
+
+    // Grid lines, softened.
     const grid = this.add.graphics({
-      lineStyle: {
-        width: 1,
-        color: this.layer === 0 ? 0x2c5a23 : 0x442e1c,
-        alpha: 0.8,
-      },
+      lineStyle: { width: 1, color: palette.grid, alpha: 0.5 },
     });
     for (let x = 0; x <= GRID_W; x++) {
       grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
@@ -239,7 +339,15 @@ export class HomeScene extends Phaser.Scene {
       grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
     }
 
-    this.boardContainer.add([bg, grid]);
+    // Frame around the playable area so the board reads as a discrete
+    // object rather than bleeding into the scene's flat background.
+    const frame = this.add.graphics();
+    frame.lineStyle(3, palette.frame, 0.9);
+    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 6);
+    frame.lineStyle(1, palette.highlight, 0.35);
+    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 5);
+
+    this.boardContainer.add([bg, deco, grid, frame]);
   }
 
   private drawBuildings(): void {
@@ -293,93 +401,91 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
+  // Footer button bar. Two rows so all seven actions are visible on a
+  // 768-wide canvas without overlapping. Previously the layout tried
+  // to pack them in one row and three of them landed on top of each
+  // other.
+  //
+  // Row 1 (primary actions, y0):    Flip layer | [ label ] | ⚔ Arena | Raid →
+  // Row 2 (secondary navigation, y1): 🏆 Ranks | 📜 Recent | ⚙ Upgrades | 👥 Clan
+  private static readonly FOOTER_ROW1_Y = HUD_H + BOARD_H + 26;
+  private static readonly FOOTER_ROW2_Y = HUD_H + BOARD_H + 74;
+  private static readonly FOOTER_BTN_W = 160;
+  private static readonly FOOTER_BTN_H = 40;
+  private static readonly FOOTER_GAP = 12;
+
   private drawFooter(): void {
-    const y = HUD_H + BOARD_H + 28;
+    const y1 = HomeScene.FOOTER_ROW1_Y;
+    const y2 = HomeScene.FOOTER_ROW2_Y;
     const toggleLabel = () =>
       this.layer === 0 ? 'Layer: SURFACE ▲' : 'Layer: UNDERGROUND ▼';
 
-    this.layerLabel = this.add
-      .text(16, y, toggleLabel(), {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0, 0.5);
+    // Row 1 laid out as: [Flip layer] [label] ... [Arena] [Raid →]
+    // with the label taking the remaining room between left + right
+    // groups so wider screens don't leave an awkward gap in the middle.
+    const btnW = HomeScene.FOOTER_BTN_W;
+    const gap = HomeScene.FOOTER_GAP;
 
-    const toggle = this.makeButton(
-      160,
-      y,
-      'Flip layer',
-      'ui-button-secondary',
-      () => {
-        this.layer = this.layer === 0 ? 1 : 0;
-        this.layerLabel.setText(toggleLabel());
-        this.boardContainer.removeAll(true);
-        this.drawBoard();
-        this.drawBuildings();
-      },
+    const flip = this.makeButton(16, y1, 'Flip layer', 'ui-button-secondary', () => {
+      this.layer = this.layer === 0 ? 1 : 0;
+      this.layerLabel.setText(toggleLabel());
+      this.boardContainer.removeAll(true);
+      this.drawBoard();
+      this.drawBuildings();
+    });
+
+    this.layerLabel = crispText(this, 16 + btnW + gap + 8, y1, toggleLabel(), {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '13px',
+      color: '#c3e8b0',
+    }).setOrigin(0, 0.5);
+
+    const raid = this.makeButton(
+      this.scale.width - 16 - btnW,
+      y1,
+      'Raid a base →',
+      'ui-button-primary',
+      () => this.scene.start('RaidScene'),
     );
-
-    const leaderboard = this.makeButton(
-      380,
-      y,
-      '🏆 Ranks',
-      'ui-button-secondary',
-      () => this.scene.start('LeaderboardScene'),
-    );
-
-    const history = this.makeButton(
-      530,
-      y,
-      '📜 Recent',
-      'ui-button-secondary',
-      () => this.scene.start('RaidHistoryScene'),
-    );
-
-    const upgrades = this.makeButton(
-      this.scale.width - 400,
-      y,
-      '⚙ Upgrades',
-      'ui-button-secondary',
-      () => this.scene.start('UpgradeScene'),
-    );
-
-    const clan = this.makeButton(
-      680,
-      y,
-      '👥 Clan',
-      'ui-button-secondary',
-      () => this.scene.start('ClanScene'),
-    );
-
     const arena = this.makeButton(
-      this.scale.width - 440,
-      y,
+      this.scale.width - 16 - btnW - btnW - gap,
+      y1,
       '⚔ Arena',
       'ui-button-secondary',
       () => this.scene.start('ArenaScene'),
     );
 
-    const raid = this.makeButton(
-      this.scale.width - 220,
-      y,
-      'Raid a base →',
-      'ui-button-primary',
-      () => this.scene.start('RaidScene'),
+    // Row 2: four evenly spaced secondary nav buttons, centered.
+    const row2Buttons = [
+      { label: '🏆 Ranks', scene: 'LeaderboardScene' },
+      { label: '📜 Recent', scene: 'RaidHistoryScene' },
+      { label: '⚙ Upgrades', scene: 'UpgradeScene' },
+      { label: '👥 Clan', scene: 'ClanScene' },
+    ] as const;
+    const row2Total = row2Buttons.length * btnW + (row2Buttons.length - 1) * gap;
+    const row2StartX = (this.scale.width - row2Total) / 2;
+    const row2Containers = row2Buttons.map((btn, i) =>
+      this.makeButton(
+        row2StartX + i * (btnW + gap),
+        y2,
+        btn.label,
+        'ui-button-secondary',
+        () => this.scene.start(btn.scene),
+      ),
     );
 
-    // Anchor to bottom on resize. Phaser.GameObjects.Container exposes `y`
-    // directly, so no casts needed.
-    this.events.on('prerender', () => {
-      const by = HUD_H + BOARD_H + 28;
-      this.layerLabel.setY(by);
-      toggle.y = by;
-      leaderboard.y = by;
-      history.y = by;
-      upgrades.y = by;
-      clan.y = by;
-      arena.y = by;
-      raid.y = by;
+    // Reposition on resize. The resize event fires before prerender
+    // anyway, so attach there instead of re-running per-frame.
+    this.scale.on('resize', () => {
+      const ry1 = HomeScene.FOOTER_ROW1_Y;
+      const ry2 = HomeScene.FOOTER_ROW2_Y;
+      flip.setPosition(16, ry1);
+      this.layerLabel.setPosition(16 + btnW + gap + 8, ry1);
+      raid.setPosition(this.scale.width - 16 - btnW, ry1);
+      arena.setPosition(this.scale.width - 16 - btnW - btnW - gap, ry1);
+      const totalR2 = row2Buttons.length * btnW + (row2Buttons.length - 1) * gap;
+      const startR2 = (this.scale.width - totalR2) / 2;
+      row2Containers.forEach((c, i) => c.setPosition(startR2 + i * (btnW + gap), ry2));
     });
   }
 
@@ -391,14 +497,14 @@ export class HomeScene extends Phaser.Scene {
     onPress: () => void,
   ): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
-    const bgImg = this.add.image(0, 0, bg).setOrigin(0, 0.5).setDisplaySize(200, 44);
-    const text = this.add
-      .text(100, 0, label, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5, 0.5);
+    const w = HomeScene.FOOTER_BTN_W;
+    const h = HomeScene.FOOTER_BTN_H;
+    const bgImg = this.add.image(0, 0, bg).setOrigin(0, 0.5).setDisplaySize(w, h);
+    const text = crispText(this, w / 2, 0, label, {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '14px',
+      color: '#ffffff',
+    }).setOrigin(0.5, 0.5);
     bgImg.setInteractive({ useHandCursor: true });
     bgImg.on('pointerover', () => bgImg.setTint(0xc3e8b0));
     bgImg.on('pointerout', () => bgImg.clearTint());
@@ -433,9 +539,23 @@ export class HomeScene extends Phaser.Scene {
     // Record the pointerdown position so pointerup can verify the
     // gesture was a tap (small movement), not a drag.
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // If the picker is open, let the picker's own hit-zones handle
+      // the event. Otherwise the scene-level pointerdown fires even
+      // for taps that landed inside the modal and we re-open the
+      // picker on pointerup.
+      if (this.pickerContainer) {
+        this.tapDownPos = null;
+        return;
+      }
       this.tapDownPos = { x: p.x, y: p.y };
     });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      // Guard: the picker can open/close mid-gesture (e.g. tapping a
+      // slot commits a placement and closes the picker before pointerup
+      // fires). Without this check the same pointerup that committed
+      // the placement would immediately reopen the picker on the now-
+      // occupied tile — the exact "popup won't close" symptom.
+      if (this.pickerContainer) return;
       const down = this.tapDownPos;
       this.tapDownPos = null;
       if (!down) return;
@@ -501,37 +621,59 @@ export class HomeScene extends Phaser.Scene {
     const bg = this.add.graphics().setDepth(200);
     bg.fillStyle(0x000000, 0.6);
     bg.fillRect(0, 0, this.scale.width, this.scale.height);
+    // Full-screen interactive zone BEHIND the card that eats any tap
+    // the slots don't catch and closes the picker. Two jobs at once:
+    // (1) "click outside to dismiss" UX, (2) acts as an input blocker
+    // so a tap on the dimmed backdrop can't fall through to the
+    // scene-level handlers and open another picker.
+    const backdrop = this.add
+      .zone(0, 0, this.scale.width, this.scale.height)
+      .setOrigin(0, 0)
+      .setDepth(200.5)
+      .setInteractive({ useHandCursor: false });
+    backdrop.on('pointerdown', () => this.closePicker());
+
     const card = this.add.graphics().setDepth(201);
     card.fillStyle(0x1a2b1a, 0.98);
     card.lineStyle(3, 0xffd98a, 1);
     card.fillRoundedRect(ox, oy, W, H, 14);
     card.strokeRoundedRect(ox, oy, W, H, 14);
+    // Also make the card itself swallow pointer events so taps on the
+    // card's padding (outside slots) don't bubble to `backdrop` and
+    // accidentally close the picker.
+    const cardZone = this.add
+      .zone(ox, oy, W, H)
+      .setOrigin(0, 0)
+      .setDepth(201.5)
+      .setInteractive();
 
     const container = this.add.container(0, 0).setDepth(202);
-    container.add([bg, card]);
+    container.add([bg, backdrop, card, cardZone]);
 
-    const title = this.add
-      .text(
-        this.scale.width / 2,
-        oy + 18,
-        `Place building at (${tx}, ${ty}, ${this.layer === 0 ? 'surface' : 'underground'})`,
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '14px',
-          color: '#ffd98a',
-        },
-      )
-      .setOrigin(0.5, 0).setDepth(203);
+    const title = crispText(
+      this,
+      this.scale.width / 2,
+      oy + 18,
+      `Place building at (${tx}, ${ty}, ${this.layer === 0 ? 'surface' : 'underground'})`,
+      {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '14px',
+        color: '#ffd98a',
+      },
+    )
+      .setOrigin(0.5, 0)
+      .setDepth(203);
     container.add(title);
 
     // Close button
-    const close = this.add
-      .text(ox + W - 14, oy + 14, '×', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '22px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(1, 0).setDepth(203).setInteractive({ useHandCursor: true })
+    const close = crispText(this, ox + W - 14, oy + 14, '×', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '22px',
+      color: '#c3e8b0',
+    })
+      .setOrigin(1, 0)
+      .setDepth(203)
+      .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => this.closePicker());
     container.add(close);
 
@@ -560,26 +702,31 @@ export class HomeScene extends Phaser.Scene {
         .setDepth(204);
       container.add(icon);
 
-      const nameText = this.add
-        .text(cx, cy + 12, kind.replace(/([A-Z])/g, ' $1').trim(), {
+      const nameText = crispText(
+        this,
+        cx,
+        cy + 12,
+        kind.replace(/([A-Z])/g, ' $1').trim(),
+        {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '11px',
           color: canAfford ? '#e6f5d2' : '#c79090',
-        })
+        },
+      )
         .setOrigin(0.5)
         .setDepth(204);
       container.add(nameText);
-      const costText = this.add
-        .text(
-          cx,
-          cy + 28,
-          `${cost.sugar}🍬 ${cost.leafBits}🍃`,
-          {
-            fontFamily: 'ui-monospace, monospace',
-            fontSize: '10px',
-            color: canAfford ? '#c3e8b0' : '#d98080',
-          },
-        )
+      const costText = crispText(
+        this,
+        cx,
+        cy + 28,
+        `${cost.sugar}🍬 ${cost.leafBits}🍃`,
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '10px',
+          color: canAfford ? '#c3e8b0' : '#d98080',
+        },
+      )
         .setOrigin(0.5)
         .setDepth(204);
       container.add(costText);
@@ -656,14 +803,13 @@ export class HomeScene extends Phaser.Scene {
   private toast: Phaser.GameObjects.Text | null = null;
   private flashToast(msg: string): void {
     this.toast?.destroy();
-    const t = this.add
-      .text(this.scale.width / 2, this.scale.height - 40, msg, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: '#0f1b10',
-        backgroundColor: '#ffd98a',
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
+    const t = crispText(this, this.scale.width / 2, this.scale.height - 40, msg, {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '13px',
+      color: '#0f1b10',
+      backgroundColor: '#ffd98a',
+      padding: { left: 10, right: 10, top: 6, bottom: 6 },
+    })
       .setOrigin(0.5)
       .setDepth(500);
     this.toast = t;
