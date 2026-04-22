@@ -31,13 +31,19 @@ const API_BASE: string =
     ? import.meta.env.VITE_API_URL
     : '/api';
 
+interface ManifestImage {
+  key: string;
+  ext: 'webp' | 'png';
+}
+
 interface ManifestSheet {
   key: string;
   frames: number;
+  ext: 'webp' | 'png';
 }
 
 interface ManifestResponse {
-  images: string[];
+  images: ManifestImage[];
   sheets: ManifestSheet[];
   updatedAt: number;
 }
@@ -49,6 +55,45 @@ function walkAnimKey(sheetKey: string): string {
   // scene callers can build them from just the kind name.
   const stripped = sheetKey.replace(/^unit-/, '').replace(/-walk$/, '');
   return `walk-${stripped}`;
+}
+
+// Manifest validator + shape-upgrader. The current server emits
+// `{ key, ext }` objects per entry, but older deploys emitted plain
+// `string[]` for images (with no ext info). Treat a string as
+// `{ key: s, ext: 'webp' }` — the overwhelming default — so a split
+// deploy (new client, old server) doesn't 404-spam while upgrading.
+function parseManifest(raw: unknown): ManifestResponse | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.images) || !Array.isArray(obj.sheets)) return null;
+  const images: ManifestImage[] = [];
+  for (const item of obj.images) {
+    if (typeof item === 'string') {
+      images.push({ key: item, ext: 'webp' });
+    } else if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { key?: unknown }).key === 'string' &&
+      ((item as { ext?: unknown }).ext === 'webp' ||
+        (item as { ext?: unknown }).ext === 'png')
+    ) {
+      images.push({
+        key: (item as ManifestImage).key,
+        ext: (item as ManifestImage).ext,
+      });
+    }
+  }
+  const sheets: ManifestSheet[] = [];
+  for (const item of obj.sheets) {
+    if (!item || typeof item !== 'object') continue;
+    const s = item as { key?: unknown; frames?: unknown; ext?: unknown };
+    if (typeof s.key !== 'string' || typeof s.frames !== 'number') continue;
+    const ext = s.ext === 'png' || s.ext === 'webp' ? s.ext : 'webp';
+    sheets.push({ key: s.key, frames: s.frames, ext });
+  }
+  const updatedAt =
+    typeof obj.updatedAt === 'number' ? obj.updatedAt : Date.now();
+  return { images, sheets, updatedAt };
 }
 
 export class BootScene extends Phaser.Scene {
@@ -84,15 +129,16 @@ export class BootScene extends Phaser.Scene {
     // current loader pass, so create() waits for them too.
     this.load.once(
       `filecomplete-json-${MANIFEST_KEY}`,
-      (_key: string, _type: string, data: ManifestResponse) => {
+      (_key: string, _type: string, data: unknown) => {
         if (this.manifestQueued) return;
         this.manifestQueued = true;
-        if (!data || !Array.isArray(data.images) || !Array.isArray(data.sheets)) {
+        const parsed = parseManifest(data);
+        if (!parsed) {
           this.queueLegacyLoads();
           return;
         }
-        this.manifest = data;
-        this.queueManifestLoads(data);
+        this.manifest = parsed;
+        this.queueManifestLoads(parsed);
       },
     );
   }
@@ -101,15 +147,14 @@ export class BootScene extends Phaser.Scene {
     const version = m.updatedAt || Date.now();
     const versioned = (path: string): string => `${path}?v=${version}`;
 
-    // Admin saves default to WebP, but disk-mirror workflows may
-    // produce PNG. Try WebP first under the canonical key; queue a
-    // PNG sibling under a suffix so create() can promote it only if
-    // the WebP didn't land. This is the same pre-manifest dance but
-    // scoped to keys we actually expect to find — no more 404
-    // storm on non-existent sprites.
-    for (const key of m.images) {
-      this.load.image(key, versioned(`assets/sprites/${key}.webp`));
-      this.load.image(`${key}.png-fb`, versioned(`assets/sprites/${key}.png`));
+    // Load exactly the extension the server says exists on disk.
+    // The manifest is the source of truth here — no try-both sibling
+    // loads, no 404-per-sprite noise in the console.
+    for (const img of m.images) {
+      this.load.image(
+        img.key,
+        versioned(`assets/sprites/${img.key}.${img.ext}`),
+      );
     }
 
     const sheetFrameConfig: Phaser.Types.Loader.FileTypes.ImageFrameConfig = {
@@ -119,12 +164,7 @@ export class BootScene extends Phaser.Scene {
     for (const sheet of m.sheets) {
       this.load.spritesheet(
         sheet.key,
-        versioned(`assets/sprites/${sheet.key}.webp`),
-        sheetFrameConfig,
-      );
-      this.load.spritesheet(
-        `${sheet.key}.png-fb`,
-        versioned(`assets/sprites/${sheet.key}.png`),
+        versioned(`assets/sprites/${sheet.key}.${sheet.ext}`),
         sheetFrameConfig,
       );
     }
@@ -140,39 +180,15 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
-    const promoteFallback = (primary: string, fallback: string): void => {
-      if (!this.textures.exists(primary) && this.textures.exists(fallback)) {
-        const img = this.textures.get(fallback).getSourceImage() as
-          | HTMLImageElement
-          | HTMLCanvasElement;
-        this.textures.addImage(primary, img as HTMLImageElement);
-      }
-      if (this.textures.exists(fallback)) this.textures.remove(fallback);
-    };
-
     if (this.manifest) {
-      for (const key of this.manifest.images) {
-        promoteFallback(key, `${key}.png-fb`);
-      }
+      // Manifest path: one URL per sprite, already loaded under the
+      // canonical key. Nothing to promote. Just build the walk anims.
       for (const sheet of this.manifest.sheets) {
-        const primary = sheet.key;
-        const fb = `${sheet.key}.png-fb`;
-        if (!this.textures.exists(primary) && this.textures.exists(fb)) {
-          const src = this.textures.get(fb).getSourceImage() as
-            | HTMLImageElement
-            | HTMLCanvasElement;
-          this.textures.addSpriteSheet(primary, src as HTMLImageElement, {
-            frameWidth: WALK_CYCLE_FRAME_W,
-            frameHeight: WALK_CYCLE_FRAME_H,
-          });
-        }
-        if (this.textures.exists(fb)) this.textures.remove(fb);
-
         const animKey = walkAnimKey(sheet.key);
-        if (this.textures.exists(primary) && !this.anims.exists(animKey)) {
+        if (this.textures.exists(sheet.key) && !this.anims.exists(animKey)) {
           this.anims.create({
             key: animKey,
-            frames: this.anims.generateFrameNumbers(primary, {
+            frames: this.anims.generateFrameNumbers(sheet.key, {
               start: 0,
               end: WALK_CYCLE_FRAME_COUNT - 1,
             }),
@@ -182,7 +198,18 @@ export class BootScene extends Phaser.Scene {
         }
       }
     } else {
-      // Legacy-path WebP promotion under the `.webp` suffix.
+      // Legacy fallback path (manifest fetch failed / old server). In
+      // this branch we DID fire a try-both pair per key so promote any
+      // webp load to the canonical key name.
+      const promoteFallback = (primary: string, fallback: string): void => {
+        if (!this.textures.exists(primary) && this.textures.exists(fallback)) {
+          const img = this.textures.get(fallback).getSourceImage() as
+            | HTMLImageElement
+            | HTMLCanvasElement;
+          this.textures.addImage(primary, img as HTMLImageElement);
+        }
+        if (this.textures.exists(fallback)) this.textures.remove(fallback);
+      };
       for (const key of ALL_SPRITE_KEYS) {
         promoteFallback(key, `${key}.webp`);
       }

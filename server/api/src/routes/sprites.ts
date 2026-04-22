@@ -15,10 +15,15 @@ import { listSprites } from '../db/sprites.js';
 //
 // Response shape:
 //   {
-//     images: ["unit-WorkerAnt", "building-QueenChamber", ...],
-//     sheets: [{ key: "unit-WorkerAnt-walk", frames: 4 }, ...],
+//     images: [{ key: "unit-WorkerAnt", ext: "webp" }, ...],
+//     sheets: [{ key: "unit-WorkerAnt-walk", frames: 4, ext: "webp" }, ...],
 //     updatedAt: <epoch-ms-of-newest-asset>
 //   }
+//
+// The per-entry `ext` lets the client request exactly the one URL
+// that exists on disk instead of trying both .webp and .png per key
+// (the previous shape required the client to guess, which produced
+// an unavoidable 404-per-sprite in the console).
 //
 // Clients use `updatedAt` as a cache-bust suffix when loading sprite
 // URLs so a freshly-generated sprite shows up without a hard reload.
@@ -36,31 +41,39 @@ const DIST_SPRITES_DIR = join(
   'sprites',
 );
 
+type SpriteExt = 'png' | 'webp';
+
+interface ManifestImage {
+  key: string;
+  ext: SpriteExt;
+}
+
 interface ManifestSheet {
   key: string;
   frames: number;
+  ext: SpriteExt;
 }
 
 interface ManifestResponse {
-  images: string[];
+  images: ManifestImage[];
   sheets: ManifestSheet[];
   updatedAt: number;
 }
 
-function parseName(name: string): { key: string; format: 'png' | 'webp' } | null {
+function parseName(name: string): { key: string; format: SpriteExt } | null {
   const m = /^(.+)\.(png|webp)$/.exec(name);
   if (!m) return null;
-  return { key: m[1]!, format: m[2] as 'png' | 'webp' };
+  return { key: m[1]!, format: m[2] as SpriteExt };
 }
 
 export function registerSpritesManifest(app: FastifyInstance): void {
   app.get('/sprites/manifest', async (_req, reply) => {
     // DB is the source of truth when reachable — it has per-sprite
-    // frame counts and survives redeploys. Fall back to a disk scan
-    // if DB isn't configured so the boot flow still works in
-    // offline/no-DB dev setups.
+    // frame counts + format and survives redeploys. Fall back to a
+    // disk scan if DB isn't configured so the boot flow still works
+    // in offline/no-DB dev setups.
     const pool = await getPool();
-    const imageKeys = new Set<string>();
+    const images = new Map<string, ManifestImage>();
     const sheets = new Map<string, ManifestSheet>();
     let newest = 0;
 
@@ -71,9 +84,13 @@ export function registerSpritesManifest(app: FastifyInstance): void {
           const t = r.updatedAt.getTime();
           if (t > newest) newest = t;
           if (r.frames > 1) {
-            sheets.set(r.key, { key: r.key, frames: r.frames });
+            sheets.set(r.key, {
+              key: r.key,
+              frames: r.frames,
+              ext: r.format,
+            });
           } else {
-            imageKeys.add(r.key);
+            images.set(r.key, { key: r.key, ext: r.format });
           }
         }
       } catch (err) {
@@ -83,16 +100,25 @@ export function registerSpritesManifest(app: FastifyInstance): void {
 
     // Disk fallback / supplement: scan client/dist/assets/sprites for
     // files the DB doesn't know about (e.g. sprites committed to the
-    // repo before the DB migration). Frame count defaults to 1 here
-    // because disk has no metadata; callers only get sheets for DB-
-    // tracked rows.
+    // repo before the DB migration). Disk has no frame metadata, so
+    // these always land as single-frame images; a key that already
+    // exists in sheets keeps its DB entry. Prefer webp when the disk
+    // somehow has both extensions for the same key.
     if (existsSync(DIST_SPRITES_DIR)) {
       try {
         const names = await readdir(DIST_SPRITES_DIR);
         for (const n of names) {
           const parsed = parseName(n);
           if (!parsed) continue;
-          if (!sheets.has(parsed.key)) imageKeys.add(parsed.key);
+          if (!sheets.has(parsed.key)) {
+            const prev = images.get(parsed.key);
+            if (!prev || (prev.ext === 'png' && parsed.format === 'webp')) {
+              images.set(parsed.key, {
+                key: parsed.key,
+                ext: parsed.format,
+              });
+            }
+          }
           try {
             const s = await stat(join(DIST_SPRITES_DIR, n));
             if (s.mtimeMs > newest) newest = s.mtimeMs;
@@ -106,7 +132,7 @@ export function registerSpritesManifest(app: FastifyInstance): void {
     }
 
     const body: ManifestResponse = {
-      images: [...imageKeys].sort(),
+      images: [...images.values()].sort((a, b) => a.key.localeCompare(b.key)),
       sheets: [...sheets.values()].sort((a, b) => a.key.localeCompare(b.key)),
       updatedAt: newest || Date.now(),
     };
