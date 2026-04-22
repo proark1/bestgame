@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { BUTTON_VARIANT, SPACING, type ButtonVariant } from './theme.js';
+import { isUiOverrideActive } from './uiOverrides.js';
 
 // Shared game-button factory. Graphics-drawn rounded rectangle with a
 // two-band gradient fill, thick outer stroke, inner highlight, drop
@@ -55,56 +56,79 @@ export function makeHiveButton(
   const shadow = scene.add.graphics();
   const bg = scene.add.graphics();
   const highlight = scene.add.graphics();
+  // When the admin has flipped the menuUi override on AND the matching
+  // texture is loaded, we render an additional NineSlice image on top
+  // of the Graphics fallback and hide the Graphics parts. We never
+  // replace Graphics outright because the override might flip off
+  // (variant change, etc.); the Graphics objects stay in the container
+  // and are re-shown automatically when paint() re-runs.
+  let ninesliceBg: Phaser.GameObjects.NineSlice | null = null;
   const text = scene.add.text(0, 0, curLabel, {}).setOrigin(0.5, 0.5);
+
+  // Map button variant → override key. Only primary/secondary have a
+  // generated asset today; other variants fall through to Graphics.
+  const overrideKeyFor = (v: ButtonVariant): string | null => {
+    if (v === 'primary') return 'ui-button-primary-bg';
+    if (v === 'secondary') return 'ui-button-secondary-bg';
+    return null;
+  };
 
   const paint = (): void => {
     const palette = BUTTON_VARIANT[curVariant]!;
     const w = curW;
     const h = curH;
     const r = SPACING.radiusMd;
+    const overrideKey = overrideKeyFor(curVariant);
+    const useImage = overrideKey !== null && isUiOverrideActive(scene, overrideKey);
 
     shadow.clear();
-    if (state !== 'press') {
-      // Drop shadow below the button for a "chunky floating" feel.
-      // Smaller + darker on press so the button looks pushed into
-      // the surface.
-      shadow.fillStyle(0x000000, 0.45);
-      shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h + 2, r);
-    } else {
-      shadow.fillStyle(0x000000, 0.3);
-      shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h, r);
+    if (!useImage) {
+      if (state !== 'press') {
+        // Drop shadow below the button for a "chunky floating" feel.
+        // Smaller + darker on press so the button looks pushed into
+        // the surface.
+        shadow.fillStyle(0x000000, 0.45);
+        shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h + 2, r);
+      } else {
+        shadow.fillStyle(0x000000, 0.3);
+        shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h, r);
+      }
     }
 
     bg.clear();
-    const topFill =
-      state === 'hover'
-        ? palette.fillTopHover
-        : state === 'press'
-          ? palette.fillTopPress
-          : state === 'disabled'
-            ? blend(palette.fillTop, 0x303030, 0.55)
-            : palette.fillTop;
-    const botFill =
-      state === 'hover'
-        ? palette.fillBotHover
-        : state === 'press'
-          ? palette.fillBotPress
-          : state === 'disabled'
-            ? blend(palette.fillBot, 0x303030, 0.55)
-            : palette.fillBot;
-    // Gradient via fillGradientStyle. Phaser supports 4-corner
-    // gradients on rects; we want top/bottom so left+right corners
-    // of the same band match.
-    bg.fillGradientStyle(topFill, topFill, botFill, botFill, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, r);
-    bg.lineStyle(palette.strokeWidth, palette.stroke, 1);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, r);
+    if (!useImage) {
+      const topFill =
+        state === 'hover'
+          ? palette.fillTopHover
+          : state === 'press'
+            ? palette.fillTopPress
+            : state === 'disabled'
+              ? blend(palette.fillTop, 0x303030, 0.55)
+              : palette.fillTop;
+      const botFill =
+        state === 'hover'
+          ? palette.fillBotHover
+          : state === 'press'
+            ? palette.fillBotPress
+            : state === 'disabled'
+              ? blend(palette.fillBot, 0x303030, 0.55)
+              : palette.fillBot;
+      // Gradient via fillGradientStyle. Phaser supports 4-corner
+      // gradients on rects; we want top/bottom so left+right corners
+      // of the same band match.
+      bg.fillGradientStyle(topFill, topFill, botFill, botFill, 1);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, r);
+      bg.lineStyle(palette.strokeWidth, palette.stroke, 1);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, r);
+    }
 
     highlight.clear();
     // Inner top highlight — 2px of lighter color just inside the
-    // stroke. Sells the "3D bevel" look. Hidden in press state.
-    if (state !== 'press' && state !== 'disabled') {
-      const lighter = lightenColor(topFill, 0.35);
+    // stroke. Sells the "3D bevel" look. Hidden in press state, and
+    // when the image override is active (the image carries its own
+    // lighting).
+    if (!useImage && state !== 'press' && state !== 'disabled') {
+      const lighter = lightenColor(BUTTON_VARIANT[curVariant]!.fillTop, 0.35);
       highlight.fillStyle(lighter, 0.6);
       highlight.fillRoundedRect(
         -w / 2 + palette.strokeWidth,
@@ -113,6 +137,48 @@ export function makeHiveButton(
         Math.max(4, Math.min(h * 0.35, 10)),
         r - palette.strokeWidth / 2,
       );
+    }
+
+    // Image path: create / resize the NineSlice, tint for state
+    // feedback (darken on press, desaturate on disabled), and hide
+    // the Graphics parts. The prompt set guarantees 256×128 button
+    // art with 16px brass corners, so 16/16/16/16 insets are safe.
+    if (useImage && overrideKey) {
+      if (!ninesliceBg) {
+        ninesliceBg = scene.add.nineslice(
+          0,
+          0,
+          overrideKey,
+          undefined,
+          w,
+          h,
+          16,
+          16,
+          16,
+          16,
+        );
+        // Insert below text + shadow is already below in add order;
+        // NineSlice is appended to container after this paint().
+        container.addAt(ninesliceBg, 0);
+      } else {
+        ninesliceBg.setSize(w, h);
+      }
+      ninesliceBg.setVisible(true);
+      // State tint: a mild brighten on hover, darken on press, grey
+      // wash on disabled. Keep it subtle — the image already reads.
+      const tint =
+        state === 'hover'
+          ? 0xffffff
+          : state === 'press'
+            ? 0xbfbfbf
+            : state === 'disabled'
+              ? 0x808080
+              : 0xffffff;
+      ninesliceBg.setTint(tint);
+      ninesliceBg.setAlpha(state === 'disabled' ? 0.7 : 1);
+      ninesliceBg.setPosition(0, state === 'press' ? 2 : 0);
+    } else if (ninesliceBg) {
+      ninesliceBg.setVisible(false);
     }
 
     text.setStyle({

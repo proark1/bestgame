@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { FBInstantBridge } from '../fbinstant/FBInstantBridge.js';
+import type { HiveRuntime } from '../main.js';
 import {
   ALL_SPRITE_KEYS,
   WALK_CYCLE_FRAME_COUNT,
@@ -8,6 +9,7 @@ import {
   WALK_CYCLE_FPS,
 } from '../assets/atlas.js';
 import { generateMissingPlaceholders } from '../assets/placeholders.js';
+import { setUiOverrides } from '../ui/uiOverrides.js';
 
 // BootScene — preloads only the sprite keys the server's
 // /api/sprites/manifest actually advertises. Anything missing gets a
@@ -199,7 +201,23 @@ export class BootScene extends Phaser.Scene {
       this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
     }
 
-    document.getElementById('boot-splash')?.remove();
-    this.scene.start('HomeScene');
+    // Fetch admin UI-override flags before transitioning so HomeScene's
+    // first paint uses the correct chrome (NineSlice images vs Graphics
+    // fallback). Fire-and-forget on any failure — empty flags map =
+    // today's Graphics rendering, which is the safe default.
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    const fetchOverrides = rt?.api
+      ? rt.api
+          .getUiOverrideSettings()
+          .then((v) => setUiOverrides(v))
+          .catch(() => {
+            // leave overrides empty → Graphics path
+          })
+      : Promise.resolve();
+
+    void fetchOverrides.finally(() => {
+      document.getElementById('boot-splash')?.remove();
+      this.scene.start('HomeScene');
+    });
   }
 }
