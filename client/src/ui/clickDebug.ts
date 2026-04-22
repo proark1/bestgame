@@ -118,13 +118,22 @@ function mountPointerOverlay(): void {
     (e: PointerEvent) => {
       const canvas = document.querySelector('#game canvas') as HTMLCanvasElement | null;
       const rect = canvas?.getBoundingClientRect();
-      const gameX = rect ? e.clientX - rect.left : e.clientX;
-      const gameY = rect ? e.clientY - rect.top : e.clientY;
+      // Convert CSS pixels to game (backing-buffer) pixels. Under
+      // Scale.RESIZE with the canvas size mirror we maintain in
+      // main.ts, canvas.width === rect.width so the ratio is 1 — but
+      // if the runtime has Scale.FIT active or the browser has
+      // CSS-scaled the canvas, the ratio captures that so the
+      // overlay reads the same coordinates Phaser's pointer sees.
+      const sx = canvas && rect && rect.width > 0 ? canvas.width / rect.width : 1;
+      const sy = canvas && rect && rect.height > 0 ? canvas.height / rect.height : 1;
+      const gameX = rect ? (e.clientX - rect.left) * sx : e.clientX;
+      const gameY = rect ? (e.clientY - rect.top) * sy : e.clientY;
       el.textContent = [
         'click debug on',
         `client: ${e.clientX.toFixed(0)}, ${e.clientY.toFixed(0)}`,
         `game:   ${gameX.toFixed(0)}, ${gameY.toFixed(0)}`,
-        `canvas: ${rect ? `${rect.width.toFixed(0)}x${rect.height.toFixed(0)}` : 'n/a'}`,
+        `css:    ${rect ? `${rect.width.toFixed(0)}x${rect.height.toFixed(0)}` : 'n/a'}`,
+        `buffer: ${canvas ? `${canvas.width}x${canvas.height}` : 'n/a'}`,
       ].join('\n');
     },
     { capture: true },

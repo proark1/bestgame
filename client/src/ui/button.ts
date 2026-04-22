@@ -241,6 +241,10 @@ export function makeHiveButton(
       // button" this tells us immediately whether the hit zone and
       // the visible chrome are still aligned.
       const wt = container.getWorldTransformMatrix();
+      // Don't non-null-assert hit.input: setInteractive can be
+      // cleared (e.g. removeInteractive during a tween teardown)
+      // and logging a click mid-teardown shouldn't throw.
+      const hitArea = hit.input?.hitArea as Phaser.Geom.Rectangle | undefined;
       console.log('[hive-debug] button pointerdown', {
         label: curLabel,
         pointerWorld: { x: pointer.worldX, y: pointer.worldY },
@@ -249,12 +253,9 @@ export function makeHiveButton(
         size: { w: curW, h: curH },
         zoneOrigin: { x: hit.originX, y: hit.originY },
         displayOrigin: { x: hit.displayOriginX, y: hit.displayOriginY },
-        hitArea: {
-          x: (hit.input!.hitArea as Phaser.Geom.Rectangle).x,
-          y: (hit.input!.hitArea as Phaser.Geom.Rectangle).y,
-          w: (hit.input!.hitArea as Phaser.Geom.Rectangle).width,
-          h: (hit.input!.hitArea as Phaser.Geom.Rectangle).height,
-        },
+        hitArea: hitArea
+          ? { x: hitArea.x, y: hitArea.y, w: hitArea.width, h: hitArea.height }
+          : null,
       });
     }
     state = 'press';
