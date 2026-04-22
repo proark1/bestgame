@@ -3,6 +3,7 @@ import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
+import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
@@ -117,6 +118,14 @@ export class HomeScene extends Phaser.Scene {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => this.scene.restart(), 220);
     });
+
+    // First-visit tutorial. Guarded by a localStorage flag so we
+    // don't nag on every boot; can be reopened from the account chip.
+    // Delay briefly so the tutorial lands on top of a fully-drawn
+    // scene, not a half-painted one mid-fadeIn.
+    if (shouldShowTutorial()) {
+      this.time.delayedCall(350, () => openTutorial());
+    }
   }
 
   private catalog: Record<
@@ -502,155 +511,228 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
-  // Footer button bar. Two rows so all seven actions are visible on a
-  // 768-wide canvas without overlapping. Previously the layout tried
-  // to pack them in one row and three of them landed on top of each
-  // other.
-  //
-  // Row 1 (primary actions, y0):    Flip layer | [ label ] | ⚔ Arena | Raid →
-  // Row 2 (secondary navigation, y1): 🏆 Ranks | 📜 Recent | ⚙ Upgrades | 👥 Clan
-  private static readonly FOOTER_ROW1_Y = HUD_H + BOARD_H + 26;
-  private static readonly FOOTER_ROW2_Y = HUD_H + BOARD_H + 74;
-  private static readonly FOOTER_BTN_W = 160;
-  private static readonly FOOTER_BTN_H = 40;
-  private static readonly FOOTER_GAP = 12;
+  // Single-row footer. Seven buttons evenly distributed across the
+  // full game width. Button widths scale with the viewport so a
+  // 1920-wide monitor doesn't leave the middle half empty. The layer
+  // state rides on the Flip button's label ("Flip → Underground")
+  // instead of a separate text widget, which buys back the row.
+  private static readonly FOOTER_ROW_Y = HUD_H + BOARD_H + 40;
+  private static readonly FOOTER_BTN_H = 44;
+  private static readonly FOOTER_MARGIN_X = 20;
+  private static readonly FOOTER_GAP = 10;
 
   private drawFooter(): void {
-    const y1 = HomeScene.FOOTER_ROW1_Y;
-    const y2 = HomeScene.FOOTER_ROW2_Y;
-    const toggleLabel = () =>
-      this.layer === 0 ? 'Layer: SURFACE ▲' : 'Layer: UNDERGROUND ▼';
+    const flipLabel = (): string =>
+      this.layer === 0 ? 'Flip → Underground' : 'Flip → Surface';
 
-    // Row 1 laid out as: [Flip layer] [label] ... [Arena] [Raid →]
-    // with the label taking the remaining room between left + right
-    // groups so wider screens don't leave an awkward gap in the middle.
-    const btnW = HomeScene.FOOTER_BTN_W;
-    const gap = HomeScene.FOOTER_GAP;
+    const buttons: Array<{
+      label: () => string;
+      variant: 'primary' | 'secondary';
+      onPress: () => void;
+    }> = [
+      {
+        label: flipLabel,
+        variant: 'secondary',
+        onPress: () => {
+          this.layer = this.layer === 0 ? 1 : 0;
+          // The flip button is always the first container we created.
+          const btn = this.footerButtons[0];
+          btn?.setLabel(flipLabel());
+          this.boardContainer.removeAll(true);
+          this.drawBoard();
+          this.drawBuildings();
+        },
+      },
+      {
+        label: () => '🏆 Ranks',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'LeaderboardScene'),
+      },
+      {
+        label: () => '📜 Recent',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'RaidHistoryScene'),
+      },
+      {
+        label: () => '⚙ Upgrades',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'UpgradeScene'),
+      },
+      {
+        label: () => '👥 Clan',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'ClanScene'),
+      },
+      {
+        label: () => '⚔ Arena',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'ArenaScene'),
+      },
+      {
+        label: () => 'Raid a base →',
+        variant: 'primary',
+        onPress: () => fadeToScene(this, 'RaidScene'),
+      },
+    ];
 
-    const flip = this.makeButton(16, y1, 'Flip layer', 'ui-button-secondary', () => {
-      this.layer = this.layer === 0 ? 1 : 0;
-      this.layerLabel.setText(toggleLabel());
-      this.boardContainer.removeAll(true);
-      this.drawBoard();
-      this.drawBuildings();
-    });
-
-    this.layerLabel = crispText(this, 16 + btnW + gap + 8, y1, toggleLabel(), {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '13px',
-      color: '#c3e8b0',
-    }).setOrigin(0, 0.5);
-
-    const raid = this.makeButton(
-      this.scale.width - 16 - btnW,
-      y1,
-      'Raid a base →',
-      'ui-button-primary',
-      () => fadeToScene(this, 'RaidScene'),
+    this.footerButtons = buttons.map((b) =>
+      this.makeButton(0, 0, b.label(), b.variant, b.onPress),
     );
-    const arena = this.makeButton(
-      this.scale.width - 16 - btnW - btnW - gap,
-      y1,
-      '⚔ Arena',
-      'ui-button-secondary',
-      () => fadeToScene(this, 'ArenaScene'),
-    );
-
-    // Row 2: four evenly spaced secondary nav buttons, centered.
-    const row2Buttons = [
-      { label: '🏆 Ranks', scene: 'LeaderboardScene' },
-      { label: '📜 Recent', scene: 'RaidHistoryScene' },
-      { label: '⚙ Upgrades', scene: 'UpgradeScene' },
-      { label: '👥 Clan', scene: 'ClanScene' },
-    ] as const;
-    const row2Total = row2Buttons.length * btnW + (row2Buttons.length - 1) * gap;
-    const row2StartX = (this.scale.width - row2Total) / 2;
-    const row2Containers = row2Buttons.map((btn, i) =>
-      this.makeButton(
-        row2StartX + i * (btnW + gap),
-        y2,
-        btn.label,
-        'ui-button-secondary',
-        () => fadeToScene(this, btn.scene),
-      ),
-    );
-
-    // Reposition on resize. The resize event fires before prerender
-    // anyway, so attach there instead of re-running per-frame.
-    this.scale.on('resize', () => {
-      const ry1 = HomeScene.FOOTER_ROW1_Y;
-      const ry2 = HomeScene.FOOTER_ROW2_Y;
-      flip.setPosition(16, ry1);
-      this.layerLabel.setPosition(16 + btnW + gap + 8, ry1);
-      raid.setPosition(this.scale.width - 16 - btnW, ry1);
-      arena.setPosition(this.scale.width - 16 - btnW - btnW - gap, ry1);
-      const totalR2 = row2Buttons.length * btnW + (row2Buttons.length - 1) * gap;
-      const startR2 = (this.scale.width - totalR2) / 2;
-      row2Containers.forEach((c, i) => c.setPosition(startR2 + i * (btnW + gap), ry2));
-    });
+    this.layoutFooter();
+    // layerLabel is legacy — keep the field populated with a noop
+    // text so other code paths that touch .setText don't null-deref.
+    if (!this.layerLabel) {
+      this.layerLabel = crispText(this, -9999, -9999, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '1px',
+      });
+    }
   }
 
+  // Footer button records so the flip-button label can be refreshed
+  // without looking it up by index. Each entry carries a setLabel
+  // helper that updates the Text child of the container.
+  private footerButtons: Array<{
+    container: Phaser.GameObjects.Container;
+    setPosition: (x: number, y: number) => void;
+    setLabel: (s: string) => void;
+    setSize: (w: number, h: number) => void;
+  }> = [];
+
+  private layoutFooter(): void {
+    const y = HomeScene.FOOTER_ROW_Y;
+    const count = this.footerButtons.length;
+    if (count === 0) return;
+    const marginX = HomeScene.FOOTER_MARGIN_X;
+    const gap = HomeScene.FOOTER_GAP;
+    const available = Math.max(
+      800,
+      this.scale.width - marginX * 2 - gap * (count - 1),
+    );
+    // Cap individual button width — on ultra-wide monitors a 400 px
+    // button looks silly. Anything beyond that becomes extra
+    // horizontal breathing room centered on screen.
+    const btnW = Math.min(220, available / count);
+    const btnH = HomeScene.FOOTER_BTN_H;
+    const totalW = btnW * count + gap * (count - 1);
+    const startX = (this.scale.width - totalW) / 2;
+    for (let i = 0; i < count; i++) {
+      const b = this.footerButtons[i]!;
+      b.setSize(btnW, btnH);
+      b.setPosition(startX + i * (btnW + gap), y);
+    }
+  }
+
+  // Graphics-drawn button (no sprite image). Avoids the "button
+  // looks like a plain rectangle on hover" bug from the previous
+  // version — that happened when a procedural placeholder was loaded
+  // for the missing ui-button-primary/ui-button-secondary sprite and
+  // a scale tween revealed its bare outline. Rendering via Graphics
+  // means we control every pixel: background fill, border, hover
+  // state, pressed state, the lot.
   private makeButton(
     x: number,
     y: number,
     label: string,
-    bg: string,
+    variant: 'primary' | 'secondary',
     onPress: () => void,
-  ): Phaser.GameObjects.Container {
+  ): {
+    container: Phaser.GameObjects.Container;
+    setPosition: (x: number, y: number) => void;
+    setLabel: (s: string) => void;
+    setSize: (w: number, h: number) => void;
+  } {
     const container = this.add.container(x, y);
-    const w = HomeScene.FOOTER_BTN_W;
-    const h = HomeScene.FOOTER_BTN_H;
+    let curW = 180;
+    let curH = HomeScene.FOOTER_BTN_H;
 
-    // Soft drop-shadow underneath so every button feels like it's
-    // sitting on the HUD plane rather than painted on flat. A second
-    // Graphics object beneath the button image, slightly offset +
-    // darkened.
-    const shadow = this.add
-      .graphics()
-      .fillStyle(0x000000, 0.35)
-      .fillRoundedRect(2, -h / 2 + 4, w, h, 8);
-    const bgImg = this.add.image(0, 0, bg).setOrigin(0, 0.5).setDisplaySize(w, h);
-    const text = crispText(this, w / 2, 0, label, {
+    const palette =
+      variant === 'primary'
+        ? {
+            fill: 0x4f9c3b,
+            fillHover: 0x6bbc52,
+            fillPress: 0x3a7a2d,
+            stroke: 0xffd98a,
+            strokeAlpha: 0.85,
+            text: '#0f1b10',
+            textHover: '#0f1b10',
+          }
+        : {
+            fill: 0x1f3a1f,
+            fillHover: 0x2d5125,
+            fillPress: 0x162815,
+            stroke: 0x3d5e2a,
+            strokeAlpha: 0.6,
+            text: '#e6f5d2',
+            textHover: '#ffe7b0',
+          };
+    const radius = 10;
+
+    const shadow = this.add.graphics();
+    const bg = this.add.graphics();
+    const text = crispText(this, 0, 0, label, {
       fontFamily: 'ui-monospace, monospace',
       fontSize: '14px',
-      color: '#ffffff',
+      color: palette.text,
+      fontStyle: variant === 'primary' ? 'bold' : 'normal',
     }).setOrigin(0.5, 0.5);
-    bgImg.setInteractive({ useHandCursor: true });
 
-    // Hover: tween-up (scale 1→1.04) + warm tint so every button
-    // feels alive. Pointerout reverses. Kept at short 120 ms duration
-    // so quick mouse-overs feel responsive, not draggy.
-    bgImg.on('pointerover', () => {
-      bgImg.setTint(0xffe7b0);
-      this.tweens.add({
-        targets: [bgImg, text],
-        scale: 1.04,
-        duration: 120,
-        ease: 'Sine.easeOut',
-      });
+    const redraw = (fillColor: number): void => {
+      shadow.clear();
+      shadow
+        .fillStyle(0x000000, 0.4)
+        .fillRoundedRect(-curW / 2 + 1, -curH / 2 + 3, curW, curH, radius);
+      bg.clear();
+      bg.fillStyle(fillColor, 1);
+      bg.lineStyle(1.5, palette.stroke, palette.strokeAlpha);
+      bg.fillRoundedRect(-curW / 2, -curH / 2, curW, curH, radius);
+      bg.strokeRoundedRect(-curW / 2, -curH / 2, curW, curH, radius);
+    };
+    redraw(palette.fill);
+
+    // Invisible zone sized to the button captures pointer events
+    // rather than the bg Graphics, which can't easily be made
+    // interactive with a matching hit shape at resize time.
+    const hit = this.add
+      .zone(0, 0, curW, curH)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true });
+
+    hit.on('pointerover', () => {
+      redraw(palette.fillHover);
+      text.setColor(palette.textHover);
     });
-    bgImg.on('pointerout', () => {
-      bgImg.clearTint();
-      this.tweens.add({
-        targets: [bgImg, text],
-        scale: 1,
-        duration: 120,
-        ease: 'Sine.easeOut',
-      });
+    hit.on('pointerout', () => {
+      redraw(palette.fill);
+      text.setColor(palette.text);
     });
-    // Press: quick squish, then spring back — communicates "received".
-    bgImg.on('pointerdown', () => {
+    hit.on('pointerdown', () => {
+      redraw(palette.fillPress);
       this.tweens.add({
-        targets: [bgImg, text],
-        scale: 0.96,
+        targets: container,
+        scaleY: 0.94,
         duration: 70,
         yoyo: true,
         ease: 'Quad.easeOut',
       });
       onPress();
     });
-    container.add([shadow, bgImg, text]);
-    return container;
+    hit.on('pointerup', () => redraw(palette.fillHover));
+
+    container.add([shadow, bg, text, hit]);
+
+    return {
+      container,
+      setPosition: (nx, ny) => container.setPosition(nx, ny),
+      setLabel: (s) => text.setText(s),
+      setSize: (nw, nh) => {
+        curW = nw;
+        curH = nh;
+        redraw(palette.fill);
+        hit.setSize(nw, nh);
+        hit.input!.hitArea.setSize(nw, nh);
+      },
+    };
   }
 
   private handleResize(): void {

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { openClanCreateModal } from '../ui/clanCreateModal.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 
@@ -511,32 +512,21 @@ export class ClanScene extends Phaser.Scene {
   }
 
   private openCreateForm(): void {
-    const name = prompt('Clan name (2-32 chars)');
-    if (!name) return;
-    const tag = prompt('Tag (2-5 uppercase letters/digits, e.g. HIVE)');
-    if (!tag) return;
-    const description = prompt('Description (optional)') ?? '';
-    void this.commitCreate(name, tag, description);
-  }
-
-  private async commitCreate(
-    name: string,
-    tag: string,
-    description: string,
-  ): Promise<void> {
-    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
-    if (!runtime) return;
-    try {
-      await runtime.api.clanCreate({
-        name,
-        tag: tag.toUpperCase(),
-        description,
-        isOpen: true,
-      });
-      if (!this.scene.isActive()) return;
-      await this.refreshMy();
-    } catch (err) {
-      alert((err as Error).message);
-    }
+    openClanCreateModal({
+      onSubmit: async (values) => {
+        const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+        if (!runtime) throw new Error('Offline — cannot create clan');
+        await runtime.api.clanCreate({
+          name: values.name,
+          tag: values.tag,
+          description: values.description,
+          isOpen: values.isOpen,
+        });
+        // refreshMy re-fetches the player's clan + renders the list;
+        // scene.restart wipes the stale "no clan yet" render so the
+        // freshly-created clan actually appears immediately.
+        if (this.scene.isActive()) this.scene.restart();
+      },
+    });
   }
 }

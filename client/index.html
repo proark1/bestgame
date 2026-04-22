@@ -24,26 +24,26 @@
         touch-action: none;
       }
       #game {
-        /* Flexbox-center the Phaser canvas ourselves instead of
-         * relying on Phaser's autoCenter. autoCenter uses CSS
-         * margins to center the canvas and Phaser's input manager
-         * has been observed to mis-compute pointer offsets on
-         * some browser / devicePixelRatio combinations in that
-         * setup — clicks land above-and-left of what they targeted.
-         * Pure flexbox centering is a no-op from the input manager's
-         * perspective (getBoundingClientRect is transform-accurate)
-         * and matches the visual position exactly. */
+        /* With Scale.RESIZE the canvas backing buffer matches this
+         * div's size exactly, so we want a plain block container at
+         * viewport dimensions — no flex, no padding, nothing that
+         * could introduce a CSS offset between where the canvas is
+         * drawn and where the DOM thinks the canvas is. */
+        position: fixed;
+        inset: 0;
         width: 100vw;
         height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         overflow: hidden;
       }
       #game canvas {
-        /* Belt-and-braces: kill any inherited transforms that could
-         * misalign pointer coordinates from drawn content. */
+        /* Kill inherited transforms + force 1:1 CSS/backing-buffer
+         * sizing. main.ts also re-stamps style.width/height on every
+         * resize as a belt-and-braces layer against browser quirks. */
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
         transform: none !important;
+        margin: 0 !important;
         display: block;
         touch-action: none;
       }

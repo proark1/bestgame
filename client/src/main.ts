@@ -148,6 +148,48 @@ async function main(): Promise<void> {
   // without constructor wiring.
   game.registry.set('runtime', runtime);
 
+  // Belt-and-braces: with Scale.RESIZE we already make the backing
+  // buffer match the parent div, but some browsers (observed on
+  // FB Instant's wrapper frame, reported by users) end up with a
+  // CSS transform or a size mismatch that shifts the canvas relative
+  // to where clients think it is. Re-stamping canvas.style.{width,
+  // height} on every resize + boot guarantees CSS size === backing
+  // buffer size, which makes pointer-to-game coordinate conversion
+  // an identity no matter how the container was laid out.
+  const syncCanvasSize = (): void => {
+    const c = game.canvas;
+    if (!c) return;
+    c.style.width = `${game.scale.width}px`;
+    c.style.height = `${game.scale.height}px`;
+    c.style.transform = 'none';
+    c.style.display = 'block';
+  };
+  syncCanvasSize();
+  game.scale.on('resize', syncCanvasSize);
+
+  // One-shot pointer diagnostic. Logs on the first pointerdown of a
+  // session so a user who reports "clicks are offset by N cm" can
+  // paste one console line and we can see canvas rect vs game coords
+  // vs client coords side by side. Guarded via a query string so it
+  // doesn't clutter prod consoles for everyone else.
+  if (typeof window !== 'undefined' && window.location.search.includes('debug=pointer')) {
+    let logged = false;
+    window.addEventListener('pointerdown', (e: PointerEvent) => {
+      if (logged) return;
+      logged = true;
+      const c = game.canvas;
+      const rect = c.getBoundingClientRect();
+      console.log('[hive-debug] first pointerdown', {
+        client: { x: e.clientX, y: e.clientY },
+        canvasRect: { top: rect.top, left: rect.left, w: rect.width, h: rect.height },
+        canvasAttr: { w: c.width, h: c.height },
+        gameScale: { w: game.scale.width, h: game.scale.height },
+        dpr: window.devicePixelRatio,
+        cssZoom: window.getComputedStyle(c).transform,
+      });
+    }, { capture: true });
+  }
+
   // Phaser initializes the renderer synchronously in the constructor on AUTO.
   // Dismiss the splash now; BootScene.create() will also dismiss as a
   // secondary guard in case the canvas isn't ready yet.
