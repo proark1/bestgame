@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 
@@ -30,6 +31,7 @@ export class ClanScene extends Phaser.Scene {
   }
 
   create(): void {
+    fadeInScene(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawHud();
     this.layerContainer = this.add.container(0, 0);
@@ -67,7 +69,7 @@ export class ClanScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => {
         this.cleanup();
-        this.scene.start('HomeScene');
+        fadeToScene(this, 'HomeScene');
       });
     this.add
       .text(this.scale.width / 2, HUD_H / 2, '👥 Clan', {

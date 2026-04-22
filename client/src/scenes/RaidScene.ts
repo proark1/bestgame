@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Sim, Types } from '@hive/shared';
 import { bakeTrailDot } from '../assets/placeholders.js';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -176,6 +177,7 @@ export class RaidScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+    fadeInScene(this);
     // Reset all per-run state. Scene instances are reused across raids,
     // so previous-run state must be cleared here or it'll leak.
     this.deckEntries = DECK.map((d) => ({ ...d }));
@@ -300,7 +302,7 @@ export class RaidScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.scene.start('HomeScene'));
+      .on('pointerdown', () => fadeToScene(this, 'HomeScene'));
 
     this.timerText = this.add
       .text(this.scale.width / 2, HUD_H / 2, '1:30', {
@@ -359,7 +361,11 @@ export class RaidScene extends Phaser.Scene {
       const y = b.anchorY * TILE + (b.h * TILE) / 2;
       const spr = this.add.image(x, y, `building-${b.kind}`);
       spr.setOrigin(0.5, 0.75);
-      spr.setDisplaySize(TILE * Math.max(b.w, 1.6), TILE * Math.max(b.h, 1.6));
+      // Bumped the minimum visible footprint from 1.6× tile → 1.85×
+      // so buildings read bigger on the board; matches HomeScene's
+      // same bump. Source sprites are 128 px, so at 89 px display
+      // we're at a cleaner 0.69 downscale (less blur).
+      spr.setDisplaySize(TILE * Math.max(b.w, 1.85), TILE * Math.max(b.h, 1.85));
       this.boardContainer.add(spr);
       this.buildingSprites.set(b.id, spr);
 
@@ -539,14 +545,14 @@ export class RaidScene extends Phaser.Scene {
     ) {
       const spr = this.add
         .sprite(x, y, sheetKey)
-        .setDisplaySize(28, 28)
+        .setDisplaySize(36, 36)
         .setOrigin(0.5, 0.7);
       spr.play(animKey);
       return spr;
     }
     return this.add
       .image(x, y, `unit-${kind}`)
-      .setDisplaySize(28, 28)
+      .setDisplaySize(36, 36)
       .setOrigin(0.5, 0.7);
   }
 
@@ -813,7 +819,7 @@ export class RaidScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(102)
       .setInteractive({ useHandCursor: true });
-    backBtn.on('pointerdown', () => this.scene.start('HomeScene'));
+    backBtn.on('pointerdown', () => fadeToScene(this, 'HomeScene'));
 
     if (isWin) {
       const shareBtn = this.add
