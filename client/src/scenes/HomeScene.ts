@@ -7,6 +7,7 @@ import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { isUiOverrideActive } from '../ui/uiOverrides.js';
 import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
@@ -231,7 +232,23 @@ export class HomeScene extends Phaser.Scene {
 
   private drawHud(): void {
     // CoC-style HUD plane: deep gradient panel + thick brass accent
-    // on the bottom edge + drop-shadow beneath.
+    // on the bottom edge + drop-shadow beneath. When the
+    // `ui-hud-bg` override is active and the admin-generated image
+    // is on disk, tile that image across the HUD strip instead. The
+    // generated asset is designed to tile horizontally at 512x96
+    // so the TileSprite reads as one continuous banner at any
+    // viewport width.
+    const w = this.scale.width;
+    if (isUiOverrideActive(this, 'ui-hud-bg')) {
+      this.add.tileSprite(0, 0, w, HUD_H, 'ui-hud-bg').setOrigin(0, 0);
+      // Still drop a thin shadow below so the HUD reads as raised.
+      const shadow = this.add.graphics();
+      shadow.fillStyle(0x000000, 0.45);
+      shadow.fillRect(0, HUD_H, w, 3);
+      shadow.fillStyle(0x000000, 0.2);
+      shadow.fillRect(0, HUD_H + 3, w, 3);
+      return;
+    }
     const hud = this.add.graphics();
     hud.fillGradientStyle(
       COLOR.bgPanelHi,
@@ -240,17 +257,17 @@ export class HomeScene extends Phaser.Scene {
       COLOR.bgPanelLo,
       1,
     );
-    hud.fillRect(0, 0, this.scale.width, HUD_H);
+    hud.fillRect(0, 0, w, HUD_H);
     hud.fillStyle(COLOR.brass, 0.35);
-    hud.fillRect(0, 1, this.scale.width, 1);
+    hud.fillRect(0, 1, w, 1);
     hud.fillStyle(COLOR.brassDeep, 1);
-    hud.fillRect(0, HUD_H - 4, this.scale.width, 1);
+    hud.fillRect(0, HUD_H - 4, w, 1);
     hud.fillStyle(COLOR.brass, 0.7);
-    hud.fillRect(0, HUD_H - 3, this.scale.width, 2);
+    hud.fillRect(0, HUD_H - 3, w, 2);
     hud.fillStyle(0x000000, 0.45);
-    hud.fillRect(0, HUD_H, this.scale.width, 3);
+    hud.fillRect(0, HUD_H, w, 3);
     hud.fillStyle(0x000000, 0.2);
-    hud.fillRect(0, HUD_H + 3, this.scale.width, 3);
+    hud.fillRect(0, HUD_H + 3, w, 3);
 
     // Responsive HUD layout — three tiers:
     //   wide   (≥ 760 px): full layout. Title + chip + 3 resource pills.
@@ -261,7 +278,6 @@ export class HomeScene extends Phaser.Scene {
     // small viewports (e.g. iPhone 375 — "HIVE WAR" visibly clipped
     // INTO the first pill in the user's screenshot). These tiers keep
     // everything visible at any viewport.
-    const w = this.scale.width;
     const tier: 'wide' | 'narrow' | 'phone' =
       w >= 760 ? 'wide' : w >= 500 ? 'narrow' : 'phone';
     const cy = HUD_H / 2;
@@ -419,29 +435,48 @@ export class HomeScene extends Phaser.Scene {
           };
 
     const bg = this.add.graphics();
-    // Vertical gradient fake via stacked bands. `fillGradientStyle`
-    // would be ideal but Graphics' gradients draw solid on most
-    // backends; stacking 18 bands reads as a smooth ramp visually
-    // without per-pixel cost.
-    const BANDS = 18;
-    for (let i = 0; i < BANDS; i++) {
-      const t = i / (BANDS - 1);
-      const r1 = (palette.baseA >> 16) & 0xff;
-      const g1 = (palette.baseA >> 8) & 0xff;
-      const b1 = palette.baseA & 0xff;
-      const r2 = (palette.baseB >> 16) & 0xff;
-      const g2 = (palette.baseB >> 8) & 0xff;
-      const b2 = palette.baseB & 0xff;
-      const r = Math.round(r1 + (r2 - r1) * t);
-      const g = Math.round(g1 + (g2 - g1) * t);
-      const b = Math.round(b1 + (b2 - b1) * t);
-      bg.fillStyle((r << 16) | (g << 8) | b, 1);
-      bg.fillRect(
-        0,
-        Math.floor((i * BOARD_H) / BANDS),
-        BOARD_W,
-        Math.ceil(BOARD_H / BANDS) + 1,
-      );
+    // If the admin has turned on the `ui-board-tile-surface` override
+    // AND the image is on disk, tile it across the board instead of
+    // the gradient-bands path. The image is designed at 128×128
+    // tileable, which lines up exactly with the 64-px grid tiles so
+    // the seam lands between cells. TileSprite handles the repeat
+    // natively and scales linearly — far cheaper than 90 hand-
+    // painted decoration circles.
+    const boardTileKey = 'ui-board-tile-surface';
+    const useTile = isUiOverrideActive(this, boardTileKey);
+    if (useTile) {
+      const tileSprite = this.add
+        .tileSprite(0, 0, BOARD_W, BOARD_H, boardTileKey)
+        .setOrigin(0, 0);
+      // Add directly — bg (still empty Graphics) stays as a handle so
+      // the rest of this function can keep drawing on it (vignette,
+      // etc.) without re-ordering.
+      this.boardContainer.add(tileSprite);
+    } else {
+      // Vertical gradient fake via stacked bands. `fillGradientStyle`
+      // would be ideal but Graphics' gradients draw solid on most
+      // backends; stacking 18 bands reads as a smooth ramp visually
+      // without per-pixel cost.
+      const BANDS = 18;
+      for (let i = 0; i < BANDS; i++) {
+        const t = i / (BANDS - 1);
+        const r1 = (palette.baseA >> 16) & 0xff;
+        const g1 = (palette.baseA >> 8) & 0xff;
+        const b1 = palette.baseA & 0xff;
+        const r2 = (palette.baseB >> 16) & 0xff;
+        const g2 = (palette.baseB >> 8) & 0xff;
+        const b2 = palette.baseB & 0xff;
+        const r = Math.round(r1 + (r2 - r1) * t);
+        const g = Math.round(g1 + (g2 - g1) * t);
+        const b = Math.round(b1 + (b2 - b1) * t);
+        bg.fillStyle((r << 16) | (g << 8) | b, 1);
+        bg.fillRect(
+          0,
+          Math.floor((i * BOARD_H) / BANDS),
+          BOARD_W,
+          Math.ceil(BOARD_H / BANDS) + 1,
+        );
+      }
     }
 
     // Corner vignette — darkens the edges so the eye focuses on the
@@ -459,25 +494,30 @@ export class HomeScene extends Phaser.Scene {
     // Deterministic decoration scatter. Seeded off the layer so the
     // pattern is different between surface and underground but stable
     // across redraws (no random flicker when you flip layers).
+    // Skipped when the tile override is on — the tile art carries
+    // its own painted texture and stacking the scatter on top would
+    // just look dirty.
     const deco = this.add.graphics();
-    const seedBase = this.layer === 0 ? 0x12345 : 0x6789a;
-    let seed = seedBase;
-    const rnd = (): number => {
-      // 32-bit xorshift — good enough for pattern placement, avoids
-      // pulling in the shared PCG. Self-contained so the decoration
-      // never desyncs from anything gameplay-relevant.
-      seed ^= seed << 13;
-      seed ^= seed >>> 17;
-      seed ^= seed << 5;
-      return ((seed >>> 0) / 0xffffffff);
-    };
-    for (let i = 0; i < 90; i++) {
-      const x = rnd() * BOARD_W;
-      const y = rnd() * BOARD_H;
-      const r = 1 + rnd() * 2.5;
-      const useA = rnd() < 0.55;
-      deco.fillStyle(useA ? palette.decorA : palette.decorB, 0.22 + rnd() * 0.18);
-      deco.fillCircle(x, y, r);
+    if (!useTile) {
+      const seedBase = this.layer === 0 ? 0x12345 : 0x6789a;
+      let seed = seedBase;
+      const rnd = (): number => {
+        // 32-bit xorshift — good enough for pattern placement, avoids
+        // pulling in the shared PCG. Self-contained so the decoration
+        // never desyncs from anything gameplay-relevant.
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        return ((seed >>> 0) / 0xffffffff);
+      };
+      for (let i = 0; i < 90; i++) {
+        const x = rnd() * BOARD_W;
+        const y = rnd() * BOARD_H;
+        const r = 1 + rnd() * 2.5;
+        const useA = rnd() < 0.55;
+        deco.fillStyle(useA ? palette.decorA : palette.decorB, 0.22 + rnd() * 0.18);
+        deco.fillCircle(x, y, r);
+      }
     }
 
     // Grid lines, softened.

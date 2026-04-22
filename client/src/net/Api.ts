@@ -318,6 +318,20 @@ export class Api {
       return {};
     }
   }
+
+  // UI-image override flags (`ui-button-primary-bg`, `ui-panel-bg`,
+  // …). Same contract as getAnimationSettings: no auth, empty on
+  // failure. Consumers combine this with a texture-exists check so
+  // a flag flipped on without art still falls back to Graphics.
+  async getUiOverrideSettings(): Promise<Record<string, boolean>> {
+    try {
+      const res = await fetch(`${this.baseUrl}/settings/ui-overrides`);
+      if (!res.ok) return {};
+      return (await res.json()) as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  }
 }
 
 export interface ArenaReserveResponse {
