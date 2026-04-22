@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import type { HiveRuntime } from '../main.js';
 import type { LeaderboardEntry } from '../net/Api.js';
 
@@ -22,6 +23,7 @@ export class LeaderboardScene extends Phaser.Scene {
   }
 
   create(): void {
+    fadeInScene(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
 
     this.drawHud();
@@ -89,7 +91,7 @@ export class LeaderboardScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.scene.start('HomeScene'));
+      .on('pointerdown', () => fadeToScene(this, 'HomeScene'));
 
     this.add
       .text(this.scale.width / 2, HUD_H / 2, '🏆 Leaderboard', {

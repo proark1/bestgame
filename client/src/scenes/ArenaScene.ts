@@ -3,6 +3,7 @@ import { Sim, Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { ArenaClient, type ArenaEvent } from '../net/ArenaClient.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
 //
@@ -91,6 +92,7 @@ export class ArenaScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+    fadeInScene(this);
     this.started = false;
     this.hasError = false;
     this.buildingSprites.clear();
@@ -157,7 +159,7 @@ export class ArenaScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => {
         void this.arena?.leave();
-        this.scene.start('HomeScene');
+        fadeToScene(this, 'HomeScene');
       });
     this.add
       .text(this.scale.width / 2, HUD_H / 2, '⚔ Live Arena', {
@@ -198,7 +200,7 @@ export class ArenaScene extends Phaser.Scene {
       const y = b.anchorY * TILE + (b.h * TILE) / 2;
       const spr = this.add.image(x, y, `building-${b.kind}`);
       spr.setOrigin(0.5, 0.75);
-      spr.setDisplaySize(TILE * Math.max(b.w, 1.6), TILE * Math.max(b.h, 1.6));
+      spr.setDisplaySize(TILE * Math.max(b.w, 1.85), TILE * Math.max(b.h, 1.85));
       this.boardContainer.add(spr);
       this.buildingSprites.set(b.id, spr);
     }
@@ -227,14 +229,14 @@ export class ArenaScene extends Phaser.Scene {
     ) {
       const spr = this.add
         .sprite(x, y, sheetKey)
-        .setDisplaySize(28, 28)
+        .setDisplaySize(36, 36)
         .setOrigin(0.5, 0.7);
       spr.play(animKey);
       return spr;
     }
     return this.add
       .image(x, y, `unit-${kind}`)
-      .setDisplaySize(28, 28)
+      .setDisplaySize(36, 36)
       .setOrigin(0.5, 0.7);
   }
 

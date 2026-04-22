@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import type { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { UnitUpgradeEntry } from '../net/Api.js';
@@ -28,6 +29,7 @@ export class UpgradeScene extends Phaser.Scene {
   }
 
   create(): void {
+    fadeInScene(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawHud();
     this.resourceBanner = this.add
@@ -95,7 +97,7 @@ export class UpgradeScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5)
       .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.scene.start('HomeScene'));
+      .on('pointerdown', () => fadeToScene(this, 'HomeScene'));
     this.add
       .text(this.scale.width / 2, HUD_H / 2, '⚙ Upgrades', {
         fontFamily: 'ui-monospace, monospace',

@@ -188,6 +188,17 @@ export class BootScene extends Phaser.Scene {
 
     generateMissingPlaceholders(this, ALL_SPRITE_KEYS);
 
+    // Every sprite — Gemini-generated, disk-committed, or procedural
+    // placeholder — gets LINEAR filtering so downscaled sizes (units
+    // rendered at 28 px, buildings at ~60 px from a 128 px source)
+    // read smooth instead of jagged. Phaser's global antialias flag
+    // governs the canvas context; this per-texture setting governs
+    // the sampler used when the texture is drawn.
+    for (const key of this.textures.getTextureKeys()) {
+      if (key === '__MISSING' || key === '__DEFAULT' || key === '__WHITE') continue;
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+    }
+
     document.getElementById('boot-splash')?.remove();
     this.scene.start('HomeScene');
   }

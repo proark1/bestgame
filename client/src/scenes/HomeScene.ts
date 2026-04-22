@@ -3,6 +3,7 @@ import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
+import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -70,6 +71,7 @@ export class HomeScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
+    fadeInScene(this);
     this.drawAmbient();
 
     // Hydrate from runtime — scene is re-entered after each raid, so this
@@ -199,16 +201,38 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    // Two-band HUD: solid dark base + a thin brass accent line along
-    // the bottom edge so the HUD reads as its own plane rather than
-    // blending into the board's dark green.
+    // Glassy HUD plane: stacked gradient bands top→bottom for depth,
+    // a crisp brass accent line + subtle drop-shadow under the
+    // bottom edge so it reads as a floating panel. Replaces the old
+    // flat green rectangle.
     const hud = this.add.graphics();
-    hud.fillStyle(0x0a120c, 1);
-    hud.fillRect(0, 0, this.scale.width, HUD_H);
+    const BANDS = 10;
+    // Top-band slightly lighter, bottom dark. Produces a subtle
+    // vertical sheen consistent with the "glass" look.
+    const top = 0x243824;
+    const bot = 0x060a06;
+    for (let i = 0; i < BANDS; i++) {
+      const t = i / (BANDS - 1);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const g = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
+      hud.fillStyle((r << 16) | (g << 8) | b, 1);
+      hud.fillRect(
+        0,
+        Math.floor((i * HUD_H) / BANDS),
+        this.scale.width,
+        Math.ceil(HUD_H / BANDS) + 1,
+      );
+    }
+    // Brass accent + inner highlight + drop-shadow below the plane.
     hud.fillStyle(0x5c4020, 1);
     hud.fillRect(0, HUD_H - 3, this.scale.width, 1);
-    hud.fillStyle(0xffd98a, 0.35);
+    hud.fillStyle(0xffd98a, 0.45);
     hud.fillRect(0, HUD_H - 2, this.scale.width, 1);
+    hud.fillStyle(0x000000, 0.35);
+    hud.fillRect(0, HUD_H, this.scale.width, 2);
+    hud.fillStyle(0x000000, 0.2);
+    hud.fillRect(0, HUD_H + 2, this.scale.width, 2);
 
     crispText(this, 16, HUD_H / 2, 'HIVE WARS', {
       fontFamily: 'ui-monospace, monospace',
@@ -262,20 +286,39 @@ export class HomeScene extends Phaser.Scene {
       color: '#e6f5d2',
     }).setOrigin(1, 0.5);
 
+    // Resource pills: each badge gets a rounded-rect capsule behind
+    // the icon+number so they read as distinct chips rather than
+    // floating over the HUD gradient. Drawn right-to-left from
+    // scale.width so the rightmost always snuggles against the edge.
     const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
       { icon: 'ui-resource-sugar', text: this.sugarText },
       { icon: 'ui-resource-leaf', text: this.leafText },
       { icon: 'ui-resource-milk', text: this.milkText },
     ];
-    let x = this.scale.width - 16;
+    const PILL_H = 32;
+    const PILL_PAD_X = 10;
+    const PILL_ICON_GAP = 6;
+    const PILL_GAP = 8;
+    const ICON_SIZE = 22;
+    let x = this.scale.width - 12;
     for (let i = badges.length - 1; i >= 0; i--) {
       const b = badges[i]!;
-      b.text.setPosition(x, HUD_H / 2);
+      const textW = Math.max(b.text.width, 20);
+      const pillW = PILL_PAD_X * 2 + ICON_SIZE + PILL_ICON_GAP + textW;
+      const pillX = x - pillW;
+      const pillY = HUD_H / 2 - PILL_H / 2;
+      const pill = this.add.graphics();
+      pill.fillStyle(0x000000, 0.4);
+      pill.fillRoundedRect(pillX, pillY, pillW, PILL_H, PILL_H / 2);
+      pill.lineStyle(1, 0xffd98a, 0.25);
+      pill.strokeRoundedRect(pillX, pillY, pillW, PILL_H, PILL_H / 2);
       const icon = this.add
-        .image(x - b.text.width - 24, HUD_H / 2, b.icon)
-        .setDisplaySize(28, 28);
-      x -= b.text.width + 60;
-      void icon; // ref-hold for GC; image registers itself on the scene
+        .image(pillX + PILL_PAD_X + ICON_SIZE / 2, HUD_H / 2, b.icon)
+        .setDisplaySize(ICON_SIZE, ICON_SIZE);
+      b.text.setPosition(pillX + pillW - PILL_PAD_X, HUD_H / 2);
+      void pill;
+      void icon;
+      x = pillX - PILL_GAP;
     }
   }
 
@@ -404,7 +447,11 @@ export class HomeScene extends Phaser.Scene {
         spr.setOrigin(0.5, 0.75);
         spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
         const tiles = Math.max(b.footprint.w, b.footprint.h);
-        spr.setDisplaySize(tiles * TILE * 1.2, tiles * TILE * 1.2);
+        // 1.4× tile scaling: building sprites are 128×128 source, so a
+        // 1-tile building renders at 67 px — a cleaner 0.52 ratio than
+        // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
+        // an integer-multiple downscale means less blur.
+        spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
         this.tweens.add({
           targets: spr,
           scale: { from: spr.scale, to: spr.scale * 1.03 },
@@ -425,7 +472,7 @@ export class HomeScene extends Phaser.Scene {
       const spr = this.add.image(x, y, `building-${b.kind}`);
       spr.setOrigin(0.5, 0.75);
       spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
-      spr.setDisplaySize(96, 96);
+      spr.setDisplaySize(112, 112);
       this.tweens.add({
         targets: spr,
         scale: { from: spr.scale, to: spr.scale * 1.03 },
@@ -482,14 +529,14 @@ export class HomeScene extends Phaser.Scene {
       y1,
       'Raid a base →',
       'ui-button-primary',
-      () => this.scene.start('RaidScene'),
+      () => fadeToScene(this, 'RaidScene'),
     );
     const arena = this.makeButton(
       this.scale.width - 16 - btnW - btnW - gap,
       y1,
       '⚔ Arena',
       'ui-button-secondary',
-      () => this.scene.start('ArenaScene'),
+      () => fadeToScene(this, 'ArenaScene'),
     );
 
     // Row 2: four evenly spaced secondary nav buttons, centered.
@@ -507,7 +554,7 @@ export class HomeScene extends Phaser.Scene {
         y2,
         btn.label,
         'ui-button-secondary',
-        () => this.scene.start(btn.scene),
+        () => fadeToScene(this, btn.scene),
       ),
     );
 
@@ -536,6 +583,15 @@ export class HomeScene extends Phaser.Scene {
     const container = this.add.container(x, y);
     const w = HomeScene.FOOTER_BTN_W;
     const h = HomeScene.FOOTER_BTN_H;
+
+    // Soft drop-shadow underneath so every button feels like it's
+    // sitting on the HUD plane rather than painted on flat. A second
+    // Graphics object beneath the button image, slightly offset +
+    // darkened.
+    const shadow = this.add
+      .graphics()
+      .fillStyle(0x000000, 0.35)
+      .fillRoundedRect(2, -h / 2 + 4, w, h, 8);
     const bgImg = this.add.image(0, 0, bg).setOrigin(0, 0.5).setDisplaySize(w, h);
     const text = crispText(this, w / 2, 0, label, {
       fontFamily: 'ui-monospace, monospace',
@@ -543,18 +599,40 @@ export class HomeScene extends Phaser.Scene {
       color: '#ffffff',
     }).setOrigin(0.5, 0.5);
     bgImg.setInteractive({ useHandCursor: true });
-    bgImg.on('pointerover', () => bgImg.setTint(0xc3e8b0));
-    bgImg.on('pointerout', () => bgImg.clearTint());
+
+    // Hover: tween-up (scale 1→1.04) + warm tint so every button
+    // feels alive. Pointerout reverses. Kept at short 120 ms duration
+    // so quick mouse-overs feel responsive, not draggy.
+    bgImg.on('pointerover', () => {
+      bgImg.setTint(0xffe7b0);
+      this.tweens.add({
+        targets: [bgImg, text],
+        scale: 1.04,
+        duration: 120,
+        ease: 'Sine.easeOut',
+      });
+    });
+    bgImg.on('pointerout', () => {
+      bgImg.clearTint();
+      this.tweens.add({
+        targets: [bgImg, text],
+        scale: 1,
+        duration: 120,
+        ease: 'Sine.easeOut',
+      });
+    });
+    // Press: quick squish, then spring back — communicates "received".
     bgImg.on('pointerdown', () => {
       this.tweens.add({
-        targets: bgImg,
-        scaleY: '*=0.95',
-        duration: 60,
+        targets: [bgImg, text],
+        scale: 0.96,
+        duration: 70,
         yoyo: true,
+        ease: 'Quad.easeOut',
       });
       onPress();
     });
-    container.add([bgImg, text]);
+    container.add([shadow, bgImg, text]);
     return container;
   }
 
