@@ -199,9 +199,21 @@ export function makeHiveButton(
     .setOrigin(0.5, 0.5)
     .setInteractive({ useHandCursor: enabled });
 
+  // Phaser's InputManager.pointWithinHitArea adds displayOriginX/Y to
+  // the local pointer before containment-testing, so the default hit
+  // area created by setInteractive — Rectangle(0, 0, w, h) — already
+  // aligns with a center-origin zone's visual bounds. Zone.setSize
+  // resizes that default rectangle in-place (and updates displayOrigin)
+  // as long as we leave customHitArea=false. The previous override
+  // reassigned input.hitArea to Rectangle(-w/2, -h/2, w, h), which
+  // shifts the test point by an extra +(w/2, h/2) after the origin
+  // normalization — the hit zone moved up-and-left by half a button
+  // so the visible right and bottom halves of every footer button
+  // silently missed clicks on desktop (and cross-fed into the
+  // neighbour's dead zone, making only buttons the user happened to
+  // click in the top-left corner feel like they "worked").
   const refreshHit = (): void => {
     hit.setSize(curW, curH);
-    hit.input!.hitArea = new Phaser.Geom.Rectangle(-curW / 2, -curH / 2, curW, curH);
   };
 
   hit.on('pointerover', () => {
