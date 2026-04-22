@@ -674,6 +674,106 @@ button {
   padding: 4px 10px;
 }
 
+/* Per-pose walk-cycle editor. Two pose columns side by side, each
+ * with preview / prompt / actions; a single Save strip button
+ * beneath. Reads as a mini card inside the animation row. */
+.admin-walk-editor {
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.admin-walk-editor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.admin-walk-editor-head strong {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--accent);
+}
+.admin-walk-editor-head small {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.admin-walk-poses {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.admin-walk-pose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.admin-walk-pose > strong {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--accent);
+}
+.admin-walk-pose-preview {
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 160px;
+  object-fit: contain;
+  background: repeating-conic-gradient(#1a1208 0% 25%, #0f1b10 0% 50%) 0 0 / 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.admin-walk-pose-preview.empty {
+  opacity: 0.25;
+  /* keep the checker visible even when src is missing */
+}
+.admin-walk-pose-prompt {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--font);
+  font-size: 11px;
+  resize: vertical;
+}
+.admin-walk-pose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-walk-pose-actions .btn {
+  flex: 1 1 calc(50% - 6px);
+  font-size: 11px;
+  padding: 4px 6px;
+  min-height: 28px;
+}
+.admin-walk-editor-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.admin-walk-editor-foot .btn {
+  min-width: 140px;
+}
+
+@media (max-width: 580px) {
+  .admin-walk-poses {
+    grid-template-columns: 1fr;
+  }
+  .admin-walk-pose-actions .btn {
+    flex: 1 1 100%;
+  }
+}
+
 /* ============================================================
  * Mobile responsive pass. Breakpoint at 768 px follows typical
  * tablet / phone split; below that everything collapses into a
