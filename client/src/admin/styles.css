@@ -651,3 +651,138 @@ button {
   font-size: 11px;
   padding: 4px 10px;
 }
+
+/* ============================================================
+ * Mobile responsive pass. Breakpoint at 768 px follows typical
+ * tablet / phone split; below that everything collapses into a
+ * single column and buttons stretch to readable widths.
+ * ============================================================ */
+@media (max-width: 768px) {
+  .admin-root {
+    padding: 14px 12px 120px;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .admin-header h1 {
+    font-size: 18px;
+  }
+  .admin-header .actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .admin-header .actions .btn {
+    flex: 1 1 calc(50% - 4px);
+    text-align: center;
+    padding: 10px 12px;
+    min-height: 40px;
+  }
+
+  .admin-guide summary {
+    font-size: 14px;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+  .toolbar label {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+  .toolbar select,
+  .toolbar input[type='number'] {
+    min-width: 120px;
+  }
+  .toolbar input[type='range'] {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .style-lock textarea {
+    min-height: 120px;
+  }
+
+  .grid {
+    /* Single column on phones; 1fr keeps card edges pinned to the
+     * viewport gutters instead of centering an empty column. */
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .card {
+    min-width: 0; /* allow internal content to wrap in the 1-col layout */
+  }
+  .card-head {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .candidates {
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  }
+  .card-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .card-actions .btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 40px;
+  }
+
+  /* Animation panel collapses to one column + bigger tap targets. */
+  .admin-animation {
+    padding: 12px;
+  }
+  .admin-animation header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .admin-animation-header-actions {
+    width: 100%;
+  }
+  .admin-animation-header-actions .btn {
+    width: 100%;
+    min-height: 42px;
+  }
+  .admin-animation-list {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .admin-animation-list li {
+    grid-template-columns: auto 1fr auto;
+    row-gap: 8px;
+    padding: 10px;
+  }
+  .admin-animation-list li .btn {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    min-height: 40px;
+  }
+  .admin-animation-preview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-animation-preview-loop {
+    align-self: center;
+  }
+}
+
+/* Ultra-narrow adjustments (≤ 380 px — iPhone SE et al). */
+@media (max-width: 380px) {
+  .admin-root {
+    padding: 10px 8px 120px;
+  }
+  .admin-header h1 {
+    font-size: 16px;
+  }
+  .card-actions .btn {
+    flex: 1 1 100%;
+  }
+}

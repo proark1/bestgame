@@ -7,14 +7,17 @@ import {
   fetchAnimationSettings,
   fetchPrompts,
   fetchStatus,
+  fetchUiOverrideSettings,
   generateImages,
   getToken,
   putAnimationSettings,
+  putUiOverrideSettings,
   saveSprite,
   setToken,
   updatePrompt,
   type AnimationSettings,
   type PromptsFile,
+  type UiOverrideSettings,
   type SpriteFile,
 } from './api.js';
 import { SpriteCard } from './SpriteCard.js';
@@ -60,6 +63,7 @@ interface AdminState {
   compression: Compression;
   progressEl: HTMLDivElement | null;
   animation: AnimationSettings | null;
+  uiOverrides: UiOverrideSettings | null;
 }
 
 const state: AdminState = {
@@ -69,6 +73,7 @@ const state: AdminState = {
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
   progressEl: null,
   animation: null,
+  uiOverrides: null,
 };
 
 const root = document.getElementById('admin-root') as HTMLDivElement;
@@ -140,6 +145,11 @@ async function bootstrap(): Promise<void> {
   } catch (err) {
     console.warn('animation settings unreachable', err);
   }
+  try {
+    state.uiOverrides = await fetchUiOverrideSettings();
+  } catch (err) {
+    console.warn('ui-overrides settings unreachable', err);
+  }
   render();
 }
 
@@ -183,6 +193,7 @@ function render(): void {
   // three walk-cycle strips are on disk. Rendered unconditionally;
   // it gracefully handles the "no walk sheet yet" case inline.
   root.append(renderAnimationPanel());
+  root.append(renderUiOverridesPanel());
 
   // Slim progress bar tucked under the header — hidden until a batch is
   // running. Lives in the DOM permanently so state.progressEl is always
@@ -285,12 +296,23 @@ function render(): void {
     fileByKey.set(base, f);
   }
 
-  const mk = (kind: 'unit' | 'building', baseName: string): SpriteCard => {
-    const key = `${kind}-${baseName}`;
+  const mk = (
+    kind: 'unit' | 'building' | 'menuUi',
+    baseName: string,
+  ): SpriteCard => {
+    // Menu UI keys already carry the 'ui-' prefix so the DB filename
+    // and the Phaser texture key are the same string. Unit / building
+    // keys follow the legacy `${kind}-${name}` scheme.
+    const key = kind === 'menuUi' ? baseName : `${kind}-${baseName}`;
     const file = fileByKey.get(key);
     const ext = file ? (file.name.endsWith('.webp') ? 'webp' : 'png') : null;
-    const initialPrompt =
-      state.prompts?.[kind === 'unit' ? 'units' : 'buildings']?.[baseName] ?? '';
+    const bucket =
+      kind === 'unit'
+        ? 'units'
+        : kind === 'building'
+          ? 'buildings'
+          : 'menuUi';
+    const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
     return new SpriteCard({
       key,
       initialPrompt,
@@ -302,14 +324,10 @@ function render(): void {
       composePrompt: (desc) => composePrompt(desc, kind),
       getCompression: () => state.compression,
       onPromptSave: async (value) => {
-        await updatePrompt({
-          category: kind === 'unit' ? 'units' : 'buildings',
-          key: baseName,
-          value,
-        });
+        await updatePrompt({ category: bucket, key: baseName, value });
         if (state.prompts) {
-          const bucket = kind === 'unit' ? state.prompts.units : state.prompts.buildings;
-          bucket[baseName] = value;
+          if (!state.prompts[bucket]) state.prompts[bucket] = {};
+          state.prompts[bucket]![baseName] = value;
         }
       },
       onSaved: () => {},
@@ -327,12 +345,44 @@ function render(): void {
     state.cards.push(card);
     grid.append(card.root);
   }
+  for (const u of MENU_UI_KEYS) {
+    const card = mk('menuUi', u);
+    state.cards.push(card);
+    grid.append(card.root);
+  }
 
   root.append(grid);
 }
 
-function composePrompt(description: string, kind: 'unit' | 'building'): string {
+// Menu UI asset keys. Kept in sync with tools/gemini-art/prompts.json
+// `menuUi` bucket and with UI_OVERRIDE_KEYS on the server. Each key
+// is the exact DB filename (without extension), so once Gemini
+// generates and the admin saves, the file at
+// /assets/sprites/<key>.webp is what the game renders.
+const MENU_UI_KEYS = [
+  'ui-button-primary-bg',
+  'ui-button-secondary-bg',
+  'ui-panel-bg',
+  'ui-hud-bg',
+  'ui-title-banner',
+  'ui-board-tile-surface',
+];
+
+function composePrompt(
+  description: string,
+  kind: 'unit' | 'building' | 'menuUi',
+): string {
   const style = state.prompts?.styleLock ?? '';
+  // Menu UI assets are larger and designed for 9-slice scaling —
+  // the prompt shape differs enough that we route it through its
+  // own composer instead of twisting the shared subject prompt.
+  if (kind === 'menuUi') {
+    return [
+      `Subject: ${description}`,
+      `Style: ${style}`,
+      `Delivery: transparent PNG. No text, no icons, no logos, no border, no watermark. The asset must work as-is when composited over any in-game background.`,
+    ].join(' ');
+  }
   const size = kind === 'unit' ? '128x128' : '192x192';
   return [
     `Subject: ${description}.`,
@@ -717,6 +767,89 @@ async function savePromptValue(
     feedbackBtn.disabled = false;
     throw err;
   }
+}
+
+// UI-image-override toggles. Same shape as the animation panel: one
+// row per known override key, a checkbox that PUTs the new map to
+// /admin/api/settings/ui-overrides, and a status badge that tells
+// the admin whether the corresponding image is actually present on
+// disk. Flipping a toggle ON while the image is missing still saves
+// the flag, but the in-game Graphics fallback keeps rendering.
+function renderUiOverridesPanel(): HTMLElement {
+  const card = document.createElement('section');
+  card.className = 'admin-animation'; // reuse the animation panel styles
+  const header = document.createElement('header');
+  header.innerHTML = `
+    <h2>Menu UI overrides</h2>
+    <small>Generate a Menu UI asset above, then flip its switch here to replace the in-game Graphics fallback with the image. Toggle off to revert.</small>
+  `;
+  card.append(header);
+
+  const settings = state.uiOverrides;
+  if (!settings) {
+    const msg = document.createElement('p');
+    msg.className = 'admin-animation-empty';
+    msg.textContent = 'UI override settings unreachable. Check the API/DB is up, then reload the admin.';
+    card.append(msg);
+    return card;
+  }
+  if (settings.dbPersistence === 'not-configured') {
+    const msg = document.createElement('p');
+    msg.className = 'admin-animation-warning';
+    msg.textContent =
+      "DATABASE_URL not configured — toggles below are read-only defaults and won't persist.";
+    card.append(msg);
+  }
+
+  // "Image ready" = any on-disk file whose stem matches the key,
+  // regardless of extension. The admin save pipeline writes one of
+  // webp/png per key.
+  const hasImage = (key: string): boolean =>
+    state.files.some(
+      (f) => f.name === `${key}.webp` || f.name === `${key}.png`,
+    );
+
+  const list = document.createElement('ul');
+  list.className = 'admin-animation-list';
+  for (const key of settings.keys) {
+    const row = document.createElement('li');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = settings.values[key] ?? false;
+    checkbox.id = `ui-override-${key}`;
+    checkbox.disabled = settings.dbPersistence === 'not-configured';
+    checkbox.addEventListener('change', async () => {
+      const nextValues: Record<string, boolean> = { ...settings.values };
+      nextValues[key] = checkbox.checked;
+      try {
+        const res = await putUiOverrideSettings(nextValues);
+        settings.values = res.values;
+        statusToast(
+          `${key}: ${checkbox.checked ? 'image active' : 'Graphics fallback'}`,
+          'success',
+        );
+      } catch (err) {
+        checkbox.checked = !checkbox.checked;
+        statusToast(`Could not save: ${(err as Error).message}`, 'error');
+      }
+    });
+
+    const label = document.createElement('label');
+    label.htmlFor = checkbox.id;
+    label.textContent = key;
+
+    const status = document.createElement('span');
+    status.className = 'admin-animation-status';
+    const ready = hasImage(key);
+    status.textContent = ready ? 'image ready' : 'no image yet';
+    status.dataset.hasSheet = ready ? '1' : '0';
+
+    row.append(checkbox, label, status);
+    list.append(row);
+  }
+  card.append(list);
+  return card;
 }
 
 const GUIDE_OPEN_KEY = 'hivewars.admin.guide.open';
