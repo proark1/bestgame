@@ -366,6 +366,211 @@ export class HomeScene extends Phaser.Scene {
     // the codex is lookup / lore, not in-loop gameplay, and the
     // footer is already saturated at 7 buttons.
     this.drawCodexChip(x, cy, tier);
+
+    // Mobile burger. Replaces the full-width footer with a slide-in
+    // drawer so phone viewports hand back the ~140 px the 2-row
+    // footer was eating to the play field. Sits at the far right of
+    // the HUD on wide viewports too — on mobile it moves to the far
+    // left to avoid crowding the resource pills.
+    if (this.isMobileLayout()) {
+      this.drawBurgerButton();
+    }
+  }
+
+  // Any viewport narrower than this collapses the 8-button footer
+  // into a burger drawer and lets the board scroll in all directions
+  // (pan-the-map). Desktop / tablet keeps the full footer + scale-
+  // to-fit board so the whole base is visible at once.
+  private static readonly MOBILE_MAX_WIDTH = 700;
+
+  private isMobileLayout(): boolean {
+    return this.scale.width < HomeScene.MOBILE_MAX_WIDTH;
+  }
+
+  private burgerDrawer: Phaser.GameObjects.Container | null = null;
+  private burgerButton: Phaser.GameObjects.Container | null = null;
+
+  private drawBurgerButton(): void {
+    // Compact 44×44 disc at the top-left corner. 44 px is above the
+    // iOS HIG minimum tap target, comfortable for a thumb. Glyph is
+    // three stacked rounded rects built off Graphics so it scales with
+    // the canvas's physical resolution (no emoji rasterization issues
+    // on older Androids).
+    const size = 40;
+    const cx = size / 2 + SPACING.sm;
+    const cy = HUD_H / 2;
+    const c = this.add.container(cx, cy).setDepth(6);
+    const disc = this.add.graphics();
+    drawPill(disc, -size / 2, -size / 2, size, size, { brass: true });
+    const lines = this.add.graphics();
+    lines.fillStyle(0xffe7b0, 1);
+    const lineW = 18;
+    const lineH = 2.5;
+    const radius = 1.25;
+    for (let i = -1; i <= 1; i++) {
+      lines.fillRoundedRect(-lineW / 2, i * 6 - lineH / 2, lineW, lineH, radius);
+    }
+    c.add([disc, lines]);
+    c.setSize(size, size);
+    c.setInteractive({
+      hitArea: new Phaser.Geom.Rectangle(-size / 2, -size / 2, size, size),
+      hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+      useHandCursor: true,
+    });
+    c.on('pointerdown', (p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+      // Stop the scene-level pointerdown from also seeing this tap —
+      // otherwise the board-tap handler would treat it as the start
+      // of a pan gesture, and the burger-drawer backdrop would close
+      // on the same tap that opened it.
+      e?.stopPropagation?.();
+      this.openBurgerDrawer();
+    });
+    this.burgerButton = c;
+  }
+
+  private openBurgerDrawer(): void {
+    if (this.burgerDrawer) return;
+    const W = Math.min(320, Math.round(this.scale.width * 0.82));
+    const H = this.scale.height;
+    const container = this.add.container(0, 0).setDepth(220);
+
+    // Full-screen dim backdrop. Tapping outside the panel closes.
+    const backdrop = this.add
+      .zone(0, 0, this.scale.width, H)
+      .setOrigin(0, 0)
+      .setInteractive();
+    const dim = this.add.graphics();
+    dim.fillStyle(0x000000, 0.55);
+    dim.fillRect(0, 0, this.scale.width, H);
+    backdrop.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e?.stopPropagation?.();
+      this.closeBurgerDrawer();
+    });
+
+    // Slide-in panel on the left. Solid fill + brass accent on the
+    // right edge so it reads as a separate plane over the scene.
+    const panel = this.add.graphics();
+    panel.fillGradientStyle(
+      COLOR.bgPanelHi,
+      COLOR.bgPanelHi,
+      COLOR.bgPanelLo,
+      COLOR.bgPanelLo,
+      1,
+    );
+    panel.fillRect(0, 0, W, H);
+    panel.fillStyle(COLOR.brass, 0.9);
+    panel.fillRect(W - 2, 0, 2, H);
+    panel.fillStyle(0x000000, 0.35);
+    panel.fillRect(W, 0, 4, H);
+    const panelZone = this.add
+      .zone(0, 0, W, H)
+      .setOrigin(0, 0)
+      .setInteractive();
+    // Swallow taps on the panel so they don't bleed to the backdrop.
+    panelZone.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e?.stopPropagation?.();
+    });
+
+    const title = crispText(this, 16, 18, 'HIVE WARS', displayTextStyle(16, COLOR.textGold, 3));
+
+    // Close ×
+    const close = crispText(this, W - 20, 18, '×', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '24px',
+      color: '#c3e8b0',
+    }).setOrigin(1, 0);
+    close.setInteractive({ useHandCursor: true });
+    close.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
+      e?.stopPropagation?.();
+      this.closeBurgerDrawer();
+    });
+
+    container.add([dim, backdrop, panel, panelZone, title, close]);
+
+    // Action list. Same set as the desktop footer, plus a Fullscreen
+    // toggle and the Codex shortcut so the drawer is a complete nav
+    // menu. Each entry is a full-width secondary button — big tap
+    // target, one action per line, comfortable for thumb reach.
+    type Entry = { label: string; onPress: () => void };
+    const entries: Entry[] = [
+      {
+        label: this.layer === 0 ? '↓ Underground' : '↑ Surface',
+        onPress: () => {
+          this.closeBurgerDrawer();
+          this.layer = this.layer === 0 ? 1 : 0;
+          this.boardContainer.removeAll(true);
+          this.drawBoard();
+          this.drawBuildings();
+        },
+      },
+      { label: '⚔  Raid a base', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
+      { label: '🏆  Ranks', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
+      { label: '📜  Recent', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidHistoryScene'); } },
+      { label: '⚙  Upgrades', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'UpgradeScene'); } },
+      { label: '👥  Clan', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
+      { label: '🏟  Arena', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
+      { label: '📖  Codex', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
+      { label: '❓  Help', onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
+      {
+        label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
+        onPress: () => {
+          this.closeBurgerDrawer();
+          // iOS Safari refuses this — silent no-op there.
+          if (this.scale.isFullscreen) this.scale.stopFullscreen();
+          else this.scale.startFullscreen();
+        },
+      },
+    ];
+    const btnH = 48;
+    const btnW = W - 32;
+    const startY = 60;
+    const gap = 8;
+    entries.forEach((e, i) => {
+      const y = startY + i * (btnH + gap) + btnH / 2;
+      const btn = makeHiveButton(this, {
+        x: W / 2,
+        y,
+        width: btnW,
+        height: btnH,
+        label: e.label,
+        variant: 'secondary',
+        fontSize: 15,
+        onPress: e.onPress,
+      });
+      container.add(btn.container);
+    });
+
+    // Slide-in tween. Start off-screen to the left, ease in.
+    container.setPosition(-W, 0);
+    this.tweens.add({
+      targets: container,
+      x: 0,
+      duration: 200,
+      ease: 'Cubic.easeOut',
+    });
+    // Dim fades in with the slide so the two feel linked.
+    dim.alpha = 0;
+    this.tweens.add({ targets: dim, alpha: 1, duration: 180 });
+
+    this.burgerDrawer = container;
+  }
+
+  private closeBurgerDrawer(): void {
+    const c = this.burgerDrawer;
+    if (!c) return;
+    this.burgerDrawer = null;
+    this.tweens.add({
+      targets: c,
+      x: -Math.min(320, Math.round(this.scale.width * 0.82)),
+      alpha: 0,
+      duration: 160,
+      ease: 'Cubic.easeIn',
+      onComplete: () => c.destroy(true),
+    });
+    // Stamp the picker grace window too so a pointerup inside the
+    // burger's footprint doesn't immediately trigger a new board
+    // tap / picker open.
+    this.pickerClosedAtMs = Date.now();
   }
 
   private drawCodexChip(
@@ -413,10 +618,14 @@ export class HomeScene extends Phaser.Scene {
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.openAccountMenu());
     } else {
-      // Icon-only disc in the top-left (narrow) or top-right corner
-      // (phone, to avoid crowding the title which moves to left).
+      // Icon-only disc. On narrow, it slots in where the title sat;
+      // on phone it pins to the top-left, shifted right past the
+      // burger button (which owns the very first slot when the
+      // mobile layout is active).
       const size = 36;
-      const chipX = tier === 'narrow' ? 120 : size / 2 + SPACING.sm;
+      const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
+      const chipX =
+        tier === 'narrow' ? 120 : burgerSlot + size / 2 + SPACING.sm;
       const pill = this.add.graphics();
       drawPill(pill, chipX - size / 2, cy - size / 2, size, size, {
         brass: false,
@@ -675,6 +884,23 @@ export class HomeScene extends Phaser.Scene {
   private static readonly FOOTER_GAP = 10;
 
   private drawFooter(): void {
+    // Mobile: the burger drawer owns every nav action, so skip the
+    // desktop footer entirely. We still keep a single pinned CTA
+    // at bottom-right — the primary "Raid" action — so players don't
+    // have to open the drawer to start a raid.
+    if (this.isMobileLayout()) {
+      this.footerButtonDefs = [];
+      this.footerButtons = [];
+      if (!this.layerLabel) {
+        this.layerLabel = crispText(this, -9999, -9999, '', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '1px',
+        });
+      }
+      this.drawMobileRaidCta();
+      return;
+    }
+
     // Labels come in two flavors. `full` is the desktop reading;
     // `short` is a compact mobile variant that still fits in ~70 px
     // without truncating. layoutFooter picks between them based on
@@ -794,6 +1020,32 @@ export class HomeScene extends Phaser.Scene {
   // helper that updates the Text child of the container.
   private footerButtons: HiveButton[] = [];
 
+  private mobileRaidCta: HiveButton | null = null;
+
+  private drawMobileRaidCta(): void {
+    const btnW = 140;
+    const btnH = 52;
+    const margin = 16;
+    // Respect the iOS home-indicator / safe-area by stacking the CTA
+    // a little up from the very bottom. The #game div already insets
+    // by env(safe-area-inset-bottom) so `this.scale.height` IS the
+    // visible rect — plain margin is enough.
+    const y = this.scale.height - margin - btnH / 2;
+    const x = this.scale.width - margin - btnW / 2;
+    const btn = makeHiveButton(this, {
+      x,
+      y,
+      width: btnW,
+      height: btnH,
+      label: 'Raid →',
+      variant: 'primary',
+      fontSize: 16,
+      onPress: () => fadeToScene(this, 'RaidScene'),
+    });
+    btn.container.setDepth(8);
+    this.mobileRaidCta = btn;
+  }
+
   private layoutFooter(): void {
     const count = this.footerButtons.length;
     if (count === 0) return;
@@ -885,6 +1137,12 @@ export class HomeScene extends Phaser.Scene {
   // must match layoutFooter exactly or the board will either hug
   // the footer or leave a blank gap.
   private footerReservedHeight(): number {
+    // Mobile collapses the row into a burger drawer + a single
+    // floating Raid CTA. The CTA overlaps the bottom-right corner of
+    // the (pannable) board — it's drawn ABOVE the board so no vertical
+    // reservation is needed. 20 px keeps the pan clamp from gluing the
+    // board's bottom edge under the CTA on extreme viewports.
+    if (this.isMobileLayout()) return 20;
     const count = this.footerButtons.length || 8;
     const marginX = HomeScene.FOOTER_MARGIN_X;
     const gap = HomeScene.FOOTER_GAP;
@@ -900,22 +1158,79 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    // Board sizing for mobile. On a 375px phone the 768 px board is
-    // twice the viewport — we scale the whole container down so it
-    // fits, and leave TILE alone so the sim math is unchanged. Pointer
-    // handlers divide by container.scaleX when converting px → tile.
+    // Two sizing modes:
+    //
+    // * Desktop / tablet: shrink-to-fit so the whole base is visible
+    //   at once. This matches the Clash-of-Clans-style "see your
+    //   village at a glance" UX players expect on wide viewports.
+    //
+    // * Mobile: render at 1:1 (or larger than the viewport) so tiles,
+    //   buildings and HP bars are big enough to read and tap. The
+    //   user pans the map with a drag gesture (see wireBoardTap),
+    //   clamped to board edges via clampBoardPan(). Freed-up vertical
+    //   space from the burger footer is given back to the playfield.
     const availW = this.scale.width - 24;
     const availH = this.scale.height - HUD_H - this.footerReservedHeight() - 16;
-    const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+    const fit = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+    const mobile = this.isMobileLayout();
+    // On mobile, clamp scale up to 1.0 so tiles stay a comfortable
+    // 48 px on-screen; the board will exceed the viewport and be
+    // pannable. Desktop sticks with the fit scale.
+    const scale = mobile ? Math.max(fit, 1.0) : fit;
     this.boardContainer.setScale(scale);
-    const scaledW = BOARD_W * scale;
-    const xOffset = Math.max(8, (this.scale.width - scaledW) / 2);
-    const yOffset = HUD_H + Math.max(4, (availH - BOARD_H * scale) / 2);
-    this.boardContainer.setPosition(xOffset, yOffset);
     this.boardScale = scale;
+    // Start centered. clampBoardPan below will keep the edges
+    // in-bounds if the user has already dragged.
+    const scaledW = BOARD_W * scale;
+    const scaledH = BOARD_H * scale;
+    const centeredX = (this.scale.width - scaledW) / 2;
+    const topRegion = HUD_H;
+    const visibleAvailH = this.scale.height - topRegion - this.footerReservedHeight();
+    const centeredY = topRegion + (visibleAvailH - scaledH) / 2;
+    this.boardContainer.setPosition(centeredX, centeredY);
+    this.clampBoardPan();
+    // Keep the mobile Raid CTA anchored to the live viewport. Built
+    // in drawMobileRaidCta; only reposition if it exists.
+    if (this.mobileRaidCta) {
+      const bW = 140;
+      const bH = 52;
+      const m = 16;
+      this.mobileRaidCta.setPosition(
+        this.scale.width - m - bW / 2,
+        this.scale.height - m - bH / 2,
+      );
+    }
   }
 
   private boardScale = 1;
+
+  // Clamp boardContainer.(x, y) so the playable rectangle always
+  // covers (or is centered inside) the viewport minus HUD / footer
+  // reservations. Called after every pan delta + on layout so
+  // orientation changes / scene restarts can't strand the board off
+  // in an unreachable corner.
+  private clampBoardPan(): void {
+    const scale = this.boardScale;
+    const scaledW = BOARD_W * scale;
+    const scaledH = BOARD_H * scale;
+    const topRegion = HUD_H;
+    const bottomReserve = this.footerReservedHeight();
+    const availH = this.scale.height - topRegion - bottomReserve;
+    if (scaledW <= this.scale.width) {
+      this.boardContainer.x = (this.scale.width - scaledW) / 2;
+    } else {
+      const minX = this.scale.width - scaledW; // board's right edge meets viewport right edge
+      const maxX = 0;
+      this.boardContainer.x = Math.max(minX, Math.min(maxX, this.boardContainer.x));
+    }
+    if (scaledH <= availH) {
+      this.boardContainer.y = topRegion + (availH - scaledH) / 2;
+    } else {
+      const minY = topRegion + availH - scaledH;
+      const maxY = topRegion;
+      this.boardContainer.y = Math.max(minY, Math.min(maxY, this.boardContainer.y));
+    }
+  }
 
   // --- Build mode: tap empty tile → picker modal → place --------------------
 
@@ -944,8 +1259,42 @@ export class HomeScene extends Phaser.Scene {
   private pickerClosedAtMs = 0;
   private static readonly PICKER_REOPEN_GRACE_MS = 250;
 
+  private panAnchor: { px: number; py: number; cx: number; cy: number } | null = null;
+  private isPanningBoard = false;
+
+  private isWithinBoardRect(px: number, py: number): boolean {
+    // Board is inside boardContainer; getBounds() picks up whatever's
+    // been drawn into the container (background + frame fill the
+    // whole BOARD_W × BOARD_H rect, so those bounds ARE the board).
+    const scale = this.boardScale || 1;
+    const x0 = this.boardContainer.x;
+    const y0 = this.boardContainer.y;
+    const w = BOARD_W * scale;
+    const h = BOARD_H * scale;
+    return px >= x0 && px <= x0 + w && py >= y0 && py <= y0 + h;
+  }
+
   private wireBoardTap(): void {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (this.burgerDrawer) return;
+      // HUD chips (burger, account, codex, resource pills) call
+      // stopPropagation on their own handlers, but cross-device event
+      // ordering isn't uniform. Hard-gate here so a tap that started
+      // inside the HUD strip can never also kick off a board pan —
+      // especially important on iOS where two concurrent taps in
+      // quick succession can register as both a chip tap AND a
+      // scene-level pointerdown.
+      if (p.y < HUD_H) return;
+      // Reserve space for the mobile Raid CTA in the bottom-right.
+      if (this.mobileRaidCta) {
+        const b = this.mobileRaidCta.container;
+        if (
+          Math.abs(p.x - b.x) < 80 &&
+          Math.abs(p.y - b.y) < 32
+        ) {
+          return;
+        }
+      }
       if (this.pickerContainer) {
         this.tapStartedInsidePicker = true;
         this.tapDownPos = null;
@@ -953,7 +1302,43 @@ export class HomeScene extends Phaser.Scene {
       }
       this.tapStartedInsidePicker = false;
       this.tapDownPos = { x: p.x, y: p.y };
+      this.isPanningBoard = false;
+      // Capture the anchor BEFORE we know if this is a tap or a drag.
+      // If the gesture turns into a drag (see pointermove), pan math
+      // starts from the container's position at this moment.
+      this.panAnchor = {
+        px: p.x,
+        py: p.y,
+        cx: this.boardContainer.x,
+        cy: this.boardContainer.y,
+      };
     });
+
+    // Pan while dragging — mobile only, because on desktop the whole
+    // board fits the viewport and there's nothing to pan to. Drag is
+    // gated by the tap-vs-drag threshold so brief jitter never
+    // becomes a pan.
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!this.isMobileLayout()) return;
+      if (!p.isDown) return;
+      if (!this.panAnchor) return;
+      if (this.pickerContainer || this.burgerDrawer) return;
+      const dx = p.x - this.panAnchor.px;
+      const dy = p.y - this.panAnchor.py;
+      if (!this.isPanningBoard) {
+        if (
+          dx * dx + dy * dy <
+          HomeScene.TAP_THRESHOLD_PX * HomeScene.TAP_THRESHOLD_PX
+        ) {
+          return;
+        }
+        this.isPanningBoard = true;
+      }
+      this.boardContainer.x = this.panAnchor.cx + dx;
+      this.boardContainer.y = this.panAnchor.cy + dy;
+      this.clampBoardPan();
+    });
+
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       // Consume the latched flag exactly once per gesture.
       if (this.tapStartedInsidePicker) {
@@ -971,23 +1356,24 @@ export class HomeScene extends Phaser.Scene {
       }
       const down = this.tapDownPos;
       this.tapDownPos = null;
+      this.panAnchor = null;
       if (!down) return;
+      if (this.isPanningBoard) {
+        this.isPanningBoard = false;
+        return; // pan gesture, don't open picker
+      }
       const dx = p.x - down.x;
       const dy = p.y - down.y;
       if (dx * dx + dy * dy > HomeScene.TAP_THRESHOLD_PX * HomeScene.TAP_THRESHOLD_PX) {
-        // Drag, not a tap — e.g. user panning the camera in the future.
+        // Drag, not a tap — e.g. user tried to pan but didn't actually
+        // move the board (e.g. already at clamp boundary on a desktop
+        // viewport). Still treat as not-a-tap.
         return;
       }
-      // Use the container's world bounds + current scale to convert
-      // screen pixels to board-local tile coordinates. The board
-      // scales down on narrow viewports (see handleResize) so a naive
-      // `px / TILE` would land you on the wrong tile on mobile.
-      const bounds = this.boardContainer.getBounds();
-      if (p.x < bounds.x || p.x > bounds.x + bounds.width) return;
-      if (p.y < bounds.y || p.y > bounds.y + bounds.height) return;
+      if (!this.isWithinBoardRect(p.x, p.y)) return;
       const scale = this.boardScale || 1;
-      const localX = (p.x - bounds.x) / scale;
-      const localY = (p.y - bounds.y) / scale;
+      const localX = (p.x - this.boardContainer.x) / scale;
+      const localY = (p.y - this.boardContainer.y) / scale;
       if (localX < 0 || localX >= BOARD_W || localY < 0 || localY >= BOARD_H) return;
       const tx = Math.floor(localX / TILE);
       const ty = Math.floor(localY / TILE);
