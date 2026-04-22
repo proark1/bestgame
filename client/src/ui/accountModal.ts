@@ -32,18 +32,27 @@ const CSS = `
 }
 .hive-account-card {
   width: min(420px, 92vw);
-  background: #162317;
+  background: linear-gradient(180deg, #243824 0%, #1b2c1c 35%, #0f1b10 100%);
   color: #e6f5d2;
-  border: 1px solid #3d5e2a;
+  border: 3px solid #5c4020;
   border-radius: 14px;
   padding: 20px 24px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 217, 138, 0.45),
+    0 18px 48px rgba(0, 0, 0, 0.6);
 }
 .hive-account-card h2 {
   margin: 0 0 8px;
-  font-size: 18px;
-  color: #ffd98a;
+  font-size: 22px;
+  color: #ffe7b0;
   letter-spacing: 0.5px;
+  font-weight: 700;
+  text-shadow:
+    -1px -1px 0 #0a120c,
+    1px -1px 0 #0a120c,
+    -1px 1px 0 #0a120c,
+    1px 1px 0 #0a120c,
+    0 3px 5px rgba(0, 0, 0, 0.6);
 }
 .hive-account-card p.hint {
   margin: 0 0 14px;

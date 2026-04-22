@@ -3,6 +3,8 @@ import { Sim, Types } from '@hive/shared';
 import { bakeTrailDot } from '../assets/placeholders.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
+import { makeHiveButton } from '../ui/button.js';
+import { COLOR, displayTextStyle } from '../ui/theme.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
 
@@ -287,22 +289,33 @@ export class RaidScene extends Phaser.Scene {
 
   private drawHud(): void {
     const g = this.add.graphics();
-    g.fillStyle(0x0a120c, 1);
+    g.fillGradientStyle(
+      COLOR.bgPanelHi,
+      COLOR.bgPanelHi,
+      COLOR.bgPanelLo,
+      COLOR.bgPanelLo,
+      1,
+    );
     g.fillRect(0, 0, this.scale.width, HUD_H);
-    g.fillStyle(0x1a2b1a, 1);
-    g.fillRect(0, HUD_H - 2, this.scale.width, 2);
+    g.fillStyle(COLOR.brass, 0.35);
+    g.fillRect(0, 1, this.scale.width, 1);
+    g.fillStyle(COLOR.brassDeep, 1);
+    g.fillRect(0, HUD_H - 4, this.scale.width, 1);
+    g.fillStyle(COLOR.brass, 0.7);
+    g.fillRect(0, HUD_H - 3, this.scale.width, 2);
+    g.fillStyle(0x000000, 0.45);
+    g.fillRect(0, HUD_H, this.scale.width, 3);
 
-    this.add
-      .text(16, HUD_H / 2, '← Home', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-        backgroundColor: '#1a2b1a',
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => fadeToScene(this, 'HomeScene'));
+    makeHiveButton(this, {
+      x: 80,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: '← Home',
+      variant: 'ghost',
+      fontSize: 13,
+      onPress: () => fadeToScene(this, 'HomeScene'),
+    });
 
     this.timerText = this.add
       .text(this.scale.width / 2, HUD_H / 2, '1:30', {
@@ -757,83 +770,92 @@ export class RaidScene extends Phaser.Scene {
 
     // Card is a bit taller on wins to accommodate the Share button.
     const isWin = this.state.outcome === 'attackerWin' && stars > 0;
-    const cardW = 360;
-    const cardH = isWin ? 270 : 220;
+    const cardW = 400;
+    const cardH = isWin ? 290 : 240;
     const card = this.add.graphics().setDepth(101);
-    card.fillStyle(0x1a2b1a, 1);
-    card.lineStyle(4, 0xffd98a, 1);
     const cx = (this.scale.width - cardW) / 2;
     const cy = (this.scale.height - cardH) / 2;
-    card.fillRoundedRect(cx, cy, cardW, cardH, 16);
-    card.strokeRoundedRect(cx, cy, cardW, cardH, 16);
+    // Dim backdrop behind the card so the outcome commands the eye.
+    const backdrop = this.add.graphics().setDepth(100);
+    backdrop.fillStyle(0x000000, 0.55);
+    backdrop.fillRect(0, 0, this.scale.width, this.scale.height);
+    // CoC-style card: gradient fill, thick brass stroke, drop shadow.
+    card.fillStyle(0x000000, 0.5);
+    card.fillRoundedRect(cx + 3, cy + 6, cardW, cardH, 18);
+    card.fillGradientStyle(
+      COLOR.bgPanelHi,
+      COLOR.bgPanelHi,
+      COLOR.bgPanelLo,
+      COLOR.bgPanelLo,
+      1,
+    );
+    card.fillRoundedRect(cx, cy, cardW, cardH, 18);
+    card.lineStyle(5, COLOR.brassDeep, 1);
+    card.strokeRoundedRect(cx, cy, cardW, cardH, 18);
+    card.lineStyle(1.5, COLOR.brass, 0.85);
+    card.strokeRoundedRect(cx + 4, cy + 4, cardW - 8, cardH - 8, 14);
 
-    const heading =
-      this.state.outcome === 'attackerWin' ? 'Raid successful' : 'Raid failed';
+    const heading = isWin ? 'Raid Successful!' : 'Raid Failed';
     this.add
-      .text(this.scale.width / 2, cy + 30, heading, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '22px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0.5)
-      .setDepth(102);
-
-    this.add
-      .text(this.scale.width / 2, cy + 70, '★'.repeat(stars) + '☆'.repeat(3 - stars), {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '30px',
-        color: '#ffd98a',
-      })
+      .text(
+        this.scale.width / 2,
+        cy + 38,
+        heading,
+        displayTextStyle(24, isWin ? COLOR.textGold : '#ffb0a0', 4),
+      )
       .setOrigin(0.5)
       .setDepth(102);
 
     this.add
       .text(
         this.scale.width / 2,
-        cy + 110,
-        `loot: ${this.state.attackerSugarLooted} sugar · ${this.state.attackerLeafBitsLooted} leaf`,
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '14px',
-          color: '#c3e8b0',
-        },
+        cy + 84,
+        '★'.repeat(stars) + '☆'.repeat(3 - stars),
+        displayTextStyle(36, COLOR.textGold, 4),
       )
       .setOrigin(0.5)
       .setDepth(102);
 
-    const actionsY = isWin ? cy + 220 : cy + 170;
-
-    const backBtn = this.add
+    this.add
       .text(
-        isWin ? this.scale.width / 2 - 80 : this.scale.width / 2,
-        actionsY,
-        'Back to home',
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '16px',
-          color: '#ffffff',
-          backgroundColor: '#3a7f3a',
-          padding: { left: 18, right: 18, top: 10, bottom: 10 },
-        },
+        this.scale.width / 2,
+        cy + 130,
+        `${this.state.attackerSugarLooted} sugar · ${this.state.attackerLeafBitsLooted} leaf`,
+        displayTextStyle(15, COLOR.textDim, 3),
       )
       .setOrigin(0.5)
-      .setDepth(102)
-      .setInteractive({ useHandCursor: true });
-    backBtn.on('pointerdown', () => fadeToScene(this, 'HomeScene'));
+      .setDepth(102);
+
+    void backdrop;
+
+    const actionsY = isWin ? cy + 220 : cy + 170;
+
+    // Replace the old Text-backed buttons with our shared beveled
+    // buttons so the result modal matches the rest of the UI. On a
+    // win we render two side-by-side; on a loss the single "back"
+    // button centers.
+    makeHiveButton(this, {
+      x: isWin ? this.scale.width / 2 - 100 : this.scale.width / 2,
+      y: actionsY,
+      width: 180,
+      height: 46,
+      label: 'Back to home',
+      variant: 'secondary',
+      fontSize: 15,
+      onPress: () => fadeToScene(this, 'HomeScene'),
+    }).container.setDepth(102);
 
     if (isWin) {
-      const shareBtn = this.add
-        .text(this.scale.width / 2 + 80, actionsY, '📣 Share', {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '16px',
-          color: '#0f1b10',
-          backgroundColor: '#ffd98a',
-          padding: { left: 18, right: 18, top: 10, bottom: 10 },
-        })
-        .setOrigin(0.5)
-        .setDepth(102)
-        .setInteractive({ useHandCursor: true });
-      shareBtn.on('pointerdown', () => void this.shareOutcome(stars));
+      makeHiveButton(this, {
+        x: this.scale.width / 2 + 100,
+        y: actionsY,
+        width: 180,
+        height: 46,
+        label: '📣 Share',
+        variant: 'primary',
+        fontSize: 15,
+        onPress: () => void this.shareOutcome(stars),
+      }).container.setDepth(102);
     }
   }
 
