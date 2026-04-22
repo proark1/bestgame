@@ -5,7 +5,7 @@
 
 import { compressBase64Image, humanBytes, type CompressedImage } from './compress.js';
 import { deleteSprite, generateImages, saveSprite, type GeminiImage } from './api.js';
-import { removeBackground } from './removeBackground.js';
+import { removeBackground, removeNearWhite } from './removeBackground.js';
 
 export interface SpriteCardOptions {
   key: string;
@@ -35,6 +35,7 @@ export class SpriteCard {
   private promptEl!: HTMLTextAreaElement;
   private generateBtn!: HTMLButtonElement;
   private removeBgBtn!: HTMLButtonElement;
+  private removeGraysBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
   private downloadBtn!: HTMLButtonElement;
   private variantsSelect!: HTMLSelectElement;
@@ -210,15 +211,26 @@ export class SpriteCard {
     const actions = el('div', 'card-actions');
     this.generateBtn = button('Generate', 'btn accent', () => void this.generate());
     this.removeBgBtn = button('Remove BG', 'btn', () => void this.removeBackground());
+    // Second-stage cleanup. "Remove BG" clears the dominant backdrop
+    // colour; "Remove grays" clears any low-chroma / near-white haze
+    // that's connected (directly or via already-transparent pixels)
+    // to the outside. Interior whites (eye gems, metal highlights)
+    // are preserved because the flood never enters an isolated
+    // subject-interior region.
+    this.removeGraysBtn = button('Remove grays', 'btn', () =>
+      void this.removeNearWhite(),
+    );
     this.saveBtn = button('Save', 'btn primary', () => void this.save());
     this.downloadBtn = button('Download', 'btn', () => void this.download());
     const delBtn = button('Delete', 'btn ghost danger', () => void this.delete());
     this.removeBgBtn.disabled = true;
+    this.removeGraysBtn.disabled = true;
     this.saveBtn.disabled = true;
     this.downloadBtn.disabled = true;
     actions.append(
       this.generateBtn,
       this.removeBgBtn,
+      this.removeGraysBtn,
       this.saveBtn,
       this.downloadBtn,
       delBtn,
@@ -255,6 +267,7 @@ export class SpriteCard {
     this.saveBtn.disabled = this.selectedIdx < 0;
     this.downloadBtn.disabled = this.selectedIdx < 0;
     this.removeBgBtn.disabled = this.selectedIdx < 0;
+    this.removeGraysBtn.disabled = this.selectedIdx < 0;
   }
 
   async removeBackground(): Promise<void> {
@@ -272,6 +285,35 @@ export class SpriteCard {
     } catch (err) {
       this.opts.showStatus(
         `remove BG failed: ${(err as Error).message}`,
+        'error',
+      );
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  // Second-pass cleanup for pale gray / near-white filler that the
+  // main remove-BG step couldn't match (e.g. a grayish haze in the
+  // crevices between legs). Border-flooded + low-chroma-gated, so
+  // interior whites like eye gems or metallic highlights survive.
+  async removeNearWhite(): Promise<void> {
+    if (this.busy || this.selectedIdx < 0) return;
+    const src = this.candidates[this.selectedIdx];
+    if (!src) return;
+    this.setBusy(true);
+    this.opts.showStatus(`Removing gray filler for ${this.key}…`);
+    try {
+      const cut = await removeNearWhite(src.data, src.mimeType);
+      this.candidates[this.selectedIdx] = {
+        data: cut.base64,
+        mimeType: cut.mimeType,
+      };
+      this.renderCandidates();
+      await this.prepareCompressed();
+      this.opts.showStatus(`Gray filler removed for ${this.key}`, 'success');
+    } catch (err) {
+      this.opts.showStatus(
+        `remove grays failed: ${(err as Error).message}`,
         'error',
       );
     } finally {
