@@ -160,7 +160,18 @@ interface GenerateBody {
   variants?: number;
   model?: string;
   temperature?: number;
+  // Optional multimodal reference images. The walk-cycle generator
+  // uses this to pin pose B's character/colors/framing to pose A.
+  // Validated here (count + size) before we pay Gemini for it.
+  referenceImages?: Array<{ mimeType: string; data: string }>;
 }
+
+// Caps on the multimodal body — defence against a slow / malicious
+// admin client dumping megabytes of base64 at us. Each walk-cycle
+// strip only needs one reference image, ~100 KB at Gemini's output
+// resolution, so these are generous.
+const MAX_REFERENCE_IMAGES = 4;
+const MAX_REFERENCE_BASE64_BYTES = 2 * 1024 * 1024;
 
 interface SaveBody {
   key: string;
@@ -304,12 +315,32 @@ export function registerAdmin(app: FastifyInstance): void {
       reply.code(400);
       return { error: 'prompt required' };
     }
+    let referenceImages: GenerateBody['referenceImages'] | undefined;
+    if (Array.isArray(body.referenceImages) && body.referenceImages.length > 0) {
+      if (body.referenceImages.length > MAX_REFERENCE_IMAGES) {
+        reply.code(400);
+        return { error: `at most ${MAX_REFERENCE_IMAGES} reference images` };
+      }
+      for (const img of body.referenceImages) {
+        if (
+          !img ||
+          typeof img.mimeType !== 'string' ||
+          typeof img.data !== 'string' ||
+          img.data.length > MAX_REFERENCE_BASE64_BYTES
+        ) {
+          reply.code(400);
+          return { error: 'invalid reference image' };
+        }
+      }
+      referenceImages = body.referenceImages;
+    }
     try {
       const images = await geminiGenerateImages({
         prompt: body.prompt,
         variants: body.variants ?? 1,
         ...(body.model !== undefined && { model: body.model }),
         ...(body.temperature !== undefined && { temperature: body.temperature }),
+        ...(referenceImages !== undefined && { referenceImages }),
       });
       return { images };
     } catch (err) {

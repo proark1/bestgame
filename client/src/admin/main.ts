@@ -516,8 +516,9 @@ const WALK_FRAME_COUNT = 2;
 const WALK_STRIP_WIDTH = WALK_FRAME_W * WALK_FRAME_COUNT;
 
 // Per-frame prompt composer. The description is the pose-specific
-// text from prompts.json (`walkCycles.${kind}_poseA` or `_poseB`).
-// Everything else below is deterministic scaffolding.
+// text from prompts.json (`walkCycles.${kind}_poseA`). Used for the
+// FIRST pose, which has no reference image yet — the style lock does
+// all the framing work.
 function composeWalkPosePrompt(description: string): string {
   const style = state.prompts?.styleLock ?? '';
   return [
@@ -525,6 +526,21 @@ function composeWalkPosePrompt(description: string): string {
     `Style: ${style}`,
     `Canvas: exactly ${WALK_FRAME_W}x${WALK_FRAME_H} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
     `Composition: single subject, centered, facing viewer, small soft oval shadow directly below feet. Identical camera, identical scale, identical palette to the single-frame sibling sprite so the two poses share a cohesive walk cycle.`,
+  ].join(' ');
+}
+
+// Variation-prompt composer. Used for pose B, which is fired with
+// pose A attached as a reference image. The text leans heavily on
+// "treat the reference as ground truth" language — Gemini keeps
+// character/colors/outline/camera identical and only modifies the
+// legs (or wings) per the pose-specific description. Much more
+// consistent frame-to-frame than two parallel text-only calls.
+function composeWalkPoseVariationPrompt(description: string): string {
+  return [
+    `Use the attached image as the DEFINITIVE visual reference for the subject. Keep the character, face, body proportions, colors/palette, outline thickness, outfit, accessories (leaf, crown, backpack, stinger, etc.), camera angle, scale, vertical position, drop shadow, and canvas size ALL IDENTICAL to the reference.`,
+    `The ONLY thing that should change: ${description}`,
+    `Canvas: same as the reference — exactly ${WALK_FRAME_W}x${WALK_FRAME_H} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
+    `If the subject has no legs (e.g. a flying unit), change only the wing position / beat per the description. Do not add, remove, or redraw anything else.`,
   ].join(' ');
 }
 
@@ -560,11 +576,17 @@ async function compositeWalkStrip(
   return blobToBase64(blob);
 }
 
-// End-to-end: two Gemini calls in parallel (one per pose) → composite
-// side-by-side into a 256×128 strip → compress to webp → save with
-// frames=2. Caller is responsible for feedback/refresh; returns the
-// saved path on success so bulk runners can tell completed kinds from
-// skipped ones.
+// End-to-end: generate pose A first, then pose B with pose A attached
+// as a reference image so Gemini sees the exact character/palette/
+// camera and can change ONLY the legs (or wings) → composite side-by-
+// side into a 256×128 strip → compress to webp → save with frames=2.
+//
+// Earlier revisions fired both poses in parallel with text-only
+// prompts, but the two images came back with slightly different body
+// proportions, face details, and even palette — visible jitter
+// between frames that ruined the walk illusion. Sequential with a
+// reference image costs one extra round-trip but produces
+// dramatically more consistent output.
 async function generateWalkCycle(
   kind: string,
   onProgress?: (note: string) => void,
@@ -578,17 +600,22 @@ async function generateWalkCycle(
     );
   }
 
-  onProgress?.(`${kind}: generating pose A + B…`);
-  // Parallel requests — the Gemini client is fine with two concurrent
-  // calls per kind; the "one sequential kind at a time" constraint is
-  // enforced at the higher level (Automate all missing).
-  const [imgsA, imgsB] = await Promise.all([
-    generateImages({ prompt: composeWalkPosePrompt(poseA), variants: 1 }),
-    generateImages({ prompt: composeWalkPosePrompt(poseB), variants: 1 }),
-  ]);
+  onProgress?.(`${kind}: generating pose A…`);
+  const imgsA = await generateImages({
+    prompt: composeWalkPosePrompt(poseA),
+    variants: 1,
+  });
   const a = imgsA[0];
+  if (!a) throw new Error('Gemini returned no image for pose A');
+
+  onProgress?.(`${kind}: generating pose B (with pose A as reference)…`);
+  const imgsB = await generateImages({
+    prompt: composeWalkPoseVariationPrompt(poseB),
+    variants: 1,
+    referenceImages: [a],
+  });
   const b = imgsB[0];
-  if (!a || !b) throw new Error('Gemini returned no image');
+  if (!b) throw new Error('Gemini returned no image for pose B');
 
   onProgress?.(`${kind}: compositing strip…`);
   const stripPng = await compositeWalkStrip([a, b]);

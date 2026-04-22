@@ -26,6 +26,12 @@ export interface GeminiGenerateRequest {
   variants: number;
   model?: string;
   temperature?: number;
+  // Optional reference images attached to the prompt as
+  // multimodal context. The Gemini 2.5 flash-image model treats
+  // these as visual references — "produce a new image like
+  // THIS but different in X way". Used by the walk-cycle
+  // generator to keep pose B consistent with pose A.
+  referenceImages?: readonly GeminiImage[];
 }
 
 export async function geminiGenerateImages(
@@ -50,11 +56,26 @@ export async function geminiGenerateImages(
   )}`;
   const variants = Math.max(1, Math.min(4, Math.floor(req.variants || 1)));
 
+  // Build the multimodal parts array once (cheap; we reuse across
+  // variant fan-out). Reference images come first so the model sees
+  // them before the instruction text — matches Google's
+  // recommendation for "image + text" prompts.
+  type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
+  const promptParts: Part[] = [];
+  if (req.referenceImages) {
+    for (const img of req.referenceImages) {
+      promptParts.push({
+        inlineData: { mimeType: img.mimeType, data: img.data },
+      });
+    }
+  }
+  promptParts.push({ text: req.prompt });
+
   // Gemini returns one image per call, so fan out `variants` times.
   // Small N (≤ 4), parallel is fine.
   const jobs = Array.from({ length: variants }, async () => {
     const body = {
-      contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+      contents: [{ role: 'user', parts: promptParts }],
       generationConfig: {
         responseModalities: ['IMAGE'],
         temperature: req.temperature ?? 0.7,
