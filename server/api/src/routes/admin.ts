@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import archiver from 'archiver';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, writeFile, unlink } from 'node:fs/promises';
@@ -218,6 +218,55 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 function sanitizeKey(key: string): string | null {
   if (DANGEROUS_KEYS.has(key)) return null;
   return ALLOWED_KEY_RE.test(key) ? key : null;
+}
+
+// Shared disk-mirror for sprite bytes. Used by both the save handler
+// (new bytes) and the history-restore handler (old bytes being
+// promoted back to live). Two jobs:
+//   1. Write the authoritative file under DIST_SPRITES_DIR — what
+//      fastify-static actually serves to the running game. This must
+//      succeed; a throw propagates up to the route handler.
+//   2. Best-effort mirror to PUBLIC_SPRITES_DIR (committable checkout
+//      for local dev) if the directory exists. Any failure is
+//      logged + swallowed so a prod bundle without client/public/
+//      isn't polluted with a surprise directory.
+//
+// Either way, a sibling-extension copy (e.g. the old .webp when the
+// new bytes are .png) is unlinked so a format swap doesn't leave a
+// stale twin on disk.
+async function mirrorSpriteToDisk(
+  key: string,
+  format: 'png' | 'webp',
+  bytes: Buffer,
+  log: FastifyBaseLogger,
+): Promise<{ mirroredToPublic: boolean }> {
+  const siblingExt = format === 'webp' ? 'png' : 'webp';
+
+  await mkdir(DIST_SPRITES_DIR, { recursive: true });
+  await writeFile(join(DIST_SPRITES_DIR, `${key}.${format}`), bytes);
+  try {
+    await unlink(join(DIST_SPRITES_DIR, `${key}.${siblingExt}`));
+  } catch {
+    // not there — fine
+  }
+
+  let mirroredToPublic = false;
+  if (publicDirExists()) {
+    try {
+      await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
+      await writeFile(join(PUBLIC_SPRITES_DIR, `${key}.${format}`), bytes);
+      try {
+        await unlink(join(PUBLIC_SPRITES_DIR, `${key}.${siblingExt}`));
+      } catch {
+        // not there
+      }
+      mirroredToPublic = true;
+    } catch (err) {
+      // public mirror is best-effort — the game still works from dist
+      log.warn({ err, key }, 'public mirror write failed');
+    }
+  }
+  return { mirroredToPublic };
 }
 
 export function registerAdmin(app: FastifyInstance): void {
@@ -442,41 +491,19 @@ export function registerAdmin(app: FastifyInstance): void {
       }
     }
 
-    const siblingExt = body.format === 'webp' ? 'png' : 'webp';
-    await mkdir(DIST_SPRITES_DIR, { recursive: true });
-    await writeFile(join(DIST_SPRITES_DIR, `${safeKey}.${body.format}`), buf);
-    try {
-      await unlink(join(DIST_SPRITES_DIR, `${safeKey}.${siblingExt}`));
-    } catch {
-      // not there — fine
-    }
-
-    let mirrored = false;
-    if (publicDirExists()) {
-      try {
-        await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
-        await writeFile(
-          join(PUBLIC_SPRITES_DIR, `${safeKey}.${body.format}`),
-          buf,
-        );
-        try {
-          await unlink(join(PUBLIC_SPRITES_DIR, `${safeKey}.${siblingExt}`));
-        } catch {
-          // not there
-        }
-        mirrored = true;
-      } catch (err) {
-        // public mirror is best-effort — the game still works from dist
-        app.log.warn({ err }, 'public mirror write failed');
-      }
-    }
+    const { mirroredToPublic } = await mirrorSpriteToDisk(
+      safeKey,
+      body.format,
+      buf,
+      app.log,
+    );
 
     return {
       ok: true,
       path: `/assets/sprites/${safeKey}.${body.format}`,
       size: buf.length,
       persistedToDb,
-      mirroredToPublic: mirrored,
+      mirroredToPublic,
     };
   });
 
@@ -676,39 +703,11 @@ export function registerAdmin(app: FastifyInstance): void {
         );
       }
 
-      // Mirror to disk — same flow as the save handler. Skip the
-      // sibling-extension unlink only when the restored format matches
-      // what's currently on disk; the unlink here also covers the
-      // case where the prior live row was the other format.
-      const siblingExt = row.format === 'webp' ? 'png' : 'webp';
-      await mkdir(DIST_SPRITES_DIR, { recursive: true });
-      await writeFile(
-        join(DIST_SPRITES_DIR, `${safeKey}.${row.format}`),
-        row.data,
-      );
-      try {
-        await unlink(join(DIST_SPRITES_DIR, `${safeKey}.${siblingExt}`));
-      } catch {
-        // not there
-      }
-      if (publicDirExists()) {
-        try {
-          await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
-          await writeFile(
-            join(PUBLIC_SPRITES_DIR, `${safeKey}.${row.format}`),
-            row.data,
-          );
-          try {
-            await unlink(
-              join(PUBLIC_SPRITES_DIR, `${safeKey}.${siblingExt}`),
-            );
-          } catch {
-            // not there
-          }
-        } catch (err) {
-          app.log.warn({ err }, 'public mirror write (restore) failed');
-        }
-      }
+      // Mirror to disk via the same helper the save handler uses.
+      // Also covers the sibling-extension unlink so a restore that
+      // flips format (e.g. old webp over a current png) doesn't
+      // leave a stale twin behind.
+      await mirrorSpriteToDisk(safeKey, row.format, row.data, app.log);
 
       return {
         ok: true,
