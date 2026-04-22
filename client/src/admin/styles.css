@@ -607,24 +607,24 @@ button {
   );
   border-radius: 4px;
 }
-/* Looping preview: a 96x96 window onto the 512x128 strip, stepping
- * through the four 128x128 frames at 8 fps. steps(4) makes it tick
- * discretely instead of smoothly scrolling across the sheet. */
+/* Looping preview: a 96x96 window onto the 256x128 strip, stepping
+ * through the two 128x128 frames at 6 fps (matches in-game). steps(2)
+ * makes it tick discretely instead of smoothly scrolling. */
 .admin-animation-preview-loop {
   width: 96px;
   height: 96px;
   flex-shrink: 0;
   background-repeat: no-repeat;
-  background-size: 384px 96px; /* scale 512x128 → 384x96 so it fits */
+  background-size: 192px 96px; /* scale 256x128 → 192x96 so it fits */
   background-position: 0 0;
   image-rendering: pixelated;
-  animation: admin-walk-loop 0.5s steps(4) infinite;
+  animation: admin-walk-loop 0.333s steps(2) infinite;
   border-radius: 6px;
   border: 1px solid var(--border);
 }
 @keyframes admin-walk-loop {
   from { background-position-x: 0px; }
-  to { background-position-x: -384px; }
+  to { background-position-x: -192px; }
 }
 .admin-animation-preview-empty {
   font-family: var(--font);

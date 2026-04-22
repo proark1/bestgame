@@ -21,7 +21,14 @@ import {
   type SpriteFile,
 } from './api.js';
 import { SpriteCard } from './SpriteCard.js';
-import { compressBase64Image, humanBytes } from './compress.js';
+import {
+  blobToBase64,
+  canvasToBlob,
+  compressBase64Image,
+  decodeImage,
+  humanBytes,
+  makeCanvas,
+} from './compress.js';
 
 // Keep in sync with client/src/assets/atlas.ts UNIT_SPRITE_KEYS / BUILDING_SPRITE_KEYS.
 const UNIT_KEYS = [
@@ -444,6 +451,21 @@ const MENU_UI_KEYS = [
   'ui-hud-bg',
   'ui-title-banner',
   'ui-board-tile-surface',
+  // Phase-1 additions: admin gen + override toggle are wired; the
+  // in-game consumers (HUD pills, portrait frames, victory/defeat
+  // overlays, tooltip bg, close button, progress-bar frame) land
+  // in a follow-up. Until then the Graphics/CSS fallback still
+  // renders, so nothing regresses by default.
+  'ui-resource-pill-honey',
+  'ui-resource-pill-sugar',
+  'ui-resource-pill-grubs',
+  'ui-icon-unit-frame',
+  'ui-icon-building-frame',
+  'ui-badge-victory',
+  'ui-badge-defeat',
+  'ui-progress-bar-frame',
+  'ui-tooltip-bg',
+  'ui-close-button',
 ];
 
 function composePrompt(
@@ -481,56 +503,101 @@ function composePrompt(
 // code paths. Keep this block in sync if the strip layout ever
 // changes — the server-side migration (frames CHECK 1..16) and the
 // client loader both enforce the same shape.
-const WALK_STRIP_WIDTH = 512;
-const WALK_STRIP_HEIGHT = 128;
-const WALK_STRIP_FRAME_COUNT = 4;
+//
+// We generate each pose as its own full-canvas Gemini request and
+// composite them into a 2-frame strip on the client. A single "4
+// frames in one image" prompt consistently produced four nearly-
+// identical frames because the model spread attention across the
+// strip; two independent single-subject calls give dramatically
+// larger pose differences and read as an actual walk.
+const WALK_FRAME_W = 128;
+const WALK_FRAME_H = 128;
+const WALK_FRAME_COUNT = 2;
+const WALK_STRIP_WIDTH = WALK_FRAME_W * WALK_FRAME_COUNT;
 
-// Builds the Gemini prompt for a walk-cycle strip. The first line is
-// the per-kind description from prompts.json `walkCycles`; the rest
-// are deterministic constraints lifted out into one place so all
-// three kinds share identical framing rules. Gemini performs much
-// better when we restate "four equal-width frames, identical camera"
-// three different ways — the model occasionally loses track of the
-// frame-count constraint on long prompts, so the redundancy matters.
-function composeWalkCyclePrompt(description: string): string {
+// Per-frame prompt composer. The description is the pose-specific
+// text from prompts.json (`walkCycles.${kind}_poseA` or `_poseB`).
+// Everything else below is deterministic scaffolding.
+function composeWalkPosePrompt(description: string): string {
   const style = state.prompts?.styleLock ?? '';
   return [
     `Subject: ${description}`,
     `Style: ${style}`,
-    `Canvas: exactly ${WALK_STRIP_WIDTH}x${WALK_STRIP_HEIGHT} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
-    `Composition: one single horizontal spritesheet strip containing exactly ${WALK_STRIP_FRAME_COUNT} frames arranged left-to-right with no gutters between frames. Each frame is ${WALK_STRIP_HEIGHT}x${WALK_STRIP_HEIGHT} pixels and contains the same character at identical scale, identical camera angle, identical vertical position. Frames differ only in leg/wing pose through one looping cycle.`,
-    `Consistency: matches a shared cohesive game atlas — same outline thickness, same palette, same perspective as the single-frame sibling sprite.`,
+    `Canvas: exactly ${WALK_FRAME_W}x${WALK_FRAME_H} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
+    `Composition: single subject, centered, facing viewer, small soft oval shadow directly below feet. Identical camera, identical scale, identical palette to the single-frame sibling sprite so the two poses share a cohesive walk cycle.`,
   ].join(' ');
 }
 
-// End-to-end: prompt → Gemini → compress to webp preserving 512×128
-// → save with frames=${WALK_STRIP_FRAME_COUNT}. Caller is responsible
-// for feedback/refresh; returns the saved path on success so bulk
-// runners can tell completed kinds from skipped ones.
+// Draw each pose onto a WALK_FRAME_W-wide slot of a horizontal strip,
+// returning the composed strip as a base64 PNG. Input frames come
+// from Gemini at various native sizes; drawImage fits each into its
+// WALK_FRAME_W × WALK_FRAME_H slot so the final spritesheet geometry
+// is exact.
+async function compositeWalkStrip(
+  frames: readonly { data: string; mimeType: string }[],
+): Promise<string> {
+  const totalW = WALK_FRAME_W * frames.length;
+  const canvas = makeCanvas(totalW, WALK_FRAME_H);
+  const ctx = canvas.getContext('2d', { alpha: true }) as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null;
+  if (!ctx) throw new Error('2D canvas unavailable');
+  ctx.clearRect(0, 0, totalW, WALK_FRAME_H);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  for (let i = 0; i < frames.length; i++) {
+    const img = await decodeImage(frames[i]!.data, frames[i]!.mimeType);
+    ctx.drawImage(
+      img as CanvasImageSource,
+      i * WALK_FRAME_W,
+      0,
+      WALK_FRAME_W,
+      WALK_FRAME_H,
+    );
+  }
+  const blob = await canvasToBlob(canvas, 'image/png', 1);
+  return blobToBase64(blob);
+}
+
+// End-to-end: two Gemini calls in parallel (one per pose) → composite
+// side-by-side into a 256×128 strip → compress to webp → save with
+// frames=2. Caller is responsible for feedback/refresh; returns the
+// saved path on success so bulk runners can tell completed kinds from
+// skipped ones.
 async function generateWalkCycle(
   kind: string,
   onProgress?: (note: string) => void,
 ): Promise<{ path: string; size: number }> {
   const bucket = state.prompts?.walkCycles;
-  const description = bucket?.[kind];
-  if (!description || description.trim() === '') {
+  const poseA = bucket?.[`${kind}_poseA`];
+  const poseB = bucket?.[`${kind}_poseB`];
+  if (!poseA || poseA.trim() === '' || !poseB || poseB.trim() === '') {
     throw new Error(
-      `no walkCycles prompt for ${kind} — add one to tools/gemini-art/prompts.json`,
+      `no walkCycles prompts for ${kind} — add ${kind}_poseA and ${kind}_poseB to tools/gemini-art/prompts.json`,
     );
   }
-  const fullPrompt = composeWalkCyclePrompt(description);
 
-  onProgress?.(`${kind}: generating…`);
-  const imgs = await generateImages({ prompt: fullPrompt, variants: 1 });
-  const first = imgs[0];
-  if (!first) throw new Error('Gemini returned no image');
+  onProgress?.(`${kind}: generating pose A + B…`);
+  // Parallel requests — the Gemini client is fine with two concurrent
+  // calls per kind; the "one sequential kind at a time" constraint is
+  // enforced at the higher level (Automate all missing).
+  const [imgsA, imgsB] = await Promise.all([
+    generateImages({ prompt: composeWalkPosePrompt(poseA), variants: 1 }),
+    generateImages({ prompt: composeWalkPosePrompt(poseB), variants: 1 }),
+  ]);
+  const a = imgsA[0];
+  const b = imgsB[0];
+  if (!a || !b) throw new Error('Gemini returned no image');
+
+  onProgress?.(`${kind}: compositing strip…`);
+  const stripPng = await compositeWalkStrip([a, b]);
 
   onProgress?.(`${kind}: compressing…`);
-  // maxDimension = WALK_STRIP_WIDTH keeps the strip at 512×128 (or
-  // shrinks proportionally if Gemini over-delivered). Quality a touch
-  // higher than the 0.85 used for singleton sprites because frame
-  // detail is divided by four — worth the extra bytes.
-  const compressed = await compressBase64Image(first.data, first.mimeType, {
+  // maxDimension = WALK_STRIP_WIDTH keeps the strip at 256×128. A
+  // touch higher quality than singleton sprites (0.85) because any
+  // leg-pose detail lost to compression spoils the illusion.
+  const compressed = await compressBase64Image(stripPng, 'image/png', {
     format: 'webp',
     quality: 0.9,
     maxDimension: WALK_STRIP_WIDTH,
@@ -541,7 +608,7 @@ async function generateWalkCycle(
     key: `unit-${kind}-walk`,
     data: compressed.base64,
     format: 'webp',
-    frames: WALK_STRIP_FRAME_COUNT,
+    frames: WALK_FRAME_COUNT,
   });
   return res;
 }
@@ -719,13 +786,13 @@ function renderAnimationPanel(): HTMLElement {
 }
 
 // Static + animated preview of a walk strip. Two side-by-side views:
-//  - The full 512x128 strip scaled to fit the panel, so the admin can
-//    see each frame and catch geometry issues (e.g. Gemini shipped a
-//    3-frame strip or stretched the character off-center).
-//  - A 128x128 div with background-image = strip + a steps(4) CSS
+//  - The full 256x128 strip scaled to fit the panel, so the admin can
+//    see each pose and catch geometry issues (e.g. one half is empty,
+//    or the character shifted between poses).
+//  - A 96x96 div with background-image = strip + a steps(2) CSS
 //    animation on background-position-x. Shows the walk in motion
-//    without needing Phaser to be running — exactly what the game will
-//    render at 8 fps.
+//    without needing Phaser to be running — exactly what the game
+//    renders at WALK_CYCLE_FPS = 6.
 //
 // URLs get a ?v=<mtime> cache-buster so immediately after a regenerate
 // the browser fetches the new bytes instead of re-displaying the
@@ -752,39 +819,65 @@ function renderStripPreview(kind: string, files: SpriteFile[]): HTMLElement {
   const loop = document.createElement('div');
   loop.className = 'admin-animation-preview-loop';
   loop.style.backgroundImage = `url('${url}')`;
-  loop.title = `${kind} — looping at 8 fps (matches in-game)`;
+  loop.title = `${kind} — looping at 6 fps (matches in-game)`;
   wrap.append(loop);
 
   return wrap;
 }
 
 // Expandable prompt editor. Starts collapsed so the panel stays
-// compact; the <summary> toggles an unobtrusive "Edit prompt" link.
-// "Save prompt" persists to prompts.json; "Save & regenerate" does
-// both in one click — the common workflow when iterating on a kind.
+// compact; the <summary> toggles an unobtrusive "Edit prompts" link.
+// One textarea per pose (A + B) because the cycle is built from
+// two independent Gemini calls — see generateWalkCycle(). "Save
+// prompts" persists both to prompts.json; "Save & regenerate"
+// does both in one click — the common workflow when iterating.
 function renderPromptEditor(kind: string): HTMLElement {
   const details = document.createElement('details');
   details.className = 'admin-animation-editor';
 
   const summary = document.createElement('summary');
-  summary.textContent = 'Tweak prompt';
+  summary.textContent = 'Tweak prompts';
   details.append(summary);
 
-  const textarea = document.createElement('textarea');
-  textarea.value = state.prompts?.walkCycles?.[kind] ?? '';
-  textarea.placeholder =
-    'Describe the walk cycle: character, perspective, frame-by-frame leg poses…';
-  textarea.rows = 4;
-  details.append(textarea);
+  const mkPoseField = (poseLabel: 'A' | 'B'): {
+    wrap: HTMLDivElement;
+    textarea: HTMLTextAreaElement;
+    promptKey: string;
+  } => {
+    const wrap = document.createElement('div');
+    wrap.className = 'admin-animation-editor-pose';
+    const heading = document.createElement('strong');
+    heading.textContent = `Pose ${poseLabel}`;
+    wrap.append(heading);
+    const promptKey = `${kind}_pose${poseLabel}`;
+    const ta = document.createElement('textarea');
+    ta.value = state.prompts?.walkCycles?.[promptKey] ?? '';
+    ta.placeholder = `Describe pose ${poseLabel}: character + leg/wing position…`;
+    ta.rows = 3;
+    wrap.append(ta);
+    return { wrap, textarea: ta, promptKey };
+  };
+
+  const fieldA = mkPoseField('A');
+  const fieldB = mkPoseField('B');
+  details.append(fieldA.wrap, fieldB.wrap);
 
   const actions = document.createElement('div');
   actions.className = 'admin-animation-editor-actions';
 
+  const saveBoth = async (feedbackBtn: HTMLButtonElement): Promise<void> => {
+    // Serial on purpose: the server rewrites prompts.json on every
+    // call, so two concurrent PUTs would last-writer-wins one of
+    // them. Two quick calls in sequence are fine.
+    await savePromptValue(fieldA.promptKey, fieldA.textarea.value, feedbackBtn);
+    await savePromptValue(fieldB.promptKey, fieldB.textarea.value, feedbackBtn);
+  };
+
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn';
-  saveBtn.textContent = 'Save prompt';
+  saveBtn.textContent = 'Save prompts';
   saveBtn.addEventListener('click', async () => {
-    await savePromptValue(kind, textarea.value, saveBtn);
+    await saveBoth(saveBtn);
   });
 
   const saveAndRegenBtn = document.createElement('button');
@@ -795,7 +888,7 @@ function renderPromptEditor(kind: string): HTMLElement {
     saveAndRegenBtn.disabled = true;
     const original = saveAndRegenBtn.textContent;
     try {
-      await savePromptValue(kind, textarea.value, saveBtn);
+      await saveBoth(saveBtn);
       saveAndRegenBtn.textContent = 'Regenerating…';
       const res = await generateWalkCycle(kind);
       statusToast(`Saved ${kind} walk strip (${humanBytes(res.size)})`, 'success');
@@ -821,11 +914,12 @@ function renderPromptEditor(kind: string): HTMLElement {
   return details;
 }
 
-// Persist a walkCycles[kind] prompt edit + mirror it into local state
-// so a subsequent generate uses the new value. Caller passes the save
-// button to give inline "Saved" feedback without another toast.
+// Persist a walkCycles prompt edit + mirror it into local state so
+// a subsequent generate uses the new value. `promptKey` is the flat
+// JSON key (e.g. "WorkerAnt_poseA"); caller passes the save button
+// to give inline "Saved" feedback without another toast.
 async function savePromptValue(
-  kind: string,
+  promptKey: string,
   value: string,
   feedbackBtn: HTMLButtonElement,
 ): Promise<void> {
@@ -833,10 +927,10 @@ async function savePromptValue(
   feedbackBtn.disabled = true;
   feedbackBtn.textContent = 'Saving…';
   try {
-    await updatePrompt({ category: 'walkCycles', key: kind, value });
+    await updatePrompt({ category: 'walkCycles', key: promptKey, value });
     if (state.prompts) {
       if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
-      state.prompts.walkCycles[kind] = value;
+      state.prompts.walkCycles[promptKey] = value;
     }
     feedbackBtn.textContent = 'Saved ✓';
     window.setTimeout(() => {

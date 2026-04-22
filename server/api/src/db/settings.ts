@@ -74,6 +74,21 @@ export const UI_OVERRIDE_KEYS = [
   'ui-hud-bg',
   'ui-title-banner',
   'ui-board-tile-surface',
+  // Phase-1 additions: admin can generate + toggle; in-game client
+  // consumers land in a follow-up. Override flag off → no change;
+  // flag on but image missing → same Graphics fallback as the
+  // original six. Keep in sync with tools/gemini-art/prompts.json
+  // `menuUi` bucket and MENU_UI_KEYS in client/src/admin/main.ts.
+  'ui-resource-pill-honey',
+  'ui-resource-pill-sugar',
+  'ui-resource-pill-grubs',
+  'ui-icon-unit-frame',
+  'ui-icon-building-frame',
+  'ui-badge-victory',
+  'ui-badge-defeat',
+  'ui-progress-bar-frame',
+  'ui-tooltip-bg',
+  'ui-close-button',
 ] as const;
 export type UiOverrideKey = (typeof UI_OVERRIDE_KEYS)[number];
 
