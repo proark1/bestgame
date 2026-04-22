@@ -447,25 +447,30 @@ export class RaidScene extends Phaser.Scene {
 
   private wirePointerInput(): void {
     // Board can be scaled down on narrow viewports (phone, narrow
-    // laptop) — getBounds() returns the scaled world rect, and we
-    // have to unscale px → local → tiles. Without this, a touch at
-    // the visible right edge on mobile maps to beyond-the-board in
-    // sim coordinates.
+    // laptop). Convert world-space pointer coords to board-local
+    // tiles by reading boardContainer.(x, y, scaleX) directly.
+    //
+    // Previously this used boardContainer.getBounds(), but Phaser
+    // Graphics children report (0, 0, 0, 0) bounds regardless of
+    // what's been drawn into them — so the container's bounds end
+    // up dominated by Sprite children (buildings, units), which move
+    // and appear/disappear during a raid. That produced a drifting
+    // offset between the cursor and the pheromone-trail preview.
+    // Direct (.x, .y, .scaleX) reads are deterministic and always
+    // reflect the layout() position, no matter what's on the board.
     const withinBoard = (px: number, py: number): boolean => {
-      const origin = this.boardContainer.getBounds();
-      return (
-        px >= origin.x &&
-        px <= origin.x + origin.width &&
-        py >= origin.y &&
-        py <= origin.y + origin.height
-      );
+      const scale = this.boardContainer.scaleX || 1;
+      const x0 = this.boardContainer.x;
+      const y0 = this.boardContainer.y;
+      const w = BOARD_W * scale;
+      const h = BOARD_H * scale;
+      return px >= x0 && px <= x0 + w && py >= y0 && py <= y0 + h;
     };
     const toTile = (px: number, py: number): { tx: number; ty: number } => {
-      const origin = this.boardContainer.getBounds();
       const scale = this.boardContainer.scaleX || 1;
       return {
-        tx: (px - origin.x) / scale / TILE,
-        ty: (py - origin.y) / scale / TILE,
+        tx: (px - this.boardContainer.x) / scale / TILE,
+        ty: (py - this.boardContainer.y) / scale / TILE,
       };
     };
 
@@ -584,32 +589,28 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private renderTrailPreview(): void {
-    // trailGraphics lives inside boardContainer so it shares the
-    // container transform. Convert world-space pointer coords to
-    // container-local coords by subtracting the world origin and
-    // dividing by the scale factor — matches toTile()'s math, so
-    // trail dots land directly under the cursor at any viewport
-    // size (phone, tablet, desktop).
-    const origin = this.boardContainer.getBounds();
+    // trailGraphics is a child of boardContainer, so drawing at
+    // local (x, y) here displays at world (container.x + x*scale,
+    // container.y + y*scale). Invert that to place the preview
+    // exactly under the cursor. See wirePointerInput() for why we
+    // read (.x, .y, .scaleX) directly instead of getBounds().
+    const x0 = this.boardContainer.x;
+    const y0 = this.boardContainer.y;
     const scale = this.boardContainer.scaleX || 1;
     this.trailGraphics.clear();
     this.trailGraphics.lineStyle(6, 0xffd98a, 0.85);
     this.trailGraphics.beginPath();
     for (let i = 0; i < this.drawingPoints.length; i++) {
       const p = this.drawingPoints[i]!;
-      const x = (p.x - origin.x) / scale;
-      const y = (p.y - origin.y) / scale;
+      const x = (p.x - x0) / scale;
+      const y = (p.y - y0) / scale;
       if (i === 0) this.trailGraphics.moveTo(x, y);
       else this.trailGraphics.lineTo(x, y);
     }
     this.trailGraphics.strokePath();
     this.trailGraphics.fillStyle(0xffd98a, 0.9);
     for (const p of this.drawingPoints) {
-      this.trailGraphics.fillCircle(
-        (p.x - origin.x) / scale,
-        (p.y - origin.y) / scale,
-        4,
-      );
+      this.trailGraphics.fillCircle((p.x - x0) / scale, (p.y - y0) / scale, 4);
     }
   }
 
