@@ -74,16 +74,20 @@ export async function removeBackground(
   // Stack is fine for flood-fill on sub-megapixel Gemini outputs.
   const stack: number[] = [];
 
-  // Enqueue a pixel iff it's within the outer-tolerance of the
-  // background reference AND hasn't been visited yet. Already-
-  // transparent pixels are marked visited so they don't block the
-  // flood but don't waste a slot on the stack either.
+  // Enqueue a pixel iff it hasn't been visited AND either (a) it's
+  // already transparent — semantically background, traverse through
+  // it so the flood can cross pre-existing transparent regions — or
+  // (b) it's within the outer-tolerance of the background reference.
+  // Dequeueing a transparent pixel is a no-op on its own alpha (0 *
+  // anything = 0) but still propagates the flood to its neighbours,
+  // which is the whole point.
   const maybePush = (x: number, y: number): void => {
     const idx = y * width + x;
     if (visited[idx]) return;
     const i = idx * 4;
     if (pixels[i + 3]! === 0) {
       visited[idx] = 1;
+      stack.push(x, y);
       return;
     }
     if (distanceSq(pixels, i, ref) >= outerSq) return;

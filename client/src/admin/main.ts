@@ -311,9 +311,19 @@ function render(): void {
 
   styleTxt.addEventListener('input', refreshStyleDirty);
 
+  // Guard: the Save button's click can follow the textarea's blur/
+  // `change` event when the user clicks directly from the textarea
+  // onto the button. Without this, saveStyleLock would run twice in
+  // quick succession. A simple in-flight flag is enough — we don't
+  // need queueing since the second caller's payload is identical.
+  let styleSaving = false;
+
   const saveStyleLock = async (): Promise<void> => {
+    if (styleSaving) return;
+    styleSaving = true;
     const value = styleTxt.value;
     styleSave.disabled = true;
+    styleRevert.disabled = true;
     styleSave.textContent = 'Saving…';
     try {
       await updatePrompt({ category: 'styleLock', value });
@@ -324,6 +334,7 @@ function render(): void {
       statusToast((err as Error).message, 'error');
     } finally {
       styleSave.textContent = 'Save style lock';
+      styleSaving = false;
       refreshStyleDirty();
     }
   };
@@ -332,6 +343,7 @@ function render(): void {
     void saveStyleLock();
   });
   styleRevert.addEventListener('click', () => {
+    if (styleSaving) return;
     styleTxt.value = lastSavedStyle;
     refreshStyleDirty();
   });
