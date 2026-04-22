@@ -8,6 +8,7 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { isUiOverrideActive } from '../ui/uiOverrides.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
@@ -77,6 +78,7 @@ export class HomeScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.drawAmbient();
 
     // Hydrate from runtime — scene is re-entered after each raid, so this

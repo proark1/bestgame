@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import type { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { UnitUpgradeEntry } from '../net/Api.js';
@@ -30,6 +31,7 @@ export class UpgradeScene extends Phaser.Scene {
 
   create(): void {
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawHud();
     this.resourceBanner = this.add
