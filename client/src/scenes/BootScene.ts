@@ -240,8 +240,17 @@ export class BootScene extends Phaser.Scene {
       texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
       if (!gl) continue;
       for (const source of texture.source) {
-        const glTexture = source.glTexture;
-        if (!glTexture) continue;
+        // In Phaser 3.60+, source.glTexture is a WebGLTextureWrapper,
+        // not a raw WebGLTexture. Passing the wrapper to
+        // gl.bindTexture silently emits INVALID_OPERATION — on some
+        // mobile GPU drivers a flood of those errors during boot
+        // stalls the whole page. Reach through .webGLTexture to get
+        // the raw handle WebGL expects.
+        const wrapper = source.glTexture as unknown as
+          | { webGLTexture?: WebGLTexture | null }
+          | null;
+        const rawTex = wrapper?.webGLTexture ?? null;
+        if (!rawTex) continue;
         const img = source.image as HTMLImageElement | HTMLCanvasElement;
         const w = 'naturalWidth' in img ? img.naturalWidth : img.width;
         const h = 'naturalHeight' in img ? img.naturalHeight : img.height;
@@ -252,7 +261,7 @@ export class BootScene extends Phaser.Scene {
         // sprite is 128 × 128, which IS POT.
         const isPot = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
         if (!isPot(w) || !isPot(h)) continue;
-        gl.bindTexture(gl.TEXTURE_2D, glTexture);
+        gl.bindTexture(gl.TEXTURE_2D, rawTex);
         gl.generateMipmap(gl.TEXTURE_2D);
         gl.texParameteri(
           gl.TEXTURE_2D,

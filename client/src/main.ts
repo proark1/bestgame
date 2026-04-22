@@ -152,28 +152,29 @@ async function main(): Promise<void> {
   // without constructor wiring.
   game.registry.set('runtime', runtime);
 
-  // Backing-buffer override. Phaser's Scale.RESIZE defaults to
-  // canvas.width === game.scale.width (logical), which leaves HiDPI
-  // upscaling to the browser's bitmap sampler — i.e. blurry on every
-  // Retina phone/laptop. We override after every resize so:
-  //   canvas.width / height      = logical × DPR  (physical pixels)
-  //   canvas.style.width / height = logical       (CSS pixels)
-  //   WebGL viewport             = physical       (via renderer.resize)
-  //   camera projection          = logical        (Phaser default)
-  // Pointer-to-game math stays identity because it's driven by CSS
-  // size / camera size, both logical.
+  // Belt-and-braces CSS sync. Scale.RESIZE already sets the backing
+  // buffer to match the parent div, but some embedders (observed on
+  // FB Instant's wrapper frame) end up with a CSS transform or size
+  // mismatch that shifts the canvas relative to where clients think
+  // it is. Re-stamping canvas.style.{width,height} on every resize
+  // keeps CSS size === backing-buffer size so pointer-to-game is
+  // identity.
+  //
+  // HiDPI note: a previous iteration tried to override canvas.width /
+  // canvas.height to logical × DPR via game.renderer.resize(). That
+  // worked on desktop but produced a resize-event feedback loop on
+  // mobile — renderer.resize() updates the scale manager's game size,
+  // which re-emits 'resize', which we multiply by DPR again, which
+  // eventually blows past the mobile GPU's max-texture limit and
+  // freezes the whole canvas before anything paints. Reverted here;
+  // the polish comes from per-text setResolution(dpr) + mipmapped
+  // sprite downscaling (see BootScene) — neither of which can get
+  // into a feedback loop with the scale manager.
   const syncCanvasSize = (): void => {
     const c = game.canvas;
     if (!c) return;
-    const logicalW = game.scale.width;
-    const logicalH = game.scale.height;
-    const physW = Math.max(1, Math.round(logicalW * dpr));
-    const physH = Math.max(1, Math.round(logicalH * dpr));
-    if (c.width !== physW || c.height !== physH) {
-      game.renderer.resize(physW, physH);
-    }
-    c.style.width = `${logicalW}px`;
-    c.style.height = `${logicalH}px`;
+    c.style.width = `${game.scale.width}px`;
+    c.style.height = `${game.scale.height}px`;
     c.style.transform = 'none';
     c.style.display = 'block';
   };
