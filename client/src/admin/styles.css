@@ -896,6 +896,133 @@ button {
   }
 }
 
+/* Sprite history modal. Opens from the per-card "History" button and
+ * shows the last N generations kept server-side (cap enforced by
+ * trimSpriteHistory). Click a row's "Use this" to promote it to the
+ * live bytes; the previous live version stays one row below in the
+ * list so the flip is undoable. */
+.history-label-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+}
+.history-label-input:focus {
+  outline: 1px solid var(--brass, #ffd98a);
+  outline-offset: 0;
+}
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 14, 9, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 20px;
+}
+.history-card {
+  width: min(720px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  background: linear-gradient(180deg, #243824 0%, #1b2c1c 35%, #0f1b10 100%);
+  border: 3px solid #5c4020;
+  border-radius: 16px;
+  padding: 20px 22px 16px;
+  color: var(--text);
+  font-family: var(--font);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 217, 138, 0.4),
+    0 18px 48px rgba(0, 0, 0, 0.6);
+}
+.history-card h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  color: #ffe7b0;
+  text-shadow: 0 2px 0 #2a1a08;
+}
+.history-sub {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.history-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.history-entry {
+  display: grid;
+  grid-template-columns: 96px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px;
+  background: rgba(10, 18, 12, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.history-entry.active {
+  border-color: #ffd98a;
+  box-shadow: 0 0 0 1px rgba(255, 217, 138, 0.3);
+}
+.history-thumb {
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0a120c;
+  border-radius: 8px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.history-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: auto;
+}
+.history-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.history-stamp {
+  color: #ffe7b0;
+  font-weight: 600;
+  font-size: 13px;
+}
+.history-label {
+  color: var(--text);
+  font-size: 13px;
+  font-style: italic;
+}
+.history-size {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.history-actions {
+  display: flex;
+  align-items: center;
+}
+.history-live-tag {
+  color: #ffd98a;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
 /* Ultra-narrow adjustments (≤ 380 px — iPhone SE et al). */
 @media (max-width: 380px) {
   .admin-root {

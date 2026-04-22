@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import archiver from 'archiver';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, writeFile, unlink } from 'node:fs/promises';
@@ -13,6 +13,14 @@ import {
   listSprites,
   upsertSprite,
 } from '../db/sprites.js';
+import {
+  SPRITE_HISTORY_CAP,
+  deleteSpriteHistory,
+  getSpriteHistoryById,
+  insertSpriteHistory,
+  listSpriteHistory,
+  trimSpriteHistory,
+} from '../db/spriteHistory.js';
 import {
   ANIMATED_UNIT_KINDS,
   DEFAULT_UNIT_ANIMATION,
@@ -182,6 +190,10 @@ interface SaveBody {
   // the image is a horizontal strip of N equal-width frames that the
   // client loads as a Phaser spritesheet.
   frames?: number;
+  // Optional free-text label the admin can set from the UI, e.g.
+  // "warmer colors" or "legs further apart" so the history entry is
+  // searchable in context instead of by timestamp alone.
+  label?: string;
 }
 
 interface UpdatePromptBody {
@@ -206,6 +218,55 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 function sanitizeKey(key: string): string | null {
   if (DANGEROUS_KEYS.has(key)) return null;
   return ALLOWED_KEY_RE.test(key) ? key : null;
+}
+
+// Shared disk-mirror for sprite bytes. Used by both the save handler
+// (new bytes) and the history-restore handler (old bytes being
+// promoted back to live). Two jobs:
+//   1. Write the authoritative file under DIST_SPRITES_DIR — what
+//      fastify-static actually serves to the running game. This must
+//      succeed; a throw propagates up to the route handler.
+//   2. Best-effort mirror to PUBLIC_SPRITES_DIR (committable checkout
+//      for local dev) if the directory exists. Any failure is
+//      logged + swallowed so a prod bundle without client/public/
+//      isn't polluted with a surprise directory.
+//
+// Either way, a sibling-extension copy (e.g. the old .webp when the
+// new bytes are .png) is unlinked so a format swap doesn't leave a
+// stale twin on disk.
+async function mirrorSpriteToDisk(
+  key: string,
+  format: 'png' | 'webp',
+  bytes: Buffer,
+  log: FastifyBaseLogger,
+): Promise<{ mirroredToPublic: boolean }> {
+  const siblingExt = format === 'webp' ? 'png' : 'webp';
+
+  await mkdir(DIST_SPRITES_DIR, { recursive: true });
+  await writeFile(join(DIST_SPRITES_DIR, `${key}.${format}`), bytes);
+  try {
+    await unlink(join(DIST_SPRITES_DIR, `${key}.${siblingExt}`));
+  } catch {
+    // not there — fine
+  }
+
+  let mirroredToPublic = false;
+  if (publicDirExists()) {
+    try {
+      await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
+      await writeFile(join(PUBLIC_SPRITES_DIR, `${key}.${format}`), bytes);
+      try {
+        await unlink(join(PUBLIC_SPRITES_DIR, `${key}.${siblingExt}`));
+      } catch {
+        // not there
+      }
+      mirroredToPublic = true;
+    } catch (err) {
+      // public mirror is best-effort — the game still works from dist
+      log.warn({ err, key }, 'public mirror write failed');
+    }
+  }
+  return { mirroredToPublic };
 }
 
 export function registerAdmin(app: FastifyInstance): void {
@@ -394,52 +455,55 @@ export function registerAdmin(app: FastifyInstance): void {
         ? Math.max(1, Math.min(16, Math.floor(body.frames)))
         : 1;
 
+    // Label: treat empty strings + whitespace-only as "no label" and
+    // clamp length so the history row doesn't grow unbounded on a
+    // free-text field. 120 chars is more than enough for "warmer
+    // colors" or "pose B, 3rd try" labels.
+    const rawLabel = typeof body.label === 'string' ? body.label.trim() : '';
+    const historyLabel = rawLabel.length === 0 ? null : rawLabel.slice(0, 120);
+
     let persistedToDb = false;
     const pool = await getPool();
     if (pool) {
       try {
         await upsertSprite(pool, safeKey, body.format, buf, frameCount);
         persistedToDb = true;
+        // Append a history row alongside the live upsert, then trim
+        // to SPRITE_HISTORY_CAP so the admin UI always sees at most
+        // the last N generations. History is best-effort — if either
+        // insert or trim throws, the save still succeeds (live row
+        // was already upserted above).
+        try {
+          await insertSpriteHistory(
+            pool,
+            safeKey,
+            body.format,
+            buf,
+            frameCount,
+            historyLabel,
+          );
+          await trimSpriteHistory(pool, safeKey, SPRITE_HISTORY_CAP);
+        } catch (err) {
+          app.log.warn({ err, key: safeKey }, 'sprite history append failed');
+        }
       } catch (err) {
         app.log.error({ err, key: safeKey }, 'sprite DB upsert failed');
       }
     }
 
-    const siblingExt = body.format === 'webp' ? 'png' : 'webp';
-    await mkdir(DIST_SPRITES_DIR, { recursive: true });
-    await writeFile(join(DIST_SPRITES_DIR, `${safeKey}.${body.format}`), buf);
-    try {
-      await unlink(join(DIST_SPRITES_DIR, `${safeKey}.${siblingExt}`));
-    } catch {
-      // not there — fine
-    }
-
-    let mirrored = false;
-    if (publicDirExists()) {
-      try {
-        await mkdir(PUBLIC_SPRITES_DIR, { recursive: true });
-        await writeFile(
-          join(PUBLIC_SPRITES_DIR, `${safeKey}.${body.format}`),
-          buf,
-        );
-        try {
-          await unlink(join(PUBLIC_SPRITES_DIR, `${safeKey}.${siblingExt}`));
-        } catch {
-          // not there
-        }
-        mirrored = true;
-      } catch (err) {
-        // public mirror is best-effort — the game still works from dist
-        app.log.warn({ err }, 'public mirror write failed');
-      }
-    }
+    const { mirroredToPublic } = await mirrorSpriteToDisk(
+      safeKey,
+      body.format,
+      buf,
+      app.log,
+    );
 
     return {
       ok: true,
       path: `/assets/sprites/${safeKey}.${body.format}`,
       size: buf.length,
       persistedToDb,
-      mirroredToPublic: mirrored,
+      mirroredToPublic,
     };
   });
 
@@ -496,12 +560,20 @@ export function registerAdmin(app: FastifyInstance): void {
     // leave a ghost copy that would re-appear on the next hydration or
     // rebuild.
     let dbRemoved = 0;
+    let historyRemoved = 0;
     const pool = await getPool();
     if (pool) {
       try {
         dbRemoved = await deleteSprite(pool, safeKey);
       } catch (err) {
         app.log.error({ err, key: safeKey }, 'sprite DB delete failed');
+      }
+      // Clear history too — admins never expect "I deleted this
+      // sprite" to leave rollbackable copies sitting in the DB.
+      try {
+        historyRemoved = await deleteSpriteHistory(pool, safeKey);
+      } catch (err) {
+        app.log.warn({ err, key: safeKey }, 'sprite history delete failed');
       }
     }
     let diskRemoved = 0;
@@ -515,8 +587,138 @@ export function registerAdmin(app: FastifyInstance): void {
         }
       }
     }
-    return { ok: true, dbRemoved, diskRemoved };
+    return { ok: true, dbRemoved, diskRemoved, historyRemoved };
   });
+
+  // Sprite history: last-N generations of a single key so the admin can
+  // A/B a fresh Gemini run against what was shipping before, and revert
+  // without re-paying the LLM. Three endpoints:
+  //
+  //   GET  /admin/api/sprite/:key/history          metadata list
+  //   GET  /admin/api/sprite/:key/history/:id/bytes the raw image
+  //   POST /admin/api/sprite/:key/history/:id/restore   promote to live
+  //
+  // Split list/bytes so the history UI can render N thumbnails from
+  // one list call + N bytes calls in parallel — a single response
+  // carrying all bytes would be huge (3× multi-MB PNGs).
+  app.get('/admin/api/sprite/:key/history', async (req, reply) => {
+    const params = req.params as { key: string };
+    const safeKey = sanitizeKey(params.key);
+    if (!safeKey) {
+      reply.code(400);
+      return { error: 'invalid key' };
+    }
+    const pool = await getPool();
+    if (!pool) {
+      return { entries: [], dbPersistence: 'not-configured' as const };
+    }
+    const rows = await listSpriteHistory(pool, safeKey);
+    return {
+      dbPersistence: 'connected' as const,
+      entries: rows.map((r) => ({
+        id: r.id,
+        format: r.format,
+        size: r.size,
+        frames: r.frames,
+        label: r.label,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  app.get('/admin/api/sprite/:key/history/:id/bytes', async (req, reply) => {
+    const params = req.params as { key: string; id: string };
+    const safeKey = sanitizeKey(params.key);
+    const id = Number.parseInt(params.id, 10);
+    if (!safeKey || !Number.isFinite(id) || id < 0) {
+      reply.code(400);
+      return { error: 'invalid key or id' };
+    }
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const row = await getSpriteHistoryById(pool, safeKey, id);
+    if (!row) {
+      reply.code(404);
+      return { error: 'history entry not found' };
+    }
+    reply
+      .header('content-type', `image/${row.format}`)
+      // Short cache since the id identifies a specific immutable row —
+      // can't change, only disappear when trimmed. A minute is enough
+      // for the admin UI preview without serving stale data after a
+      // restore.
+      .header('cache-control', 'private, max-age=60');
+    return reply.send(row.data);
+  });
+
+  app.post(
+    '/admin/api/sprite/:key/history/:id/restore',
+    async (req, reply) => {
+      const params = req.params as { key: string; id: string };
+      const safeKey = sanitizeKey(params.key);
+      const id = Number.parseInt(params.id, 10);
+      if (!safeKey || !Number.isFinite(id) || id < 0) {
+        reply.code(400);
+        return { error: 'invalid key or id' };
+      }
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return {
+          error:
+            'database not configured — history is a DB-backed feature (see GET /health/db)',
+        };
+      }
+      const row = await getSpriteHistoryById(pool, safeKey, id);
+      if (!row) {
+        reply.code(404);
+        return { error: 'history entry not found' };
+      }
+
+      // Restore flow: copy the old row's bytes back into `sprites`
+      // (which the game actually reads from on disk after hydration)
+      // AND append a NEW history row so the admin can still revert
+      // the restore itself. Trim to cap afterwards so we don't let
+      // restore-bounces grow history unbounded.
+      await upsertSprite(pool, safeKey, row.format, row.data, row.frames);
+      try {
+        await insertSpriteHistory(
+          pool,
+          safeKey,
+          row.format,
+          row.data,
+          row.frames,
+          row.label !== null
+            ? `↩ restored: ${row.label}`
+            : `↩ restored from ${row.createdAt.toISOString().slice(0, 16)}`,
+        );
+        await trimSpriteHistory(pool, safeKey, SPRITE_HISTORY_CAP);
+      } catch (err) {
+        app.log.warn(
+          { err, key: safeKey, id },
+          'sprite history append-on-restore failed',
+        );
+      }
+
+      // Mirror to disk via the same helper the save handler uses.
+      // Also covers the sibling-extension unlink so a restore that
+      // flips format (e.g. old webp over a current png) doesn't
+      // leave a stale twin behind.
+      await mirrorSpriteToDisk(safeKey, row.format, row.data, app.log);
+
+      return {
+        ok: true,
+        key: safeKey,
+        format: row.format,
+        size: row.size,
+        frames: row.frames,
+        restoredFromId: id,
+      };
+    },
+  );
 
   // Animation toggle read/write. The public GET /api/settings/animation
   // serves the same JSON to the client; this admin version is the only

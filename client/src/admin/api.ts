@@ -134,11 +134,69 @@ export async function saveSprite(args: {
   // server-side. Set to 4 when saving a walk-cycle strip so the
   // client loads it as a Phaser spritesheet.
   frames?: number;
+  // Optional: short free-text label stored alongside the history
+  // row. Shown in the version carousel so the admin can identify
+  // a generation by intent ("warmer colors") not just timestamp.
+  label?: string;
 }): Promise<{ path: string; size: number }> {
   return req<{ path: string; size: number; ok: true }>('/admin/api/save', {
     method: 'POST',
     json: args,
   });
+}
+
+// Sprite history: last-N generations of a single key. Metadata
+// only — preview bytes come from a separate endpoint so the list
+// response stays small.
+export interface SpriteHistoryEntry {
+  id: number;
+  format: 'png' | 'webp';
+  size: number;
+  frames: number;
+  label: string | null;
+  createdAt: string;
+}
+export interface SpriteHistoryResponse {
+  dbPersistence: 'connected' | 'not-configured';
+  entries: SpriteHistoryEntry[];
+}
+
+export async function fetchSpriteHistory(
+  key: string,
+): Promise<SpriteHistoryResponse> {
+  return req<SpriteHistoryResponse>(
+    `/admin/api/sprite/${encodeURIComponent(key)}/history`,
+  );
+}
+
+// URL the admin UI uses for preview thumbnails. Bearer token is
+// attached via fetch (not as a query string) so we mimic that by
+// loading through fetch → object URL instead of a raw <img src=>.
+// Returns an object URL the caller must revoke when done.
+export async function loadSpriteHistoryBytes(
+  key: string,
+  id: number,
+): Promise<string> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(
+    `/admin/api/sprite/${encodeURIComponent(key)}/history/${id}/bytes`,
+    { headers },
+  );
+  if (!res.ok) throw new Error(`preview ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function restoreSpriteHistory(
+  key: string,
+  id: number,
+): Promise<{ ok: true; format: 'png' | 'webp'; size: number }> {
+  return req<{ ok: true; format: 'png' | 'webp'; size: number }>(
+    `/admin/api/sprite/${encodeURIComponent(key)}/history/${id}/restore`,
+    { method: 'POST' },
+  );
 }
 
 // Animation toggle read/write. `kinds` is the server-owned allowlist
