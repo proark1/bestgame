@@ -268,21 +268,80 @@ function render(): void {
   root.append(toolbar);
 
   // -- Style-lock editor ----------------------------------------------------
+  // The textarea's native `change` event only fires on blur, which isn't
+  // discoverable on mobile (blur happens silently when the keyboard
+  // dismisses) and doesn't give any visible feedback that the text will
+  // persist. The explicit Save button below is the obvious way to commit
+  // changes; the dirty indicator tells the admin when something is
+  // pending so they don't navigate away thinking everything's saved.
   const styleBox = document.createElement('div');
   styleBox.className = 'style-lock';
-  styleBox.innerHTML = `<h3>Global style lock (applied to every sprite)</h3>`;
+  const styleHead = document.createElement('div');
+  styleHead.className = 'style-lock-head';
+  styleHead.innerHTML = `<h3>Global style lock (applied to every sprite)</h3>`;
+  const styleDirty = document.createElement('span');
+  styleDirty.className = 'style-lock-dirty';
+  styleDirty.textContent = '';
+  styleHead.append(styleDirty);
+  styleBox.append(styleHead);
+
   const styleTxt = document.createElement('textarea');
-  styleTxt.value = state.prompts?.styleLock ?? '';
-  styleTxt.addEventListener('change', async () => {
+  const initialStyle = state.prompts?.styleLock ?? '';
+  styleTxt.value = initialStyle;
+  let lastSavedStyle = initialStyle;
+
+  const styleActions = document.createElement('div');
+  styleActions.className = 'style-lock-actions';
+  const styleSave = document.createElement('button');
+  styleSave.className = 'btn primary';
+  styleSave.textContent = 'Save style lock';
+  styleSave.disabled = true;
+  const styleRevert = document.createElement('button');
+  styleRevert.className = 'btn ghost';
+  styleRevert.textContent = 'Revert';
+  styleRevert.disabled = true;
+  styleActions.append(styleSave, styleRevert);
+
+  const refreshStyleDirty = (): void => {
+    const dirty = styleTxt.value !== lastSavedStyle;
+    styleDirty.textContent = dirty ? 'unsaved changes' : '';
+    styleSave.disabled = !dirty;
+    styleRevert.disabled = !dirty;
+  };
+
+  styleTxt.addEventListener('input', refreshStyleDirty);
+
+  const saveStyleLock = async (): Promise<void> => {
+    const value = styleTxt.value;
+    styleSave.disabled = true;
+    styleSave.textContent = 'Saving…';
     try {
-      await updatePrompt({ category: 'styleLock', value: styleTxt.value });
-      if (state.prompts) state.prompts.styleLock = styleTxt.value;
+      await updatePrompt({ category: 'styleLock', value });
+      if (state.prompts) state.prompts.styleLock = value;
+      lastSavedStyle = value;
       statusToast('Style lock saved', 'success');
     } catch (err) {
       statusToast((err as Error).message, 'error');
+    } finally {
+      styleSave.textContent = 'Save style lock';
+      refreshStyleDirty();
     }
+  };
+
+  styleSave.addEventListener('click', () => {
+    void saveStyleLock();
   });
-  styleBox.append(styleTxt);
+  styleRevert.addEventListener('click', () => {
+    styleTxt.value = lastSavedStyle;
+    refreshStyleDirty();
+  });
+  // Keep the implicit blur-save behaviour so typing + tabbing away still
+  // persists (useful on desktop when the admin forgets to click Save).
+  styleTxt.addEventListener('change', () => {
+    if (styleTxt.value !== lastSavedStyle) void saveStyleLock();
+  });
+
+  styleBox.append(styleTxt, styleActions);
   root.append(styleBox);
 
   // -- Sprite grid ----------------------------------------------------------
@@ -376,10 +435,14 @@ function composePrompt(
   // Menu UI assets are larger and designed for 9-slice scaling —
   // the prompt shape differs enough that we route it through its
   // own composer instead of twisting the shared subject prompt.
+  // Straight-on / flat-2D is enforced at the composer level too so
+  // even older prompts.json entries that don't yet mention "flat"
+  // still come out axis-aligned.
   if (kind === 'menuUi') {
     return [
       `Subject: ${description}`,
       `Style: ${style}`,
+      `Camera: strictly head-on, flat 2D, zero perspective, zero tilt, zero isometric angle, zero foreshortening. The asset must read as axis-aligned (rectangles stay rectangles, banners stay symmetrical). Any sense of depth comes from painted lighting only, never from camera angle.`,
       `Delivery: transparent PNG. No text, no icons, no logos, no border, no watermark. The asset must work as-is when composited over any in-game background.`,
     ].join(' ');
   }
@@ -779,26 +842,46 @@ function renderUiOverridesPanel(): HTMLElement {
   const card = document.createElement('section');
   card.className = 'admin-animation'; // reuse the animation panel styles
   const header = document.createElement('header');
-  header.innerHTML = `
+  const headerText = document.createElement('div');
+  headerText.innerHTML = `
     <h2>Menu UI overrides</h2>
-    <small>Generate a Menu UI asset above, then flip its switch here to replace the in-game Graphics fallback with the image. Toggle off to revert.</small>
+    <small>Generate a Menu UI asset above, then flip its switch here to replace the in-game Graphics fallback with the image. Toggle off to revert. Use Enable all / Disable all to flip every slot at once.</small>
   `;
-  card.append(header);
+  header.append(headerText);
 
   const settings = state.uiOverrides;
   if (!settings) {
+    card.append(header);
     const msg = document.createElement('p');
     msg.className = 'admin-animation-empty';
     msg.textContent = 'UI override settings unreachable. Check the API/DB is up, then reload the admin.';
     card.append(msg);
     return card;
   }
+
+  // Bulk controls — flip every key to the same value in one PUT.
+  // Sending the payload in one request (not N) keeps things atomic:
+  // either all values update or none do.
+  const bulk = document.createElement('div');
+  bulk.className = 'admin-animation-header-actions';
+  const enableAllBtn = document.createElement('button');
+  enableAllBtn.className = 'btn';
+  enableAllBtn.textContent = 'Enable all';
+  const disableAllBtn = document.createElement('button');
+  disableAllBtn.className = 'btn ghost';
+  disableAllBtn.textContent = 'Disable all';
+  bulk.append(enableAllBtn, disableAllBtn);
+  header.append(bulk);
+  card.append(header);
+
   if (settings.dbPersistence === 'not-configured') {
     const msg = document.createElement('p');
     msg.className = 'admin-animation-warning';
     msg.textContent =
       "DATABASE_URL not configured — toggles below are read-only defaults and won't persist.";
     card.append(msg);
+    enableAllBtn.disabled = true;
+    disableAllBtn.disabled = true;
   }
 
   // "Image ready" = any on-disk file whose stem matches the key,
@@ -808,6 +891,40 @@ function renderUiOverridesPanel(): HTMLElement {
     state.files.some(
       (f) => f.name === `${key}.webp` || f.name === `${key}.png`,
     );
+
+  // Track each row's checkbox so Enable/Disable all can sync the UI
+  // after the server round-trip. Kept as a local map instead of a
+  // module-level state so re-rendering the panel starts fresh.
+  const rowCheckboxes = new Map<string, HTMLInputElement>();
+
+  const applyBulk = async (next: boolean): Promise<void> => {
+    const nextValues: Record<string, boolean> = {};
+    for (const key of settings.keys) nextValues[key] = next;
+    const prevLabels = { enable: enableAllBtn.textContent, disable: disableAllBtn.textContent };
+    enableAllBtn.disabled = true;
+    disableAllBtn.disabled = true;
+    (next ? enableAllBtn : disableAllBtn).textContent = 'Saving…';
+    try {
+      const res = await putUiOverrideSettings(nextValues);
+      settings.values = res.values;
+      for (const [key, cb] of rowCheckboxes) {
+        cb.checked = res.values[key] ?? false;
+      }
+      statusToast(
+        next ? 'All UI overrides enabled' : 'All UI overrides disabled',
+        'success',
+      );
+    } catch (err) {
+      statusToast(`Could not save: ${(err as Error).message}`, 'error');
+    } finally {
+      enableAllBtn.disabled = false;
+      disableAllBtn.disabled = false;
+      enableAllBtn.textContent = prevLabels.enable ?? 'Enable all';
+      disableAllBtn.textContent = prevLabels.disable ?? 'Disable all';
+    }
+  };
+  enableAllBtn.addEventListener('click', () => void applyBulk(true));
+  disableAllBtn.addEventListener('click', () => void applyBulk(false));
 
   const list = document.createElement('ul');
   list.className = 'admin-animation-list';
@@ -834,6 +951,7 @@ function renderUiOverridesPanel(): HTMLElement {
         statusToast(`Could not save: ${(err as Error).message}`, 'error');
       }
     });
+    rowCheckboxes.set(key, checkbox);
 
     const label = document.createElement('label');
     label.htmlFor = checkbox.id;

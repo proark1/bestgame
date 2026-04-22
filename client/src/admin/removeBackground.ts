@@ -1,11 +1,16 @@
 // Client-side background removal. Takes a base64 image (typically a
 // freshly-generated Gemini candidate), detects the dominant backdrop by
-// sampling the image borders, and writes alpha=0 for pixels matching that
-// backdrop within a tolerance. A small feather band around the threshold
-// keeps outlines clean instead of jagged.
+// sampling the image borders, and flood-fills from the edge through
+// pixels matching that backdrop within a tolerance. Only pixels
+// reachable from the border become transparent — this is the crucial
+// difference vs a naive "every color-matching pixel" pass, which would
+// punch holes inside the subject whenever the subject happens to
+// contain similar colors (e.g. an ant on a green tile eating a green
+// leaf). A small feather band at the flood frontier keeps outlines
+// clean instead of jagged.
 //
-// Always re-encodes to PNG because the lossy WebP path destroys the alpha
-// edge we just cut.
+// Always re-encodes to PNG because the lossy WebP path destroys the
+// alpha edge we just cut.
 
 import { blobToBase64, canvasToBlob, decodeImage, makeCanvas } from './compress.js';
 
@@ -52,28 +57,83 @@ export async function removeBackground(
   const outer = tolerance + feather;
   const outerSq = outer * outer;
 
-  for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i]!;
-    const g = pixels[i + 1]!;
-    const b = pixels[i + 2]!;
-    const a = pixels[i + 3]!;
-    if (a === 0) continue; // already transparent
-    const dr = r - ref.r;
-    const dg = g - ref.g;
-    const db = b - ref.b;
-    const dSq = dr * dr + dg * dg + db * db;
+  // If the border is already fully transparent, medianBackgroundRef
+  // returns an impossible reference that won't match anything; skip
+  // the flood to avoid wasted work on a no-op.
+  if (ref.r < 0) {
+    return encode(canvas, width, height);
+  }
+
+  // BFS flood from the image edges. A pixel is enqueued iff it is
+  // within the outer (tolerance + feather) radius of the reference;
+  // strict inside-tolerance pixels become fully transparent, frontier
+  // pixels inside the feather ring get a linear alpha ramp. Pixels
+  // outside the outer radius (i.e. the subject) are never enqueued,
+  // so no hole can ever form in the interior of the subject.
+  const visited = new Uint8Array(width * height);
+  // Stack is fine for flood-fill on sub-megapixel Gemini outputs.
+  const stack: number[] = [];
+
+  // Enqueue a pixel iff it's within the outer-tolerance of the
+  // background reference AND hasn't been visited yet. Already-
+  // transparent pixels are marked visited so they don't block the
+  // flood but don't waste a slot on the stack either.
+  const maybePush = (x: number, y: number): void => {
+    const idx = y * width + x;
+    if (visited[idx]) return;
+    const i = idx * 4;
+    if (pixels[i + 3]! === 0) {
+      visited[idx] = 1;
+      return;
+    }
+    if (distanceSq(pixels, i, ref) >= outerSq) return;
+    visited[idx] = 1;
+    stack.push(x, y);
+  };
+
+  for (let x = 0; x < width; x++) {
+    maybePush(x, 0);
+    maybePush(x, height - 1);
+  }
+  for (let y = 0; y < height; y++) {
+    maybePush(0, y);
+    maybePush(width - 1, y);
+  }
+
+  while (stack.length > 0) {
+    const y = stack.pop()!;
+    const x = stack.pop()!;
+    const i = (y * width + x) * 4;
+    const dSq = distanceSq(pixels, i, ref);
     if (dSq <= tSq) {
       pixels[i + 3] = 0;
-    } else if (dSq < outerSq) {
-      // linear ramp between tolerance and outer
+    } else {
+      // Inside the feather band: ramp alpha from 0 at tolerance to
+      // the original alpha at outer. Only the flood-reachable frontier
+      // gets feathered — similar-colored interior pixels are never
+      // visited.
       const d = Math.sqrt(dSq);
       const t = (d - tolerance) / feather;
-      pixels[i + 3] = Math.round(a * t);
+      pixels[i + 3] = Math.round(pixels[i + 3]! * t);
     }
+
+    // 4-connected neighbours. maybePush() gates on the outer radius,
+    // so the flood cleanly stops at the subject silhouette.
+    if (x > 0) maybePush(x - 1, y);
+    if (x < width - 1) maybePush(x + 1, y);
+    if (y > 0) maybePush(x, y - 1);
+    if (y < height - 1) maybePush(x, y + 1);
   }
 
   ctx.putImageData(imageData, 0, 0);
+  return encode(canvas, width, height);
+}
 
+async function encode(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  width: number,
+  height: number,
+): Promise<RemovedBackgroundImage> {
   const blob = await canvasToBlob(canvas, 'image/png', 1);
   const out = await blobToBase64(blob);
   return {
@@ -83,6 +143,17 @@ export async function removeBackground(
     height,
     sizeBytes: blob.size,
   };
+}
+
+function distanceSq(
+  pixels: Uint8ClampedArray,
+  i: number,
+  ref: { r: number; g: number; b: number },
+): number {
+  const dr = pixels[i]! - ref.r;
+  const dg = pixels[i + 1]! - ref.g;
+  const db = pixels[i + 2]! - ref.b;
+  return dr * dr + dg * dg + db * db;
 }
 
 // Samples 8 reference points around the border and returns the channel-wise
