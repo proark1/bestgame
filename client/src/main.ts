@@ -105,15 +105,23 @@ async function main(): Promise<void> {
     parent: 'game',
     backgroundColor: '#0f1b10',
     scale: {
-      mode: Phaser.Scale.FIT,
-      // No autoCenter — #game centers via CSS flexbox. Phaser's
-      // autoCenter:CENTER_BOTH applies CSS margins, and the input
-      // manager's offset calculation has been observed to disagree
-      // with those margins on some browser / DPR combinations,
-      // producing a pointer-vs-visual offset. Flexbox centering is
-      // transparent to the input manager.
-      width: 16 * 48,
-      height: 56 + 12 * 48 + 152 + 32,
+      // Scale.RESIZE instead of FIT: the canvas backing buffer
+      // matches the parent #game div's size exactly, so one canvas
+      // pixel == one CSS pixel. That eliminates the pointer/visual
+      // offset class of bugs (FIT introduces a scale factor between
+      // the two; any browser quirk in that conversion => off-click),
+      // and the game actually fills the whole viewport instead of
+      // being letterboxed into a fixed 768×816 window.
+      //
+      // Scenes read this.scale.width / this.scale.height for layout
+      // positioning; a baseline MIN of 768×820 keeps ultra-tiny
+      // viewports readable by letting Phaser scale the scene up.
+      mode: Phaser.Scale.RESIZE,
+      // Min dims prevent a phone portrait from collapsing scenes
+      // into unreadable mush. Max dims keep a 4K monitor from
+      // exploding texture budgets.
+      min: { width: 768, height: 820 },
+      max: { width: 2560, height: 1600 },
     },
     render: {
       pixelArt: false,
