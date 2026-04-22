@@ -21,14 +21,15 @@ import {
   type SpriteFile,
 } from './api.js';
 import { SpriteCard } from './SpriteCard.js';
+import { compressBase64Image, humanBytes } from './compress.js';
 import {
-  blobToBase64,
-  canvasToBlob,
-  compressBase64Image,
-  decodeImage,
-  humanBytes,
-  makeCanvas,
-} from './compress.js';
+  WALK_FRAME_COUNT,
+  WALK_STRIP_WIDTH,
+  composeWalkPosePrompt,
+  composeWalkPoseVariationPrompt,
+  compositeWalkStrip,
+} from './walkCycle.js';
+import { WalkCycleEditor } from './WalkCycleEditor.js';
 
 // Keep in sync with client/src/assets/atlas.ts UNIT_SPRITE_KEYS / BUILDING_SPRITE_KEYS.
 const UNIT_KEYS = [
@@ -497,84 +498,8 @@ function composePrompt(
   ].join(' ');
 }
 
-// Walk-cycle spritesheet geometry. Duplicated here (not imported from
-// @hive/client/src/assets/atlas.ts) because the admin bundle is a
-// separate Vite entry point that doesn't share the game's runtime
-// code paths. Keep this block in sync if the strip layout ever
-// changes — the server-side migration (frames CHECK 1..16) and the
-// client loader both enforce the same shape.
-//
-// We generate each pose as its own full-canvas Gemini request and
-// composite them into a 2-frame strip on the client. A single "4
-// frames in one image" prompt consistently produced four nearly-
-// identical frames because the model spread attention across the
-// strip; two independent single-subject calls give dramatically
-// larger pose differences and read as an actual walk.
-const WALK_FRAME_W = 128;
-const WALK_FRAME_H = 128;
-const WALK_FRAME_COUNT = 2;
-const WALK_STRIP_WIDTH = WALK_FRAME_W * WALK_FRAME_COUNT;
-
-// Per-frame prompt composer. The description is the pose-specific
-// text from prompts.json (`walkCycles.${kind}_poseA`). Used for the
-// FIRST pose, which has no reference image yet — the style lock does
-// all the framing work.
-function composeWalkPosePrompt(description: string): string {
-  const style = state.prompts?.styleLock ?? '';
-  return [
-    `Subject: ${description}`,
-    `Style: ${style}`,
-    `Canvas: exactly ${WALK_FRAME_W}x${WALK_FRAME_H} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
-    `Composition: single subject, centered, facing viewer, small soft oval shadow directly below feet. Identical camera, identical scale, identical palette to the single-frame sibling sprite so the two poses share a cohesive walk cycle.`,
-  ].join(' ');
-}
-
-// Variation-prompt composer. Used for pose B, which is fired with
-// pose A attached as a reference image. The text leans heavily on
-// "treat the reference as ground truth" language — Gemini keeps
-// character/colors/outline/camera identical and only modifies the
-// legs (or wings) per the pose-specific description. Much more
-// consistent frame-to-frame than two parallel text-only calls.
-function composeWalkPoseVariationPrompt(description: string): string {
-  return [
-    `Use the attached image as the DEFINITIVE visual reference for the subject. Keep the character, face, body proportions, colors/palette, outline thickness, outfit, accessories (leaf, crown, backpack, stinger, etc.), camera angle, scale, vertical position, drop shadow, and canvas size ALL IDENTICAL to the reference.`,
-    `The ONLY thing that should change: ${description}`,
-    `Canvas: same as the reference — exactly ${WALK_FRAME_W}x${WALK_FRAME_H} pixels, fully transparent background (RGBA alpha=0 outside the subject), no sky, no ground plane, no solid backdrop, no border, no text, no watermark.`,
-    `If the subject has no legs (e.g. a flying unit), change only the wing position / beat per the description. Do not add, remove, or redraw anything else.`,
-  ].join(' ');
-}
-
-// Draw each pose onto a WALK_FRAME_W-wide slot of a horizontal strip,
-// returning the composed strip as a base64 PNG. Input frames come
-// from Gemini at various native sizes; drawImage fits each into its
-// WALK_FRAME_W × WALK_FRAME_H slot so the final spritesheet geometry
-// is exact.
-async function compositeWalkStrip(
-  frames: readonly { data: string; mimeType: string }[],
-): Promise<string> {
-  const totalW = WALK_FRAME_W * frames.length;
-  const canvas = makeCanvas(totalW, WALK_FRAME_H);
-  const ctx = canvas.getContext('2d', { alpha: true }) as
-    | CanvasRenderingContext2D
-    | OffscreenCanvasRenderingContext2D
-    | null;
-  if (!ctx) throw new Error('2D canvas unavailable');
-  ctx.clearRect(0, 0, totalW, WALK_FRAME_H);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  for (let i = 0; i < frames.length; i++) {
-    const img = await decodeImage(frames[i]!.data, frames[i]!.mimeType);
-    ctx.drawImage(
-      img as CanvasImageSource,
-      i * WALK_FRAME_W,
-      0,
-      WALK_FRAME_W,
-      WALK_FRAME_H,
-    );
-  }
-  const blob = await canvasToBlob(canvas, 'image/png', 1);
-  return blobToBase64(blob);
-}
+// Walk-cycle geometry + prompt composers live in ./walkCycle.ts so
+// the per-pose editor can share them with the bulk generator.
 
 // End-to-end: generate pose A first, then pose B with pose A attached
 // as a reference image so Gemini sees the exact character/palette/
@@ -600,9 +525,11 @@ async function generateWalkCycle(
     );
   }
 
+  const styleLock = state.prompts?.styleLock ?? '';
+
   onProgress?.(`${kind}: generating pose A…`);
   const imgsA = await generateImages({
-    prompt: composeWalkPosePrompt(poseA),
+    prompt: composeWalkPosePrompt(poseA, styleLock),
     variants: 1,
   });
   const a = imgsA[0];
@@ -803,7 +730,27 @@ function renderAnimationPanel(): HTMLElement {
       detail.append(empty);
     }
 
-    detail.append(renderPromptEditor(kind));
+    // Per-pose editor — two preview columns, per-pose prompts +
+    // regenerate + Remove BG + Remove grays + Save strip. Closes
+    // the old "Tweak prompt" <details> into a first-class card.
+    detail.append(
+      new WalkCycleEditor({
+        kind,
+        getPrompts: () => state.prompts,
+        setPromptInState: (promptKey, value) => {
+          if (!state.prompts) return;
+          if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
+          state.prompts.walkCycles[promptKey] = value;
+        },
+        getStyleLock: () => state.prompts?.styleLock ?? '',
+        getFiles: () => state.files,
+        showStatus: statusToast,
+        onStripSaved: async () => {
+          await refreshFiles();
+          card.replaceWith(renderAnimationPanel());
+        },
+      }).root,
+    );
 
     row.append(detail);
     list.append(row);
@@ -852,125 +799,9 @@ function renderStripPreview(kind: string, files: SpriteFile[]): HTMLElement {
   return wrap;
 }
 
-// Expandable prompt editor. Starts collapsed so the panel stays
-// compact; the <summary> toggles an unobtrusive "Edit prompts" link.
-// One textarea per pose (A + B) because the cycle is built from
-// two independent Gemini calls — see generateWalkCycle(). "Save
-// prompts" persists both to prompts.json; "Save & regenerate"
-// does both in one click — the common workflow when iterating.
-function renderPromptEditor(kind: string): HTMLElement {
-  const details = document.createElement('details');
-  details.className = 'admin-animation-editor';
-
-  const summary = document.createElement('summary');
-  summary.textContent = 'Tweak prompts';
-  details.append(summary);
-
-  const mkPoseField = (poseLabel: 'A' | 'B'): {
-    wrap: HTMLDivElement;
-    textarea: HTMLTextAreaElement;
-    promptKey: string;
-  } => {
-    const wrap = document.createElement('div');
-    wrap.className = 'admin-animation-editor-pose';
-    const heading = document.createElement('strong');
-    heading.textContent = `Pose ${poseLabel}`;
-    wrap.append(heading);
-    const promptKey = `${kind}_pose${poseLabel}`;
-    const ta = document.createElement('textarea');
-    ta.value = state.prompts?.walkCycles?.[promptKey] ?? '';
-    ta.placeholder = `Describe pose ${poseLabel}: character + leg/wing position…`;
-    ta.rows = 3;
-    wrap.append(ta);
-    return { wrap, textarea: ta, promptKey };
-  };
-
-  const fieldA = mkPoseField('A');
-  const fieldB = mkPoseField('B');
-  details.append(fieldA.wrap, fieldB.wrap);
-
-  const actions = document.createElement('div');
-  actions.className = 'admin-animation-editor-actions';
-
-  const saveBoth = async (feedbackBtn: HTMLButtonElement): Promise<void> => {
-    // Serial on purpose: the server rewrites prompts.json on every
-    // call, so two concurrent PUTs would last-writer-wins one of
-    // them. Two quick calls in sequence are fine.
-    await savePromptValue(fieldA.promptKey, fieldA.textarea.value, feedbackBtn);
-    await savePromptValue(fieldB.promptKey, fieldB.textarea.value, feedbackBtn);
-  };
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'btn';
-  saveBtn.textContent = 'Save prompts';
-  saveBtn.addEventListener('click', async () => {
-    await saveBoth(saveBtn);
-  });
-
-  const saveAndRegenBtn = document.createElement('button');
-  saveAndRegenBtn.className = 'btn accent';
-  saveAndRegenBtn.textContent = 'Save & regenerate';
-  saveAndRegenBtn.addEventListener('click', async () => {
-    if (saveAndRegenBtn.disabled) return;
-    saveAndRegenBtn.disabled = true;
-    const original = saveAndRegenBtn.textContent;
-    try {
-      await saveBoth(saveBtn);
-      saveAndRegenBtn.textContent = 'Regenerating…';
-      const res = await generateWalkCycle(kind);
-      statusToast(`Saved ${kind} walk strip (${humanBytes(res.size)})`, 'success');
-      // Refresh the whole panel so every badge + preview updates at
-      // once — cheaper than threading per-element refs around.
-      try {
-        const s = await fetchStatus();
-        state.files = s.files;
-      } catch {
-        // ignore
-      }
-      const newPanel = renderAnimationPanel();
-      details.closest('.admin-animation')?.replaceWith(newPanel);
-    } catch (err) {
-      statusToast(`${kind}: ${(err as Error).message}`, 'error');
-      saveAndRegenBtn.textContent = original;
-      saveAndRegenBtn.disabled = false;
-    }
-  });
-
-  actions.append(saveBtn, saveAndRegenBtn);
-  details.append(actions);
-  return details;
-}
-
-// Persist a walkCycles prompt edit + mirror it into local state so
-// a subsequent generate uses the new value. `promptKey` is the flat
-// JSON key (e.g. "WorkerAnt_poseA"); caller passes the save button
-// to give inline "Saved" feedback without another toast.
-async function savePromptValue(
-  promptKey: string,
-  value: string,
-  feedbackBtn: HTMLButtonElement,
-): Promise<void> {
-  const original = feedbackBtn.textContent;
-  feedbackBtn.disabled = true;
-  feedbackBtn.textContent = 'Saving…';
-  try {
-    await updatePrompt({ category: 'walkCycles', key: promptKey, value });
-    if (state.prompts) {
-      if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
-      state.prompts.walkCycles[promptKey] = value;
-    }
-    feedbackBtn.textContent = 'Saved ✓';
-    window.setTimeout(() => {
-      feedbackBtn.textContent = original;
-      feedbackBtn.disabled = false;
-    }, 1200);
-  } catch (err) {
-    statusToast(`Save prompt failed: ${(err as Error).message}`, 'error');
-    feedbackBtn.textContent = original;
-    feedbackBtn.disabled = false;
-    throw err;
-  }
-}
+// Per-pose prompt editor + regenerate + BG/grays cleanup lives in
+// ./WalkCycleEditor.ts. It replaces the old collapsed "Tweak
+// prompts" <details> block with a first-class two-column card.
 
 // UI-image-override toggles. Same shape as the animation panel: one
 // row per known override key, a checkbox that PUTs the new map to
