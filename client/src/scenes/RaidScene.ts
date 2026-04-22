@@ -444,15 +444,27 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private wirePointerInput(): void {
+    // Board can be scaled down on narrow viewports (phone, narrow
+    // laptop) — getBounds() returns the scaled world rect, and we
+    // have to unscale px → local → tiles. Without this, a touch at
+    // the visible right edge on mobile maps to beyond-the-board in
+    // sim coordinates.
     const withinBoard = (px: number, py: number): boolean => {
       const origin = this.boardContainer.getBounds();
       return (
-        px >= origin.x && px <= origin.x + BOARD_W && py >= origin.y && py <= origin.y + BOARD_H
+        px >= origin.x &&
+        px <= origin.x + origin.width &&
+        py >= origin.y &&
+        py <= origin.y + origin.height
       );
     };
     const toTile = (px: number, py: number): { tx: number; ty: number } => {
       const origin = this.boardContainer.getBounds();
-      return { tx: (px - origin.x) / TILE, ty: (py - origin.y) / TILE };
+      const scale = this.boardContainer.scaleX || 1;
+      return {
+        tx: (px - origin.x) / scale / TILE,
+        ty: (py - origin.y) / scale / TILE,
+      };
     };
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -570,21 +582,32 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private renderTrailPreview(): void {
+    // trailGraphics lives inside boardContainer so it shares the
+    // container transform. Convert world-space pointer coords to
+    // container-local coords by subtracting the world origin and
+    // dividing by the scale factor — matches toTile()'s math, so
+    // trail dots land directly under the cursor at any viewport
+    // size (phone, tablet, desktop).
     const origin = this.boardContainer.getBounds();
+    const scale = this.boardContainer.scaleX || 1;
     this.trailGraphics.clear();
     this.trailGraphics.lineStyle(6, 0xffd98a, 0.85);
     this.trailGraphics.beginPath();
     for (let i = 0; i < this.drawingPoints.length; i++) {
       const p = this.drawingPoints[i]!;
-      const x = p.x - origin.x;
-      const y = p.y - origin.y;
+      const x = (p.x - origin.x) / scale;
+      const y = (p.y - origin.y) / scale;
       if (i === 0) this.trailGraphics.moveTo(x, y);
       else this.trailGraphics.lineTo(x, y);
     }
     this.trailGraphics.strokePath();
+    this.trailGraphics.fillStyle(0xffd98a, 0.9);
     for (const p of this.drawingPoints) {
-      this.trailGraphics.fillStyle(0xffd98a, 0.9);
-      this.trailGraphics.fillCircle(p.x - origin.x, p.y - origin.y, 4);
+      this.trailGraphics.fillCircle(
+        (p.x - origin.x) / scale,
+        (p.y - origin.y) / scale,
+        4,
+      );
     }
   }
 
@@ -905,8 +928,19 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private layout(): void {
-    const xOffset = Math.max(0, (this.scale.width - BOARD_W) / 2);
-    this.boardContainer.setX(xOffset);
+    // Mobile-aware board sizing. Reserve HUD + deck, scale board to
+    // fit the remaining rectangle, center with padding. Everything
+    // else (units, buildings, trail graphics) lives inside the
+    // container so they scale together; pointer math unscales.
+    const availW = this.scale.width - 24;
+    const availH = this.scale.height - HUD_H - DECK_H - 40;
+    const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+    this.boardContainer.setScale(scale);
+    const scaledW = BOARD_W * scale;
+    const scaledH = BOARD_H * scale;
+    const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
+    const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
+    this.boardContainer.setPosition(xOffset, yOffset);
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);

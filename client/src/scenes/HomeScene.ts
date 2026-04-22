@@ -608,26 +608,53 @@ export class HomeScene extends Phaser.Scene {
   private footerButtons: HiveButton[] = [];
 
   private layoutFooter(): void {
-    const y = HomeScene.FOOTER_ROW_Y;
     const count = this.footerButtons.length;
     if (count === 0) return;
     const marginX = HomeScene.FOOTER_MARGIN_X;
     const gap = HomeScene.FOOTER_GAP;
-    const available = Math.max(
-      800,
-      this.scale.width - marginX * 2 - gap * (count - 1),
-    );
-    // Cap individual button width — on ultra-wide monitors a 400 px
-    // button looks silly. Anything beyond that becomes extra
-    // horizontal breathing room centered on screen.
-    const btnW = Math.min(220, available / count);
     const btnH = HomeScene.FOOTER_BTN_H;
-    const totalW = btnW * count + gap * (count - 1);
-    const startX = (this.scale.width - totalW) / 2;
-    for (let i = 0; i < count; i++) {
-      const b = this.footerButtons[i]!;
-      b.setSize(btnW, btnH);
-      b.setPosition(startX + i * (btnW + gap), y);
+
+    // Responsive footer. On wide (≥ 900 px) we keep all 7 buttons in
+    // one row; on narrow viewports we wrap to 2 rows (4 + 3) so
+    // buttons stay big enough to tap on a phone without shrinking
+    // to unreadable text. Touch-target min ≈ 44 px stays intact.
+    const wide = this.scale.width >= 900;
+    const rowY1 = this.scale.height - (wide ? btnH / 2 + 20 : btnH * 2 + 28);
+    const rowY2 = this.scale.height - (btnH / 2 + 16);
+
+    if (wide) {
+      const available = this.scale.width - marginX * 2 - gap * (count - 1);
+      const btnW = Math.min(220, Math.max(110, available / count));
+      const totalW = btnW * count + gap * (count - 1);
+      const startX = (this.scale.width - totalW) / 2;
+      for (let i = 0; i < count; i++) {
+        const b = this.footerButtons[i]!;
+        b.setSize(btnW, btnH);
+        b.setPosition(startX + i * (btnW + gap), rowY1 + btnH / 2);
+      }
+    } else {
+      // Narrow: first 4 buttons on top row, remaining 3 on bottom.
+      // 4+3 split keeps the primary "Raid a base →" at the end of
+      // row 2 where it's naturally the biggest tap target.
+      const row1 = this.footerButtons.slice(0, 4);
+      const row2 = this.footerButtons.slice(4);
+      const layoutRow = (
+        arr: HiveButton[],
+        y: number,
+        target: number,
+      ): void => {
+        if (arr.length === 0) return;
+        const available = this.scale.width - marginX * 2 - gap * (arr.length - 1);
+        const btnW = Math.min(target, available / arr.length);
+        const totalW = btnW * arr.length + gap * (arr.length - 1);
+        const startX = (this.scale.width - totalW) / 2;
+        for (let i = 0; i < arr.length; i++) {
+          arr[i]!.setSize(btnW, btnH);
+          arr[i]!.setPosition(startX + i * (btnW + gap), y);
+        }
+      };
+      layoutRow(row1, rowY1 + btnH / 2, 170);
+      layoutRow(row2, rowY2, 200);
     }
   }
 
@@ -652,11 +679,33 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  private handleResize(): void {
-    // Center the board container horizontally when the scale allows.
-    const xOffset = Math.max(0, (this.scale.width - BOARD_W) / 2);
-    this.boardContainer.setX(xOffset);
+  // Vertical budget the footer needs (one or two rows of buttons
+   // plus padding). Kept in sync with layoutFooter so handleResize
+   // can reserve the space when deciding how big the board can be.
+  private footerReservedHeight(): number {
+    const narrow = this.scale.width < 900;
+    const rowH = HomeScene.FOOTER_BTN_H + 16;
+    const rows = narrow ? 2 : 1;
+    return rows * rowH + 20;
   }
+
+  private handleResize(): void {
+    // Board sizing for mobile. On a 375px phone the 768 px board is
+    // twice the viewport — we scale the whole container down so it
+    // fits, and leave TILE alone so the sim math is unchanged. Pointer
+    // handlers divide by container.scaleX when converting px → tile.
+    const availW = this.scale.width - 24;
+    const availH = this.scale.height - HUD_H - this.footerReservedHeight() - 16;
+    const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+    this.boardContainer.setScale(scale);
+    const scaledW = BOARD_W * scale;
+    const xOffset = Math.max(8, (this.scale.width - scaledW) / 2);
+    const yOffset = HUD_H + Math.max(4, (availH - BOARD_H * scale) / 2);
+    this.boardContainer.setPosition(xOffset, yOffset);
+    this.boardScale = scale;
+  }
+
+  private boardScale = 1;
 
   // --- Build mode: tap empty tile → picker modal → place --------------------
 
@@ -719,14 +768,19 @@ export class HomeScene extends Phaser.Scene {
         // Drag, not a tap — e.g. user panning the camera in the future.
         return;
       }
-      // Ignore clicks in the HUD or footer strip.
-      if (p.y < HUD_H || p.y > HUD_H + BOARD_H) return;
-      const boardBounds = this.boardContainer.getBounds();
-      const boardX = p.x - boardBounds.x;
-      const boardY = p.y - boardBounds.y;
-      if (boardX < 0 || boardX >= BOARD_W || boardY < 0 || boardY >= BOARD_H) return;
-      const tx = Math.floor(boardX / TILE);
-      const ty = Math.floor(boardY / TILE);
+      // Use the container's world bounds + current scale to convert
+      // screen pixels to board-local tile coordinates. The board
+      // scales down on narrow viewports (see handleResize) so a naive
+      // `px / TILE` would land you on the wrong tile on mobile.
+      const bounds = this.boardContainer.getBounds();
+      if (p.x < bounds.x || p.x > bounds.x + bounds.width) return;
+      if (p.y < bounds.y || p.y > bounds.y + bounds.height) return;
+      const scale = this.boardScale || 1;
+      const localX = (p.x - bounds.x) / scale;
+      const localY = (p.y - bounds.y) / scale;
+      if (localX < 0 || localX >= BOARD_W || localY < 0 || localY >= BOARD_H) return;
+      const tx = Math.floor(localX / TILE);
+      const ty = Math.floor(localY / TILE);
       if (this.isTileOccupied(tx, ty, this.layer)) return;
       this.openPicker(tx, ty);
     });

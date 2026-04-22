@@ -117,10 +117,12 @@ async function main(): Promise<void> {
       // positioning; a baseline MIN of 768×820 keeps ultra-tiny
       // viewports readable by letting Phaser scale the scene up.
       mode: Phaser.Scale.RESIZE,
-      // Min dims prevent a phone portrait from collapsing scenes
-      // into unreadable mush. Max dims keep a 4K monitor from
-      // exploding texture budgets.
-      min: { width: 768, height: 820 },
+      // No min dims: phone viewports (~375×667) get the game at
+      // their native pixel density, not letterboxed behind a 768×820
+      // clamp. Scenes handle narrow viewports by scaling the board
+      // container down and stacking the footer into two rows — see
+      // HomeScene.handleResize() + layoutFooter().
+      // Max cap on ultra-wide monitors to keep texture cost finite.
       max: { width: 2560, height: 1600 },
     },
     render: {
