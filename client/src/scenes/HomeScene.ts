@@ -5,6 +5,9 @@ import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { makeHiveButton, type HiveButton } from '../ui/button.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -227,62 +230,60 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    // Glassy HUD plane: stacked gradient bands top→bottom for depth,
-    // a crisp brass accent line + subtle drop-shadow under the
-    // bottom edge so it reads as a floating panel. Replaces the old
-    // flat green rectangle.
+    // CoC-style HUD plane: deep gradient panel + thick brass accent
+    // on the bottom edge + drop-shadow beneath. Gives the top strip
+    // real "mass" vs the previous flat band.
     const hud = this.add.graphics();
-    const BANDS = 10;
-    // Top-band slightly lighter, bottom dark. Produces a subtle
-    // vertical sheen consistent with the "glass" look.
-    const top = 0x243824;
-    const bot = 0x060a06;
-    for (let i = 0; i < BANDS; i++) {
-      const t = i / (BANDS - 1);
-      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
-      const g = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
-      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
-      hud.fillStyle((r << 16) | (g << 8) | b, 1);
-      hud.fillRect(
-        0,
-        Math.floor((i * HUD_H) / BANDS),
-        this.scale.width,
-        Math.ceil(HUD_H / BANDS) + 1,
-      );
-    }
-    // Brass accent + inner highlight + drop-shadow below the plane.
-    hud.fillStyle(0x5c4020, 1);
-    hud.fillRect(0, HUD_H - 3, this.scale.width, 1);
-    hud.fillStyle(0xffd98a, 0.45);
-    hud.fillRect(0, HUD_H - 2, this.scale.width, 1);
-    hud.fillStyle(0x000000, 0.35);
-    hud.fillRect(0, HUD_H, this.scale.width, 2);
+    hud.fillGradientStyle(
+      COLOR.bgPanelHi,
+      COLOR.bgPanelHi,
+      COLOR.bgPanelLo,
+      COLOR.bgPanelLo,
+      1,
+    );
+    hud.fillRect(0, 0, this.scale.width, HUD_H);
+    // Top inner highlight — thin brass line along the top edge
+    // catches the eye and anchors the panel.
+    hud.fillStyle(COLOR.brass, 0.35);
+    hud.fillRect(0, 1, this.scale.width, 1);
+    // Bottom brass border + drop shadow beneath the panel.
+    hud.fillStyle(COLOR.brassDeep, 1);
+    hud.fillRect(0, HUD_H - 4, this.scale.width, 1);
+    hud.fillStyle(COLOR.brass, 0.7);
+    hud.fillRect(0, HUD_H - 3, this.scale.width, 2);
+    hud.fillStyle(0x000000, 0.45);
+    hud.fillRect(0, HUD_H, this.scale.width, 3);
     hud.fillStyle(0x000000, 0.2);
-    hud.fillRect(0, HUD_H + 2, this.scale.width, 2);
+    hud.fillRect(0, HUD_H + 3, this.scale.width, 3);
 
-    crispText(this, 16, HUD_H / 2, 'HIVE WARS', {
+    // Stroked display title — dark stroke + warm fill gives us the
+    // chunky "title" look games in this genre use.
+    crispText(this, 24, HUD_H / 2, 'HIVE WARS', displayTextStyle(20, '#ffe7b0', 4))
+      .setOrigin(0, 0.5);
+
+    // Account chip — pill-shaped, same visual language as resource
+    // badges. Tappable, opens the register/login modal. Populated
+    // with the actual username if the session is user-backed.
+    const chipX = 180;
+    const chipY = HUD_H / 2;
+    const chipPanel = this.add.graphics();
+    drawPill(chipPanel, chipX, chipY - 16, 120, 32);
+    this.accountChip = crispText(this, chipX + 60, chipY, 'guest ▾', {
       fontFamily: 'ui-monospace, monospace',
-      fontSize: '18px',
-      color: '#ffd98a',
+      fontSize: '13px',
+      color: COLOR.textDim,
       fontStyle: 'bold',
-    }).setOrigin(0, 0.5);
-
-    // Account chip: "guest" or "@username", tappable to open the
-    // register/login modal. Placed to the right of the title so it
-    // doesn't fight the resource badges on the far right.
-    this.accountChip = crispText(this, 140, HUD_H / 2, 'guest ▾', {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '12px',
-      color: '#9bb88a',
-      backgroundColor: '#1a2b1a',
-      padding: { left: 8, right: 8, top: 4, bottom: 4 },
     })
-      .setOrigin(0, 0.5)
+      .setOrigin(0.5, 0.5)
       .setInteractive({ useHandCursor: true });
+    // Both the pill and the text should react to pointer — expose
+    // the combined click target by making the pill interactive too.
+    const chipZone = this.add
+      .zone(chipX + 60, chipY, 120, 32)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true });
+    chipZone.on('pointerdown', () => this.openAccountMenu());
     this.accountChip.on('pointerdown', () => this.openAccountMenu());
-    // Kick off a non-blocking fetch to replace "guest" with the real
-    // @username. Server returns { isGuest, username } — we just swap
-    // the chip text. Failures stay on "guest".
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (rt) {
       void rt.auth.fetchMe().then((me) => {
@@ -290,54 +291,56 @@ export class HomeScene extends Phaser.Scene {
         this.accountChip.setText(
           me.isGuest || !me.username ? 'guest ▾' : `@${me.username} ▾`,
         );
-        this.accountChip.setColor(me.isGuest ? '#9bb88a' : '#ffd98a');
+        this.accountChip.setColor(me.isGuest ? COLOR.textDim : COLOR.textGold);
       });
     }
 
-    // Resource badges (right-aligned). We build the texts first so class
-    // fields are populated before the income tick runs.
-    this.sugarText = crispText(this, 0, 0, this.resources.sugar.toString(), {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '16px',
-      color: '#e6f5d2',
-    }).setOrigin(1, 0.5);
-    this.leafText = crispText(this, 0, 0, this.resources.leafBits.toString(), {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '16px',
-      color: '#e6f5d2',
-    }).setOrigin(1, 0.5);
-    this.milkText = crispText(this, 0, 0, this.resources.aphidMilk.toString(), {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '16px',
-      color: '#e6f5d2',
-    }).setOrigin(1, 0.5);
+    // Resource readouts — big, stroked, gold digits that read like
+    // "I have this many coins." Built first so layout code below
+    // can measure their widths.
+    this.sugarText = crispText(
+      this,
+      0,
+      0,
+      this.resources.sugar.toString(),
+      displayTextStyle(17, COLOR.textGold, 3),
+    ).setOrigin(1, 0.5);
+    this.leafText = crispText(
+      this,
+      0,
+      0,
+      this.resources.leafBits.toString(),
+      displayTextStyle(17, '#c8f2a0', 3),
+    ).setOrigin(1, 0.5);
+    this.milkText = crispText(
+      this,
+      0,
+      0,
+      this.resources.aphidMilk.toString(),
+      displayTextStyle(17, '#dfe8ff', 3),
+    ).setOrigin(1, 0.5);
 
-    // Resource pills: each badge gets a rounded-rect capsule behind
-    // the icon+number so they read as distinct chips rather than
-    // floating over the HUD gradient. Drawn right-to-left from
-    // scale.width so the rightmost always snuggles against the edge.
+    // Resource pills — capsule panel per resource. Right-aligned
+    // so the rightmost hugs the screen edge on any viewport.
     const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
       { icon: 'ui-resource-sugar', text: this.sugarText },
       { icon: 'ui-resource-leaf', text: this.leafText },
       { icon: 'ui-resource-milk', text: this.milkText },
     ];
-    const PILL_H = 32;
-    const PILL_PAD_X = 10;
+    const PILL_H = 36;
+    const PILL_PAD_X = 12;
     const PILL_ICON_GAP = 6;
-    const PILL_GAP = 8;
-    const ICON_SIZE = 22;
-    let x = this.scale.width - 12;
+    const PILL_GAP = SPACING.sm;
+    const ICON_SIZE = 26;
+    let x = this.scale.width - SPACING.md;
     for (let i = badges.length - 1; i >= 0; i--) {
       const b = badges[i]!;
-      const textW = Math.max(b.text.width, 20);
+      const textW = Math.max(b.text.width, 30);
       const pillW = PILL_PAD_X * 2 + ICON_SIZE + PILL_ICON_GAP + textW;
       const pillX = x - pillW;
       const pillY = HUD_H / 2 - PILL_H / 2;
       const pill = this.add.graphics();
-      pill.fillStyle(0x000000, 0.4);
-      pill.fillRoundedRect(pillX, pillY, pillW, PILL_H, PILL_H / 2);
-      pill.lineStyle(1, 0xffd98a, 0.25);
-      pill.strokeRoundedRect(pillX, pillY, pillW, PILL_H, PILL_H / 2);
+      drawPill(pill, pillX, pillY, pillW, PILL_H);
       const icon = this.add
         .image(pillX + PILL_PAD_X + ICON_SIZE / 2, HUD_H / 2, b.icon)
         .setDisplaySize(ICON_SIZE, ICON_SIZE);
@@ -445,13 +448,23 @@ export class HomeScene extends Phaser.Scene {
       grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
     }
 
-    // Frame around the playable area so the board reads as a discrete
-    // object rather than bleeding into the scene's flat background.
+    // Thick CoC-style wooden frame around the playable area. Two-
+    // ring stroke + a thin brass inner highlight + a drop shadow
+    // below. Makes the board read as a discrete, raised object
+    // against the scene ambient.
     const frame = this.add.graphics();
-    frame.lineStyle(3, palette.frame, 0.9);
-    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 6);
-    frame.lineStyle(1, palette.highlight, 0.35);
-    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 5);
+    // Outer drop shadow
+    frame.fillStyle(0x000000, 0.35);
+    frame.fillRoundedRect(-3, -1, BOARD_W + 6, BOARD_H + 8, 12);
+    // Outer ring (thick dark brown)
+    frame.lineStyle(6, 0x3a2512, 1);
+    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 10);
+    // Middle ring (warm brown)
+    frame.lineStyle(3, 0x6b4420, 0.9);
+    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 8);
+    // Inner brass highlight
+    frame.lineStyle(1, COLOR.brass, 0.55);
+    frame.strokeRoundedRect(5, 5, BOARD_W - 10, BOARD_H - 10, 6);
 
     this.boardContainer.add([bg, deco, grid, frame]);
   }
@@ -592,12 +605,7 @@ export class HomeScene extends Phaser.Scene {
   // Footer button records so the flip-button label can be refreshed
   // without looking it up by index. Each entry carries a setLabel
   // helper that updates the Text child of the container.
-  private footerButtons: Array<{
-    container: Phaser.GameObjects.Container;
-    setPosition: (x: number, y: number) => void;
-    setLabel: (s: string) => void;
-    setSize: (w: number, h: number) => void;
-  }> = [];
+  private footerButtons: HiveButton[] = [];
 
   private layoutFooter(): void {
     const y = HomeScene.FOOTER_ROW_Y;
@@ -623,116 +631,25 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
-  // Graphics-drawn button (no sprite image). Avoids the "button
-  // looks like a plain rectangle on hover" bug from the previous
-  // version — that happened when a procedural placeholder was loaded
-  // for the missing ui-button-primary/ui-button-secondary sprite and
-  // a scale tween revealed its bare outline. Rendering via Graphics
-  // means we control every pixel: background fill, border, hover
-  // state, pressed state, the lot.
+  // Thin adapter over the shared makeHiveButton so footer code stays
+  // readable. The shared factory lives in ui/button.ts and is used by
+  // RaidScene and ArenaScene too — one visual language everywhere.
   private makeButton(
     x: number,
     y: number,
     label: string,
     variant: 'primary' | 'secondary',
     onPress: () => void,
-  ): {
-    container: Phaser.GameObjects.Container;
-    setPosition: (x: number, y: number) => void;
-    setLabel: (s: string) => void;
-    setSize: (w: number, h: number) => void;
-  } {
-    const container = this.add.container(x, y);
-    let curW = 180;
-    let curH = HomeScene.FOOTER_BTN_H;
-
-    const palette =
-      variant === 'primary'
-        ? {
-            fill: 0x4f9c3b,
-            fillHover: 0x6bbc52,
-            fillPress: 0x3a7a2d,
-            stroke: 0xffd98a,
-            strokeAlpha: 0.85,
-            text: '#0f1b10',
-            textHover: '#0f1b10',
-          }
-        : {
-            fill: 0x1f3a1f,
-            fillHover: 0x2d5125,
-            fillPress: 0x162815,
-            stroke: 0x3d5e2a,
-            strokeAlpha: 0.6,
-            text: '#e6f5d2',
-            textHover: '#ffe7b0',
-          };
-    const radius = 10;
-
-    const shadow = this.add.graphics();
-    const bg = this.add.graphics();
-    const text = crispText(this, 0, 0, label, {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '14px',
-      color: palette.text,
-      fontStyle: variant === 'primary' ? 'bold' : 'normal',
-    }).setOrigin(0.5, 0.5);
-
-    const redraw = (fillColor: number): void => {
-      shadow.clear();
-      shadow
-        .fillStyle(0x000000, 0.4)
-        .fillRoundedRect(-curW / 2 + 1, -curH / 2 + 3, curW, curH, radius);
-      bg.clear();
-      bg.fillStyle(fillColor, 1);
-      bg.lineStyle(1.5, palette.stroke, palette.strokeAlpha);
-      bg.fillRoundedRect(-curW / 2, -curH / 2, curW, curH, radius);
-      bg.strokeRoundedRect(-curW / 2, -curH / 2, curW, curH, radius);
-    };
-    redraw(palette.fill);
-
-    // Invisible zone sized to the button captures pointer events
-    // rather than the bg Graphics, which can't easily be made
-    // interactive with a matching hit shape at resize time.
-    const hit = this.add
-      .zone(0, 0, curW, curH)
-      .setOrigin(0.5, 0.5)
-      .setInteractive({ useHandCursor: true });
-
-    hit.on('pointerover', () => {
-      redraw(palette.fillHover);
-      text.setColor(palette.textHover);
+  ): HiveButton {
+    return makeHiveButton(this, {
+      x,
+      y,
+      width: 180,
+      height: HomeScene.FOOTER_BTN_H,
+      label,
+      variant,
+      onPress,
     });
-    hit.on('pointerout', () => {
-      redraw(palette.fill);
-      text.setColor(palette.text);
-    });
-    hit.on('pointerdown', () => {
-      redraw(palette.fillPress);
-      this.tweens.add({
-        targets: container,
-        scaleY: 0.94,
-        duration: 70,
-        yoyo: true,
-        ease: 'Quad.easeOut',
-      });
-      onPress();
-    });
-    hit.on('pointerup', () => redraw(palette.fillHover));
-
-    container.add([shadow, bg, text, hit]);
-
-    return {
-      container,
-      setPosition: (nx, ny) => container.setPosition(nx, ny),
-      setLabel: (s) => text.setText(s),
-      setSize: (nw, nh) => {
-        curW = nw;
-        curH = nh;
-        redraw(palette.fill);
-        hit.setSize(nw, nh);
-        hit.input!.hitArea.setSize(nw, nh);
-      },
-    };
   }
 
   private handleResize(): void {

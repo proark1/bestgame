@@ -18,20 +18,34 @@ const CSS = `
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .hive-tutorial-card {
-  width: min(560px, 92vw);
+  width: min(580px, 92vw);
   max-height: 90vh; overflow: auto;
-  background: linear-gradient(180deg, #1b2c1c, #0f1b10);
-  color: #e6f5d2;
-  border: 1px solid #3d5e2a;
-  border-radius: 16px;
-  padding: 22px 26px 18px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  /* Deep-panel gradient + thick brass border to match the in-game
+   * HUD panels. The inset box-shadow is a fake "inner highlight"
+   * catching the eye along the top edge — same bevel trick Phaser's
+   * panel helper uses. */
+  background: linear-gradient(180deg, #243824 0%, #1b2c1c 35%, #0f1b10 100%);
+  color: #f4e9cc;
+  border: 3px solid #5c4020;
+  border-radius: 18px;
+  padding: 24px 28px 20px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 217, 138, 0.45),
+    0 18px 48px rgba(0, 0, 0, 0.6);
 }
 .hive-tutorial-card h1 {
   margin: 0 0 4px;
-  font-size: 22px;
-  color: #ffd98a;
+  font-size: 26px;
+  color: #ffe7b0;
   letter-spacing: 0.5px;
+  /* Stroked-title effect without SVG: text-shadow in four directions
+   * simulates an outline, and an inner drop shadow beneath adds depth. */
+  text-shadow:
+    -1px -1px 0 #0a120c,
+    1px -1px 0 #0a120c,
+    -1px 1px 0 #0a120c,
+    1px 1px 0 #0a120c,
+    0 3px 6px rgba(0, 0, 0, 0.7);
 }
 .hive-tutorial-card .hive-tutorial-sub {
   margin: 0 0 14px;

@@ -4,6 +4,8 @@ import type { HiveRuntime } from '../main.js';
 import { ArenaClient, type ArenaEvent } from '../net/ArenaClient.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { makeHiveButton } from '../ui/button.js';
+import { COLOR, displayTextStyle } from '../ui/theme.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
 //
@@ -143,30 +145,38 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawHud(): void {
     const g = this.add.graphics();
-    g.fillStyle(0x0a120c, 1);
+    g.fillGradientStyle(
+      COLOR.bgPanelHi,
+      COLOR.bgPanelHi,
+      COLOR.bgPanelLo,
+      COLOR.bgPanelLo,
+      1,
+    );
     g.fillRect(0, 0, this.scale.width, HUD_H);
-    g.fillStyle(0x1a2b1a, 1);
-    g.fillRect(0, HUD_H - 2, this.scale.width, 2);
-    this.add
-      .text(16, HUD_H / 2, '← Home', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-        backgroundColor: '#1a2b1a',
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => {
+    g.fillStyle(COLOR.brass, 0.35);
+    g.fillRect(0, 1, this.scale.width, 1);
+    g.fillStyle(COLOR.brassDeep, 1);
+    g.fillRect(0, HUD_H - 4, this.scale.width, 1);
+    g.fillStyle(COLOR.brass, 0.7);
+    g.fillRect(0, HUD_H - 3, this.scale.width, 2);
+    g.fillStyle(0x000000, 0.45);
+    g.fillRect(0, HUD_H, this.scale.width, 3);
+
+    makeHiveButton(this, {
+      x: 80,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: '← Home',
+      variant: 'ghost',
+      fontSize: 13,
+      onPress: () => {
         void this.arena?.leave();
         fadeToScene(this, 'HomeScene');
-      });
+      },
+    });
     this.add
-      .text(this.scale.width / 2, HUD_H / 2, '⚔ Live Arena', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '18px',
-        color: '#ffd98a',
-      })
+      .text(this.scale.width / 2, HUD_H / 2, '⚔ Live Arena', displayTextStyle(20, COLOR.textGold, 4))
       .setOrigin(0.5);
   }
 
