@@ -241,35 +241,39 @@ export class HomeScene extends Phaser.Scene {
     // so the TileSprite reads as one continuous banner at any
     // viewport width.
     const w = this.scale.width;
+    // Background-only swap: override replaces the gradient panel with a
+    // tiled image; the shadow + brass strokes + pill layout below still
+    // run so resource text fields are always initialized. Previously an
+    // early return here skipped sugarText/leafText/milkText, which then
+    // null-deref'd in update() and froze the whole scene.
     if (isUiOverrideActive(this, 'ui-hud-bg')) {
       this.add.tileSprite(0, 0, w, HUD_H, 'ui-hud-bg').setOrigin(0, 0);
-      // Still drop a thin shadow below so the HUD reads as raised.
       const shadow = this.add.graphics();
       shadow.fillStyle(0x000000, 0.45);
       shadow.fillRect(0, HUD_H, w, 3);
       shadow.fillStyle(0x000000, 0.2);
       shadow.fillRect(0, HUD_H + 3, w, 3);
-      return;
+    } else {
+      const hud = this.add.graphics();
+      hud.fillGradientStyle(
+        COLOR.bgPanelHi,
+        COLOR.bgPanelHi,
+        COLOR.bgPanelLo,
+        COLOR.bgPanelLo,
+        1,
+      );
+      hud.fillRect(0, 0, w, HUD_H);
+      hud.fillStyle(COLOR.brass, 0.35);
+      hud.fillRect(0, 1, w, 1);
+      hud.fillStyle(COLOR.brassDeep, 1);
+      hud.fillRect(0, HUD_H - 4, w, 1);
+      hud.fillStyle(COLOR.brass, 0.7);
+      hud.fillRect(0, HUD_H - 3, w, 2);
+      hud.fillStyle(0x000000, 0.45);
+      hud.fillRect(0, HUD_H, w, 3);
+      hud.fillStyle(0x000000, 0.2);
+      hud.fillRect(0, HUD_H + 3, w, 3);
     }
-    const hud = this.add.graphics();
-    hud.fillGradientStyle(
-      COLOR.bgPanelHi,
-      COLOR.bgPanelHi,
-      COLOR.bgPanelLo,
-      COLOR.bgPanelLo,
-      1,
-    );
-    hud.fillRect(0, 0, w, HUD_H);
-    hud.fillStyle(COLOR.brass, 0.35);
-    hud.fillRect(0, 1, w, 1);
-    hud.fillStyle(COLOR.brassDeep, 1);
-    hud.fillRect(0, HUD_H - 4, w, 1);
-    hud.fillStyle(COLOR.brass, 0.7);
-    hud.fillRect(0, HUD_H - 3, w, 2);
-    hud.fillStyle(0x000000, 0.45);
-    hud.fillRect(0, HUD_H, w, 3);
-    hud.fillStyle(0x000000, 0.2);
-    hud.fillRect(0, HUD_H + 3, w, 3);
 
     // Responsive HUD layout — three tiers:
     //   wide   (≥ 760 px): full layout. Title + chip + 3 resource pills.
