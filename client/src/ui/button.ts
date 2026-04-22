@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { BUTTON_VARIANT, SPACING, type ButtonVariant } from './theme.js';
 import { isUiOverrideActive } from './uiOverrides.js';
+import { isClickDebugEnabled } from './clickDebug.js';
 
 // Shared game-button factory. Graphics-drawn rounded rectangle with a
 // two-band gradient fill, thick outer stroke, inner highlight, drop
@@ -200,21 +201,24 @@ export function makeHiveButton(
     .setInteractive({ useHandCursor: enabled });
 
   // Phaser's InputManager.pointWithinHitArea adds displayOriginX/Y to
-  // the local pointer before containment-testing, so the default hit
-  // area created by setInteractive — Rectangle(0, 0, w, h) — already
-  // aligns with a center-origin zone's visual bounds. Zone.setSize
-  // resizes that default rectangle in-place (and updates displayOrigin)
-  // as long as we leave customHitArea=false. The previous override
-  // reassigned input.hitArea to Rectangle(-w/2, -h/2, w, h), which
-  // shifts the test point by an extra +(w/2, h/2) after the origin
-  // normalization — the hit zone moved up-and-left by half a button
-  // so the visible right and bottom halves of every footer button
-  // silently missed clicks on desktop (and cross-fed into the
-  // neighbour's dead zone, making only buttons the user happened to
-  // click in the top-left corner feel like they "worked").
+  // the local pointer before containment-testing, so the visible
+  // bounds of a center-origin zone correspond to Rectangle(0, 0, w, h)
+  // in hit-area space. We explicitly re-stamp that rectangle on every
+  // resize. Zone.setSize already resizes the default rect in place
+  // when customHitArea is false, but re-stamping in-place via setTo
+  // keeps the hit zone correct even if customHitArea ever flips
+  // (e.g. during a future setInteractive re-invocation for the
+  // disabled-state cursor change), so this code path doesn't silently
+  // regress into the (-w/2, -h/2, w, h) shift that caused footer
+  // buttons to ignore clicks on their right and bottom halves.
   const refreshHit = (): void => {
     hit.setSize(curW, curH);
+    const rect = hit.input?.hitArea as Phaser.Geom.Rectangle | undefined;
+    if (rect && typeof rect.setTo === 'function') {
+      rect.setTo(0, 0, curW, curH);
+    }
   };
+  refreshHit();
 
   hit.on('pointerover', () => {
     if (state === 'disabled') return;
@@ -226,8 +230,34 @@ export function makeHiveButton(
     state = 'idle';
     paint();
   });
-  hit.on('pointerdown', () => {
+  hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (state === 'disabled') return;
+    if (isClickDebugEnabled()) {
+      // One log per button press when debug is on. Records the
+      // container's world position, the hit zone's world transform,
+      // and the pointer's game/world coords — plus a pass/fail on
+      // whether the pointer actually lands inside the visible
+      // rectangle. When the user reports "clicks land in the wrong
+      // button" this tells us immediately whether the hit zone and
+      // the visible chrome are still aligned.
+      const wt = container.getWorldTransformMatrix();
+      // Don't non-null-assert hit.input: setInteractive can be
+      // cleared (e.g. removeInteractive during a tween teardown)
+      // and logging a click mid-teardown shouldn't throw.
+      const hitArea = hit.input?.hitArea as Phaser.Geom.Rectangle | undefined;
+      console.log('[hive-debug] button pointerdown', {
+        label: curLabel,
+        pointerWorld: { x: pointer.worldX, y: pointer.worldY },
+        pointerGame: { x: pointer.x, y: pointer.y },
+        containerWorld: { x: wt.tx, y: wt.ty },
+        size: { w: curW, h: curH },
+        zoneOrigin: { x: hit.originX, y: hit.originY },
+        displayOrigin: { x: hit.displayOriginX, y: hit.displayOriginY },
+        hitArea: hitArea
+          ? { x: hitArea.x, y: hitArea.y, w: hitArea.width, h: hitArea.height }
+          : null,
+      });
+    }
     state = 'press';
     paint();
     scene.tweens.add({

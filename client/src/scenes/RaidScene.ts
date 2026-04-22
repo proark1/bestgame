@@ -4,6 +4,7 @@ import { bakeTrailDot } from '../assets/placeholders.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { COLOR, displayTextStyle } from '../ui/theme.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -180,6 +181,7 @@ export class RaidScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
     fadeInScene(this);
+    installSceneClickDebug(this);
     // Reset all per-run state. Scene instances are reused across raids,
     // so previous-run state must be cleared here or it'll leak.
     this.deckEntries = DECK.map((d) => ({ ...d }));

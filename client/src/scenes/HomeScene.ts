@@ -8,6 +8,7 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { isUiOverrideActive } from '../ui/uiOverrides.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
@@ -77,6 +78,7 @@ export class HomeScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.drawAmbient();
 
     // Hydrate from runtime — scene is re-entered after each raid, so this
@@ -354,6 +356,35 @@ export class HomeScene extends Phaser.Scene {
       void icon;
       x = pillX - PILL_GAP;
     }
+
+    // Codex chip — a compact 📖 disc to the left of the resource
+    // pills. Opens the character-card reference screen. Kept as a
+    // separate dedicated entry point (not a footer button) because
+    // the codex is lookup / lore, not in-loop gameplay, and the
+    // footer is already saturated at 7 buttons.
+    this.drawCodexChip(x, cy, tier);
+  }
+
+  private drawCodexChip(
+    rightEdgeX: number,
+    cy: number,
+    tier: 'wide' | 'narrow' | 'phone',
+  ): void {
+    const size = tier === 'phone' ? 32 : 36;
+    const cx = rightEdgeX - size / 2;
+    const pill = this.add.graphics();
+    drawPill(pill, cx - size / 2, cy - size / 2, size, size);
+    const glyph = crispText(this, cx, cy, '📖', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: tier === 'phone' ? '16px' : '18px',
+    }).setOrigin(0.5, 0.5);
+    this.add
+      .zone(cx, cy, size, size)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => fadeToScene(this, 'CodexScene'));
+    void pill;
+    void glyph;
   }
 
   // Tier-aware account chip. On wide viewports it's a named pill
@@ -434,6 +465,18 @@ export class HomeScene extends Phaser.Scene {
             highlight: 0xd1a060,
           };
 
+    // Solid base layer painted UNDER everything else so the playable
+    // area always reads as one continuous green surface, even when
+    // the generated board-tile art has semi-transparent edges or
+    // dark seams where repeats meet. Without this pad, the user
+    // sees the board as a 3×2 grid of chunks separated by dark
+    // lanes (the scene's ambient showing through tile gaps), not
+    // as a single field.
+    const basePad = this.add.graphics();
+    basePad.fillStyle(palette.baseA, 1);
+    basePad.fillRect(0, 0, BOARD_W, BOARD_H);
+    this.boardContainer.add(basePad);
+
     const bg = this.add.graphics();
     // If the admin has turned on the `ui-board-tile-surface` override
     // AND the image is on disk, tile it across the board instead of
@@ -450,7 +493,9 @@ export class HomeScene extends Phaser.Scene {
         .setOrigin(0, 0);
       // Add directly — bg (still empty Graphics) stays as a handle so
       // the rest of this function can keep drawing on it (vignette,
-      // etc.) without re-ordering.
+      // etc.) without re-ordering. The basePad painted above sits
+      // under the tile sprite and fills any transparent pixels in
+      // the tile art.
       this.boardContainer.add(tileSprite);
     } else {
       // Vertical gradient fake via stacked bands. `fillGradientStyle`
@@ -613,7 +658,14 @@ export class HomeScene extends Phaser.Scene {
   // state rides on the Flip button's label ("Flip → Underground")
   // instead of a separate text widget, which buys back the row.
   private static readonly FOOTER_ROW_Y = HUD_H + BOARD_H + 40;
-  private static readonly FOOTER_BTN_H = 44;
+  // 56px leaves ~24px of clear green band between the 16px brass
+  // caps the NineSlice reserves on the top/bottom, which is enough
+  // for a 15px label + emoji icon to sit centered inside the pill
+  // without visually clipping its top/bottom. 44px (the previous
+  // value) only left a 12px band — the emoji and the text both
+  // overflowed the "green" area, which is what the user saw as the
+  // icon sitting above/below the pill.
+  private static readonly FOOTER_BTN_H = 56;
   private static readonly FOOTER_MARGIN_X = 20;
   private static readonly FOOTER_GAP = 10;
 

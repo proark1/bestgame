@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
@@ -33,6 +34,7 @@ export class ClanScene extends Phaser.Scene {
 
   create(): void {
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawHud();
     this.layerContainer = this.add.container(0, 0);

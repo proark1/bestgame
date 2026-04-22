@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import type { HiveRuntime } from '../main.js';
 import type { RaidHistoryEntry } from '../net/Api.js';
 
@@ -24,6 +25,7 @@ export class RaidHistoryScene extends Phaser.Scene {
 
   create(): void {
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawHud();
     this.rowContainer = this.add.container(0, this.viewportTop);

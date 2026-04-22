@@ -4,6 +4,7 @@ import type { HiveRuntime } from '../main.js';
 import { ArenaClient, type ArenaEvent } from '../net/ArenaClient.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
 import { COLOR, displayTextStyle } from '../ui/theme.js';
 
@@ -95,6 +96,7 @@ export class ArenaScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor('#0f1b10');
     fadeInScene(this);
+    installSceneClickDebug(this);
     this.started = false;
     this.hasError = false;
     this.buildingSprites.clear();
