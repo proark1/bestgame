@@ -4,7 +4,16 @@
 // and bulk operations.
 
 import { compressBase64Image, humanBytes, type CompressedImage } from './compress.js';
-import { deleteSprite, generateImages, saveSprite, type GeminiImage } from './api.js';
+import {
+  deleteSprite,
+  fetchSpriteHistory,
+  generateImages,
+  loadSpriteHistoryBytes,
+  restoreSpriteHistory,
+  saveSprite,
+  type GeminiImage,
+  type SpriteHistoryEntry,
+} from './api.js';
 import { removeBackground, removeNearWhite } from './removeBackground.js';
 
 export interface SpriteCardOptions {
@@ -33,11 +42,16 @@ export class SpriteCard {
   private metaEl!: HTMLSpanElement;
   private candidatesEl!: HTMLDivElement;
   private promptEl!: HTMLTextAreaElement;
+  // Optional free-text label attached to the next save. Consumed by
+  // the server to tag the history row so the admin can find a
+  // generation by intent ("warmer colors") instead of timestamp.
+  private labelEl?: HTMLInputElement;
   private generateBtn!: HTMLButtonElement;
   private removeBgBtn!: HTMLButtonElement;
   private removeGraysBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
   private downloadBtn!: HTMLButtonElement;
+  private historyBtn!: HTMLButtonElement;
   private variantsSelect!: HTMLSelectElement;
 
   constructor(opts: SpriteCardOptions) {
@@ -104,21 +118,201 @@ export class SpriteCard {
     if (!this.compressed) return;
     this.setBusy(true);
     const ext = this.opts.getCompression().format;
+    // Read the current label input so the new history row carries
+    // it. Empty = no label, which is fine — server stores null.
+    const label = this.labelEl?.value.trim() ?? '';
     try {
       const res = await saveSprite({
         key: this.key,
         data: this.compressed.base64,
         format: ext,
+        ...(label.length > 0 ? { label } : {}),
       });
       this.opts.onSaved({ path: res.path, ext });
       this.opts.showStatus(`Saved ${this.key} (${humanBytes(res.size)})`, 'success');
       // refresh thumb from saved path
       this.refreshThumb(res.path);
+      // Clear the label field so the next save starts fresh — the
+      // label is tied to THIS generation, not sticky for the card.
+      if (this.labelEl) this.labelEl.value = '';
     } catch (err) {
       this.opts.showStatus(`save failed: ${(err as Error).message}`, 'error');
     } finally {
       this.setBusy(false);
     }
+  }
+
+  // Open the history modal for this key. Shows the last N generations
+  // (metadata from /admin/api/sprite/:key/history, bytes streamed one
+  // per entry) with a "Use this" button that calls restore.
+  async openHistory(): Promise<void> {
+    let resp;
+    try {
+      resp = await fetchSpriteHistory(this.key);
+    } catch (err) {
+      this.opts.showStatus(
+        `history load failed: ${(err as Error).message}`,
+        'error',
+      );
+      return;
+    }
+    if (resp.dbPersistence === 'not-configured') {
+      this.opts.showStatus(
+        'History is DB-backed — set DATABASE_URL to enable.',
+        'error',
+      );
+      return;
+    }
+    if (resp.entries.length === 0) {
+      this.opts.showStatus(
+        `No history yet for ${this.key}. Save at least once to start tracking.`,
+        'info',
+      );
+      return;
+    }
+    this.renderHistoryModal(resp.entries);
+  }
+
+  private renderHistoryModal(entries: SpriteHistoryEntry[]): void {
+    // Overlay + card. Vanilla DOM — same pattern the other admin
+    // modals use (no Phaser, CSS only). Click outside card to dismiss.
+    const overlay = document.createElement('div');
+    overlay.className = 'history-overlay';
+    const card = document.createElement('div');
+    card.className = 'history-card';
+    const h = document.createElement('h2');
+    h.textContent = `${this.key} · history`;
+    const sub = document.createElement('p');
+    sub.className = 'history-sub';
+    sub.textContent =
+      'Last generations kept for this key. Pick one and click ' +
+      '"Use this" to promote it to the live bytes the game renders. ' +
+      'The restored version is appended to the top of history, so ' +
+      'you can flip back to whichever generation was live before.';
+    card.append(h, sub);
+
+    const grid = document.createElement('div');
+    grid.className = 'history-grid';
+    card.append(grid);
+
+    // Track object URLs so we can revoke them when the modal closes
+    // — a preview is a few hundred KB and leaking three per open
+    // adds up quickly if the admin hops between cards.
+    const urlBag: string[] = [];
+
+    const close = (): void => {
+      for (const u of urlBag) URL.revokeObjectURL(u);
+      overlay.remove();
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+
+    // First entry is the currently-live one (most recent). Mark it
+    // so the admin sees which is current.
+    entries.forEach((entry, i) => {
+      const row = document.createElement('div');
+      row.className = 'history-entry';
+      if (i === 0) row.classList.add('active');
+
+      const thumbBox = document.createElement('div');
+      thumbBox.className = 'history-thumb';
+      // Loading placeholder, replaced when the bytes arrive.
+      thumbBox.textContent = '…';
+      row.append(thumbBox);
+
+      void loadSpriteHistoryBytes(this.key, entry.id)
+        .then((url) => {
+          urlBag.push(url);
+          thumbBox.textContent = '';
+          const img = document.createElement('img');
+          img.src = url;
+          thumbBox.append(img);
+        })
+        .catch((err: unknown) => {
+          thumbBox.textContent = '(preview failed)';
+          // eslint-disable-next-line no-console
+          console.warn('history preview failed', err);
+        });
+
+      const meta = document.createElement('div');
+      meta.className = 'history-meta';
+      const when = new Date(entry.createdAt);
+      const stamp = when.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const stampEl = document.createElement('div');
+      stampEl.className = 'history-stamp';
+      stampEl.textContent = stamp + (i === 0 ? ' · LIVE' : '');
+      meta.append(stampEl);
+      if (entry.label) {
+        const labelEl = document.createElement('div');
+        labelEl.className = 'history-label';
+        labelEl.textContent = entry.label;
+        meta.append(labelEl);
+      }
+      const sizeEl = document.createElement('div');
+      sizeEl.className = 'history-size';
+      sizeEl.textContent = `${entry.format.toUpperCase()} · ${humanBytes(entry.size)}${
+        entry.frames > 1 ? ` · ${entry.frames} frames` : ''
+      }`;
+      meta.append(sizeEl);
+      row.append(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'history-actions';
+      if (i === 0) {
+        const liveTag = document.createElement('span');
+        liveTag.className = 'history-live-tag';
+        liveTag.textContent = 'currently live';
+        actions.append(liveTag);
+      } else {
+        const useBtn = document.createElement('button');
+        useBtn.className = 'btn primary';
+        useBtn.textContent = 'Use this';
+        useBtn.addEventListener('click', async () => {
+          useBtn.disabled = true;
+          useBtn.textContent = '…';
+          try {
+            await restoreSpriteHistory(this.key, entry.id);
+            const ext = entry.format;
+            this.opts.onSaved({
+              path: `/assets/sprites/${this.key}.${ext}`,
+              ext,
+            });
+            this.opts.showStatus(
+              `Restored ${this.key} from ${stamp}`,
+              'success',
+            );
+            this.refreshThumb(`/assets/sprites/${this.key}.${ext}`);
+            close();
+          } catch (err) {
+            this.opts.showStatus(
+              `restore failed: ${(err as Error).message}`,
+              'error',
+            );
+            useBtn.disabled = false;
+            useBtn.textContent = 'Use this';
+          }
+        });
+        actions.append(useBtn);
+      }
+      row.append(actions);
+      grid.append(row);
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn ghost';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', close);
+    card.append(closeBtn);
+
+    overlay.append(card);
+    document.body.append(overlay);
   }
 
   async download(): Promise<void> {
@@ -208,6 +402,20 @@ export class SpriteCard {
     }
     variantRow.append(variantsLabel, this.variantsSelect);
 
+    // Optional label that tags the next save's history row so the
+    // admin can pick a generation by intent later. Kept compact
+    // (single-line input) so it doesn't steal vertical space from
+    // the thumbnails that actually need it.
+    const labelRow = el('div', 'stat-row');
+    const labelCaption = el('span');
+    labelCaption.textContent = 'label';
+    this.labelEl = document.createElement('input');
+    this.labelEl.type = 'text';
+    this.labelEl.className = 'history-label-input';
+    this.labelEl.maxLength = 120;
+    this.labelEl.placeholder = 'optional — e.g. "warmer colors"';
+    labelRow.append(labelCaption, this.labelEl);
+
     const actions = el('div', 'card-actions');
     this.generateBtn = button('Generate', 'btn accent', () => void this.generate());
     this.removeBgBtn = button('Remove BG', 'btn', () => void this.removeBackground());
@@ -222,17 +430,23 @@ export class SpriteCard {
     );
     this.saveBtn = button('Save', 'btn primary', () => void this.save());
     this.downloadBtn = button('Download', 'btn', () => void this.download());
+    this.historyBtn = button('History', 'btn', () => void this.openHistory());
     const delBtn = button('Delete', 'btn ghost danger', () => void this.delete());
     this.removeBgBtn.disabled = true;
     this.removeGraysBtn.disabled = true;
     this.saveBtn.disabled = true;
     this.downloadBtn.disabled = true;
+    // History is enabled whenever the sprite exists on disk (or has
+    // ever been saved) — it hits the DB and has nothing to do with
+    // candidate selection.
+    this.historyBtn.disabled = !this.opts.fileMeta.exists;
     actions.append(
       this.generateBtn,
       this.removeBgBtn,
       this.removeGraysBtn,
       this.saveBtn,
       this.downloadBtn,
+      this.historyBtn,
       delBtn,
     );
 
@@ -242,6 +456,7 @@ export class SpriteCard {
       this.candidatesEl,
       this.promptEl,
       variantRow,
+      labelRow,
       actions,
     );
   }
@@ -346,6 +561,8 @@ export class SpriteCard {
       this.metaEl.textContent = 'placeholder';
       this.metaEl.classList.remove('ok');
       this.metaEl.classList.add('warn');
+      // No sprite → no history to browse.
+      this.historyBtn.disabled = true;
       return;
     }
     const img = document.createElement('img');
@@ -356,6 +573,10 @@ export class SpriteCard {
     this.metaEl.textContent = `${ext} · ${humanBytes(size)}`;
     this.metaEl.classList.remove('warn');
     this.metaEl.classList.add('ok');
+    // Sprite exists on disk → history is queryable even if empty
+    // (the list endpoint handles that case with a "no history yet"
+    // status toast).
+    this.historyBtn.disabled = false;
   }
 
   private setBusy(b: boolean): void {
