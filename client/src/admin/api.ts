@@ -113,6 +113,11 @@ export async function generateImages(args: {
   prompt: string;
   variants: number;
   temperature?: number;
+  // Optional multimodal reference images. When present, Gemini treats
+  // them as visual references — "produce a new image like THIS but
+  // different in X way". The walk-cycle generator pins pose B to
+  // pose A so the two frames share character, palette, and camera.
+  referenceImages?: ReadonlyArray<GeminiImage>;
 }): Promise<GeminiImage[]> {
   const { images } = await req<{ images: GeminiImage[] }>('/admin/api/generate', {
     method: 'POST',
