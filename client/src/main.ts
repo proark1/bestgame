@@ -11,6 +11,7 @@ import { ArenaScene } from './scenes/ArenaScene.js';
 import { CodexScene } from './scenes/CodexScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
+import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
 
 // Shared runtime bag. Scenes pull auth/api/playerState off of this
 // registry via scene.registry.get('runtime'). Keeps the Phaser Game
@@ -68,23 +69,22 @@ async function main(): Promise<void> {
     console.warn('boot: auth/player failed, continuing guest-local', err);
   }
 
-  // HiDPI: the previous version tried `scale.zoom = DPR` here to
-  // render the whole canvas at physical resolution. That combined
-  // badly with Scale.FIT — FIT already CSS-scales the canvas to the
-  // viewport, and zoom multiplied the backing buffer on top, so
-  // Phaser's pointer-to-game-coord conversion ended up off by
-  // (1 - 1/zoom) of the screen position. In practice every click
-  // landed above-and-left of the rendered thing it targeted: the
-  // raid/arena drawn pheromone trail floated above the cursor, deck
-  // cards ignored taps until you clicked just above them, etc.
-  //
-  // Canonical fix: render at logical resolution and accept that
-  // sprites get browser-upscaled on Retina — still sharp-enough via
-  // antialias: true, and pointers align exactly with visuals.
-  // Text is the one thing that reads fuzzy under CSS upscale, so the
-  // factory patch below keeps glyphs at DPR resolution — drawn at the
-  // game's logical coordinates, so no pointer math breaks.
-  const dpr = Math.min(Math.max(1, window.devicePixelRatio || 1), 2);
+  // HiDPI strategy. We render the entire canvas at physical resolution
+  // (logical × DPR) but keep the CSS box at logical size. Camera
+  // projections still use logical coordinates, so:
+  //   * pointer math stays identity (canvas CSS size == game size),
+  //   * sprites, Graphics, and strokes rasterize at physical pixels,
+  //   * the browser never has to bitmap-upscale the canvas, which was
+  //     the "blurry/low-quality" look on Retina phones.
+  // The previous attempt failed because it combined scale.zoom=DPR
+  // with Scale.FIT; FIT already does its own CSS scaling, so the two
+  // compounded and pointer coords drifted. With Scale.RESIZE + manual
+  // backing-buffer override (see syncCanvasSize below) both layers
+  // stay consistent.
+  const dpr = Math.min(
+    Math.max(1, window.devicePixelRatio || 1),
+    MAX_DEVICE_PIXEL_RATIO,
+  );
 
   // Phaser text glyphs rasterize at resolution=1 by default. Patching
   // the factory once so every scene.add.text(...) call across the app
@@ -152,19 +152,28 @@ async function main(): Promise<void> {
   // without constructor wiring.
   game.registry.set('runtime', runtime);
 
-  // Belt-and-braces: with Scale.RESIZE we already make the backing
-  // buffer match the parent div, but some browsers (observed on
-  // FB Instant's wrapper frame, reported by users) end up with a
-  // CSS transform or a size mismatch that shifts the canvas relative
-  // to where clients think it is. Re-stamping canvas.style.{width,
-  // height} on every resize + boot guarantees CSS size === backing
-  // buffer size, which makes pointer-to-game coordinate conversion
-  // an identity no matter how the container was laid out.
+  // Backing-buffer override. Phaser's Scale.RESIZE defaults to
+  // canvas.width === game.scale.width (logical), which leaves HiDPI
+  // upscaling to the browser's bitmap sampler — i.e. blurry on every
+  // Retina phone/laptop. We override after every resize so:
+  //   canvas.width / height      = logical × DPR  (physical pixels)
+  //   canvas.style.width / height = logical       (CSS pixels)
+  //   WebGL viewport             = physical       (via renderer.resize)
+  //   camera projection          = logical        (Phaser default)
+  // Pointer-to-game math stays identity because it's driven by CSS
+  // size / camera size, both logical.
   const syncCanvasSize = (): void => {
     const c = game.canvas;
     if (!c) return;
-    c.style.width = `${game.scale.width}px`;
-    c.style.height = `${game.scale.height}px`;
+    const logicalW = game.scale.width;
+    const logicalH = game.scale.height;
+    const physW = Math.max(1, Math.round(logicalW * dpr));
+    const physH = Math.max(1, Math.round(logicalH * dpr));
+    if (c.width !== physW || c.height !== physH) {
+      game.renderer.resize(physW, physH);
+    }
+    c.style.width = `${logicalW}px`;
+    c.style.height = `${logicalH}px`;
     c.style.transform = 'none';
     c.style.display = 'block';
   };

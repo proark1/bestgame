@@ -223,9 +223,43 @@ export class BootScene extends Phaser.Scene {
     // read smooth instead of jagged. Phaser's global antialias flag
     // governs the canvas context; this per-texture setting governs
     // the sampler used when the texture is drawn.
+    //
+    // Then we layer mipmaps on top for the large source textures.
+    // Bilinear alone reads soft when you downscale 128 px → 48 px
+    // (ratio 2.67) because it samples only 4 texels. Generating the
+    // mip chain + LINEAR_MIPMAP_LINEAR has the GPU pick the right mip
+    // level for the on-screen size and tri-linearly blend — which is
+    // why downscaled building / unit sprites suddenly read sharp
+    // instead of fuzzy on Retina displays.
+    const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
+    const gl: WebGLRenderingContext | null =
+      'gl' in renderer && renderer.gl ? renderer.gl : null;
     for (const key of this.textures.getTextureKeys()) {
       if (key === '__MISSING' || key === '__DEFAULT' || key === '__WHITE') continue;
-      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
+      const texture = this.textures.get(key);
+      texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+      if (!gl) continue;
+      for (const source of texture.source) {
+        const glTexture = source.glTexture;
+        if (!glTexture) continue;
+        const img = source.image as HTMLImageElement | HTMLCanvasElement;
+        const w = 'naturalWidth' in img ? img.naturalWidth : img.width;
+        const h = 'naturalHeight' in img ? img.naturalHeight : img.height;
+        // Mipmaps in WebGL1 require power-of-2 on both axes; in
+        // WebGL2 they're always allowed. Gate on POT to stay safe on
+        // WebGL1 — a non-POT texture that gets generateMipmap'd
+        // becomes invalid and samples as solid black. Almost every
+        // sprite is 128 × 128, which IS POT.
+        const isPot = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
+        if (!isPot(w) || !isPot(h)) continue;
+        gl.bindTexture(gl.TEXTURE_2D, glTexture);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(
+          gl.TEXTURE_2D,
+          gl.TEXTURE_MIN_FILTER,
+          gl.LINEAR_MIPMAP_LINEAR,
+        );
+      }
     }
 
     // Fetch admin UI-override flags before transitioning so HomeScene's
