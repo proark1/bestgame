@@ -89,6 +89,11 @@ export const UI_OVERRIDE_KEYS = [
   'ui-progress-bar-frame',
   'ui-tooltip-bg',
   'ui-close-button',
+  // Codex trading-card frame. A portrait-orientation 9-slice that
+  // wraps the Codex card (name / portrait / stats / lore blurb).
+  // Override flag off → CodexScene paints the brass-border Graphics
+  // fallback, same as before.
+  'ui-card-frame',
 ] as const;
 export type UiOverrideKey = (typeof UI_OVERRIDE_KEYS)[number];
 

@@ -467,6 +467,7 @@ const MENU_UI_KEYS = [
   'ui-progress-bar-frame',
   'ui-tooltip-bg',
   'ui-close-button',
+  'ui-card-frame',
 ];
 
 function composePrompt(
