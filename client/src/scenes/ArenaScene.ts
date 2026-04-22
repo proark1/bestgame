@@ -112,6 +112,22 @@ export class ArenaScene extends Phaser.Scene {
     this.drawHud();
     this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
+
+    // Responsive scaling — same pattern as RaidScene. Board container
+    // shrinks on narrow viewports, pointer math below unscales.
+    const applyLayout = (): void => {
+      const availW = this.scale.width - 24;
+      const availH = this.scale.height - HUD_H - 80;
+      const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+      this.boardContainer.setScale(scale);
+      const scaledW = BOARD_W * scale;
+      const scaledH = BOARD_H * scale;
+      const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
+      const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
+      this.boardContainer.setPosition(xOffset, yOffset);
+    };
+    applyLayout();
+    this.scale.on('resize', applyLayout);
     // Initial sim state must be constructed BEFORE drawStartingBuildings
     // tries to iterate this.state.buildings. The reserve flow in
     // connect() may later replace this.state with the host-snapshot
@@ -285,9 +301,10 @@ export class ArenaScene extends Phaser.Scene {
         return;
       }
       const origin = this.boardContainer.getBounds();
+      const scale = this.boardContainer.scaleX || 1;
       const tilePoints: Types.PheromonePoint[] = this.drawingPoints.map((p) => {
-        const tx = (p.x - origin.x) / TILE;
-        const ty = (p.y - origin.y) / TILE;
+        const tx = (p.x - origin.x) / scale / TILE;
+        const ty = (p.y - origin.y) / scale / TILE;
         return { x: Sim.fromFloat(tx), y: Sim.fromFloat(ty) };
       });
       this.arena?.sendDrawPath({
@@ -311,14 +328,18 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private renderTrailPreview(): void {
+    // Container-local coords: subtract world origin, divide by
+    // scale. Matches the board's own scaled transform so the drawn
+    // trail tracks the cursor at any viewport size.
     const origin = this.boardContainer.getBounds();
+    const scale = this.boardContainer.scaleX || 1;
     this.trailGraphics.clear();
     this.trailGraphics.lineStyle(6, 0xffd98a, 0.85);
     this.trailGraphics.beginPath();
     for (let i = 0; i < this.drawingPoints.length; i++) {
       const p = this.drawingPoints[i]!;
-      const x = p.x - origin.x;
-      const y = p.y - origin.y;
+      const x = (p.x - origin.x) / scale;
+      const y = (p.y - origin.y) / scale;
       if (i === 0) this.trailGraphics.moveTo(x, y);
       else this.trailGraphics.lineTo(x, y);
     }
