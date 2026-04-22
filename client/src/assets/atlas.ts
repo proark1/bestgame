@@ -41,9 +41,15 @@ export const UI_SPRITE_KEYS = [
 
 // Units that have a walk-cycle spritesheet available. The on-disk
 // file lives at /assets/sprites/unit-<Kind>-walk.{webp,png} and is a
-// 4-frame horizontal strip (512×128 total, 128×128 per frame). Kept
+// 2-frame horizontal strip (256×128 total, 128×128 per frame). Kept
 // in sync with the walkCycles bucket in tools/gemini-art/prompts.json
 // and with ANIMATED_UNIT_KINDS on the server.
+//
+// Why 2 frames instead of more: asking Gemini for a single multi-pose
+// strip gave near-identical frames (the model spreads attention across
+// the whole image). Two separate single-subject calls, one per pose,
+// produce dramatically more leg-position variation — enough that the
+// walk reads as an actual walk. See admin/main.ts generateWalkCycle.
 export const ANIMATED_UNIT_KINDS = ['WorkerAnt', 'SoldierAnt', 'Wasp'] as const;
 export type AnimatedUnitKind = (typeof ANIMATED_UNIT_KINDS)[number];
 
@@ -55,8 +61,11 @@ export const WALK_CYCLE_SPRITE_KEYS = ANIMATED_UNIT_KINDS.map(
 // loader, anim definitions, and scene sprite sizing can't drift.
 export const WALK_CYCLE_FRAME_W = 128;
 export const WALK_CYCLE_FRAME_H = 128;
-export const WALK_CYCLE_FRAME_COUNT = 4;
-export const WALK_CYCLE_FPS = 8;
+export const WALK_CYCLE_FRAME_COUNT = 2;
+// 2 frames × 6 fps = 3 full pose swaps per second, which reads as a
+// brisk walk without looking choppy. Bumping higher makes the legs
+// look frantic at the small in-game sprite scale.
+export const WALK_CYCLE_FPS = 6;
 
 export const ALL_SPRITE_KEYS = [
   ...UNIT_SPRITE_KEYS,
