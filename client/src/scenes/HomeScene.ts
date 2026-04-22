@@ -242,17 +242,16 @@ export class HomeScene extends Phaser.Scene {
     // viewport width.
     const w = this.scale.width;
     // Background-only swap: override replaces the gradient panel with a
-    // tiled image; the shadow + brass strokes + pill layout below still
-    // run so resource text fields are always initialized. Previously an
-    // early return here skipped sugarText/leafText/milkText, which then
-    // null-deref'd in update() and froze the whole scene.
+    // tiled image; the shadow + pill layout below still run so resource
+    // text fields are always initialized.
+    //
+    // Previous build painted brass accent lines along the HUD edges.
+    // They bled above the account/codex chips and read as a stray
+    // yellow glow, so they're gone — the HUD strip is dark-only now,
+    // with just a soft drop shadow below it to keep the "raised
+    // panel" feel.
     if (isUiOverrideActive(this, 'ui-hud-bg')) {
       this.add.tileSprite(0, 0, w, HUD_H, 'ui-hud-bg').setOrigin(0, 0);
-      const shadow = this.add.graphics();
-      shadow.fillStyle(0x000000, 0.45);
-      shadow.fillRect(0, HUD_H, w, 3);
-      shadow.fillStyle(0x000000, 0.2);
-      shadow.fillRect(0, HUD_H + 3, w, 3);
     } else {
       const hud = this.add.graphics();
       hud.fillGradientStyle(
@@ -263,17 +262,12 @@ export class HomeScene extends Phaser.Scene {
         1,
       );
       hud.fillRect(0, 0, w, HUD_H);
-      hud.fillStyle(COLOR.brass, 0.35);
-      hud.fillRect(0, 1, w, 1);
-      hud.fillStyle(COLOR.brassDeep, 1);
-      hud.fillRect(0, HUD_H - 4, w, 1);
-      hud.fillStyle(COLOR.brass, 0.7);
-      hud.fillRect(0, HUD_H - 3, w, 2);
-      hud.fillStyle(0x000000, 0.45);
-      hud.fillRect(0, HUD_H, w, 3);
-      hud.fillStyle(0x000000, 0.2);
-      hud.fillRect(0, HUD_H + 3, w, 3);
     }
+    const hudShadow = this.add.graphics();
+    hudShadow.fillStyle(0x000000, 0.45);
+    hudShadow.fillRect(0, HUD_H, w, 3);
+    hudShadow.fillStyle(0x000000, 0.2);
+    hudShadow.fillRect(0, HUD_H + 3, w, 3);
 
     // Responsive HUD layout — three tiers:
     //   wide   (≥ 760 px): full layout. Title + chip + 3 resource pills.
@@ -351,11 +345,16 @@ export class HomeScene extends Phaser.Scene {
       const pillX = x - pillW;
       const pillY = cy - PILL_H / 2;
       const pill = this.add.graphics();
-      drawPill(pill, pillX, pillY, pillW, PILL_H);
+      drawPill(pill, pillX, pillY, pillW, PILL_H, { brass: false });
       const icon = this.add
         .image(pillX + PILL_PAD_X + ICON_SIZE / 2, cy, b.icon)
         .setDisplaySize(ICON_SIZE, ICON_SIZE);
       b.text.setPosition(pillX + pillW - PILL_PAD_X, cy);
+      // Numbers were created BEFORE the pill + icon in drawHud, so
+      // they sat UNDER both in the child array and were covered on
+      // HUD repaint — that read as "the pills have no numbers". Bump
+      // the text's depth so it always draws over the pill chrome.
+      b.text.setDepth(1);
       void pill;
       void icon;
       x = pillX - PILL_GAP;
@@ -377,7 +376,7 @@ export class HomeScene extends Phaser.Scene {
     const size = tier === 'phone' ? 32 : 36;
     const cx = rightEdgeX - size / 2;
     const pill = this.add.graphics();
-    drawPill(pill, cx - size / 2, cy - size / 2, size, size);
+    drawPill(pill, cx - size / 2, cy - size / 2, size, size, { brass: false });
     const glyph = crispText(this, cx, cy, '📖', {
       fontFamily: 'ui-monospace, monospace',
       fontSize: tier === 'phone' ? '16px' : '18px',
@@ -401,7 +400,7 @@ export class HomeScene extends Phaser.Scene {
       const chipX = 180;
       const pillW = 120;
       const pill = this.add.graphics();
-      drawPill(pill, chipX, cy - 16, pillW, 32);
+      drawPill(pill, chipX, cy - 16, pillW, 32, { brass: false });
       this.accountChip = crispText(this, chipX + pillW / 2, cy, 'guest ▾', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
@@ -419,7 +418,9 @@ export class HomeScene extends Phaser.Scene {
       const size = 36;
       const chipX = tier === 'narrow' ? 120 : size / 2 + SPACING.sm;
       const pill = this.add.graphics();
-      drawPill(pill, chipX - size / 2, cy - size / 2, size, size);
+      drawPill(pill, chipX - size / 2, cy - size / 2, size, size, {
+        brass: false,
+      });
       this.accountChip = crispText(this, chipX, cy, '👤', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '16px',
@@ -681,7 +682,8 @@ export class HomeScene extends Phaser.Scene {
     // "Undergro" because "Flip → Underground" ran out of room.
     const flipFull = (): string =>
       this.layer === 0 ? 'Flip → Underground' : 'Flip → Surface';
-    const flipShort = (): string => (this.layer === 0 ? '↓ Under' : '↑ Surface');
+    const flipShort = (): string =>
+      this.layer === 0 ? '↓ Underground' : '↑ Surface';
 
     const buttons: Array<{
       full: () => string;
@@ -733,9 +735,26 @@ export class HomeScene extends Phaser.Scene {
         onPress: () => fadeToScene(this, 'ArenaScene'),
       },
       {
+        // Help re-opens the onboarding tutorial. Matches the secondary
+        // variant so it reads as "just another nav button" rather than
+        // an emergency CTA; new players who bounce past the first-visit
+        // flow can still find guidance without digging through menus.
+        full: () => '❓ Help',
+        short: () => 'Help',
+        variant: 'secondary',
+        onPress: () => {
+          openTutorial({ force: true });
+        },
+      },
+      {
+        // Used to be a brass `primary` button. In context the rest of
+        // the row was all green `secondary`, so the gold Raid button
+        // read as a different control belonging to a different banner.
+        // Same variant as its neighbors now — arrow glyph + rightmost
+        // position still gives it CTA weight without the color clash.
         full: () => 'Raid a base →',
         short: () => 'Raid →',
-        variant: 'primary',
+        variant: 'secondary',
         onPress: () => fadeToScene(this, 'RaidScene'),
       },
     ];
@@ -782,30 +801,30 @@ export class HomeScene extends Phaser.Scene {
     const gap = HomeScene.FOOTER_GAP;
     const btnH = HomeScene.FOOTER_BTN_H;
 
-    // Responsive footer. Wide viewports (≥ 900) stay in one row; below
-    // that we stack into two rows. Key invariants:
-    //   - Every button uses the SAME width so rows look intentional
-    //     (the previous version sized per-row, so row 1 had 80 px
-    //     buttons and row 2 had 110 px — uneven and misaligned).
-    //   - Buttons have center-origin, so the leftmost button's CENTER
-    //     sits at startX + btnW/2 (not startX). Previously we placed
-    //     the center at startX and the first button's left edge
-    //     ended up off-screen.
-    //   - Labels shorten below 700 px so "Flip → Underground" stops
-    //     truncating to "Undergro" on phones.
-    const wide = this.scale.width >= 900;
+    // Responsive footer. Wide viewports stay in one row; below that we
+    // stack into two rows. The breakpoint is computed from the button
+    // count + a comfortable per-button minimum so the longest full
+    // label ("Flip → Underground") fits without truncating. Before,
+    // the breakpoint was a hard-coded 900 px which packed 7-8 buttons
+    // onto a 900 px row — giving the Flip button ~115 px to fit a
+    // ~150 px label.
+    const minBtnWide = 140;
+    const minWideRow = marginX * 2 + count * minBtnWide + (count - 1) * gap;
+    const wide = this.scale.width >= minWideRow;
+
     // Pick the short or full label per current viewport.
     for (let i = 0; i < count; i++) {
       this.footerButtons[i]!.setLabel(this.footerLabelForIndex(i));
     }
 
     // Compute a single button width that works for whichever row
-    // holds the most buttons. For 7 total: wide = 7 in row, narrow
-    // = 4 + 3 (so 4 is the pinch). Width clamps to a 100..220 band
-    // — big enough for our labels, small enough to center nicely.
-    const perRow = wide ? count : 4;
+    // holds the most buttons. Width clamps to a 110..220 band —
+    // enough for the longest short label on narrow / phone viewports
+    // and cosmetic-only cap so rows centered on ultra-wide screens
+    // don't look comically stretched.
+    const perRow = wide ? count : Math.ceil(count / 2);
     const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
-    const btnW = Math.max(100, Math.min(220, Math.floor(availW / perRow)));
+    const btnW = Math.max(110, Math.min(220, Math.floor(availW / perRow)));
 
     const placeRow = (arr: HiveButton[], y: number): void => {
       const rowTotalW = btnW * arr.length + gap * (arr.length - 1);
@@ -818,15 +837,19 @@ export class HomeScene extends Phaser.Scene {
     };
 
     // Pin both rows to the bottom of the viewport with a comfortable
-    // margin from the home-indicator area (already handled by the
-    // safe-area inset on the #game div).
-    const bottomPad = 18;
+    // margin. The home-indicator / safe-area inset is already applied
+    // to the #game div, so bottomPad is purely aesthetic — bigger
+    // pushes the whole footer (and by consequence the board above it)
+    // up the screen. 36 px keeps the green board from hugging the
+    // first row of buttons on laptop viewports.
+    const bottomPad = 36;
+    const half = Math.ceil(count / 2);
     if (wide) {
       const y = this.scale.height - bottomPad - btnH / 2;
       placeRow(this.footerButtons, y);
     } else {
-      const row1 = this.footerButtons.slice(0, 4);
-      const row2 = this.footerButtons.slice(4);
+      const row1 = this.footerButtons.slice(0, half);
+      const row2 = this.footerButtons.slice(half);
       const y2 = this.scale.height - bottomPad - btnH / 2;
       const y1 = y2 - btnH - 12;
       placeRow(row1, y1);
@@ -858,11 +881,17 @@ export class HomeScene extends Phaser.Scene {
   // Vertical budget the footer needs. Mirrors layoutFooter exactly:
   // wide = 1 row with bottom pad; narrow = 2 rows + inter-row gap.
   // Board sizing subtracts this so the board never runs under the
-  // footer on tall phones.
+  // footer on tall phones. The `wide` breakpoint computation here
+  // must match layoutFooter exactly or the board will either hug
+  // the footer or leave a blank gap.
   private footerReservedHeight(): number {
-    const wide = this.scale.width >= 900;
+    const count = this.footerButtons.length || 8;
+    const marginX = HomeScene.FOOTER_MARGIN_X;
+    const gap = HomeScene.FOOTER_GAP;
+    const minWideRow = marginX * 2 + count * 140 + (count - 1) * gap;
+    const wide = this.scale.width >= minWideRow;
     const btnH = HomeScene.FOOTER_BTN_H;
-    const bottomPad = 18;
+    const bottomPad = 36;
     const interRow = 12;
     const extraClearance = 12;
     return wide

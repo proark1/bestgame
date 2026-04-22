@@ -69,20 +69,30 @@ export function drawPanel(
 // Resource-pill panel — wider-than-tall capsule used for sugar/leaf/
 // milk counters in the HUD. Distinct from drawPanel because the
 // highlight + radius defaults are tuned for a small (~32 px) height.
+// Set `brass: false` for top-bar callers that want a quieter dark
+// pill (no gold stroke, no bright top highlight) — the HUD got too
+// noisy with brass on every resource pill + both chips.
 export function drawPill(
   g: Phaser.GameObjects.Graphics,
   x: number,
   y: number,
   w: number,
   h: number,
+  style: { brass?: boolean } = {},
 ): void {
+  const brass = style.brass ?? true;
   const radius = h / 2;
   g.fillStyle(0x000000, 0.55);
   g.fillRoundedRect(x + 1, y + 3, w, h + 1, radius);
   g.fillGradientStyle(COLOR.bgPanelHi, COLOR.bgPanelHi, COLOR.bgPanelLo, COLOR.bgPanelLo, 1);
   g.fillRoundedRect(x, y, w, h, radius);
-  g.fillStyle(COLOR.brass, 0.35);
-  g.fillRoundedRect(x + 2, y + 2, w - 4, 2, radius - 1);
-  g.lineStyle(1.5, COLOR.brassDeep, 0.9);
-  g.strokeRoundedRect(x, y, w, h, radius);
+  if (brass) {
+    g.fillStyle(COLOR.brass, 0.35);
+    g.fillRoundedRect(x + 2, y + 2, w - 4, 2, radius - 1);
+    g.lineStyle(1.5, COLOR.brassDeep, 0.9);
+    g.strokeRoundedRect(x, y, w, h, radius);
+  } else {
+    g.lineStyle(1, 0x000000, 0.35);
+    g.strokeRoundedRect(x, y, w, h, radius);
+  }
 }
