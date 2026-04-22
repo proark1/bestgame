@@ -231,8 +231,7 @@ export class HomeScene extends Phaser.Scene {
 
   private drawHud(): void {
     // CoC-style HUD plane: deep gradient panel + thick brass accent
-    // on the bottom edge + drop-shadow beneath. Gives the top strip
-    // real "mass" vs the previous flat band.
+    // on the bottom edge + drop-shadow beneath.
     const hud = this.add.graphics();
     hud.fillGradientStyle(
       COLOR.bgPanelHi,
@@ -242,11 +241,8 @@ export class HomeScene extends Phaser.Scene {
       1,
     );
     hud.fillRect(0, 0, this.scale.width, HUD_H);
-    // Top inner highlight — thin brass line along the top edge
-    // catches the eye and anchors the panel.
     hud.fillStyle(COLOR.brass, 0.35);
     hud.fillRect(0, 1, this.scale.width, 1);
-    // Bottom brass border + drop shadow beneath the panel.
     hud.fillStyle(COLOR.brassDeep, 1);
     hud.fillRect(0, HUD_H - 4, this.scale.width, 1);
     hud.fillStyle(COLOR.brass, 0.7);
@@ -256,98 +252,145 @@ export class HomeScene extends Phaser.Scene {
     hud.fillStyle(0x000000, 0.2);
     hud.fillRect(0, HUD_H + 3, this.scale.width, 3);
 
-    // Stroked display title — dark stroke + warm fill gives us the
-    // chunky "title" look games in this genre use.
-    crispText(this, 24, HUD_H / 2, 'HIVE WARS', displayTextStyle(20, '#ffe7b0', 4))
-      .setOrigin(0, 0.5);
+    // Responsive HUD layout — three tiers:
+    //   wide   (≥ 760 px): full layout. Title + chip + 3 resource pills.
+    //   narrow (500..760): title shrinks. Chip becomes a small icon.
+    //   phone  (< 500 px): title hidden. 2 pills (sugar + leaf). Chip
+    //                       is a 36-px avatar bubble in the corner.
+    // Previous HUD let the title + chip collide with the pills on
+    // small viewports (e.g. iPhone 375 — "HIVE WAR" visibly clipped
+    // INTO the first pill in the user's screenshot). These tiers keep
+    // everything visible at any viewport.
+    const w = this.scale.width;
+    const tier: 'wide' | 'narrow' | 'phone' =
+      w >= 760 ? 'wide' : w >= 500 ? 'narrow' : 'phone';
+    const cy = HUD_H / 2;
 
-    // Account chip — pill-shaped, same visual language as resource
-    // badges. Tappable, opens the register/login modal. Populated
-    // with the actual username if the session is user-backed.
-    const chipX = 180;
-    const chipY = HUD_H / 2;
-    const chipPanel = this.add.graphics();
-    drawPill(chipPanel, chipX, chipY - 16, 120, 32);
-    this.accountChip = crispText(this, chipX + 60, chipY, 'guest ▾', {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '13px',
-      color: COLOR.textDim,
-      fontStyle: 'bold',
-    })
-      .setOrigin(0.5, 0.5)
-      .setInteractive({ useHandCursor: true });
-    // Both the pill and the text should react to pointer — expose
-    // the combined click target by making the pill interactive too.
-    const chipZone = this.add
-      .zone(chipX + 60, chipY, 120, 32)
-      .setOrigin(0.5, 0.5)
-      .setInteractive({ useHandCursor: true });
-    chipZone.on('pointerdown', () => this.openAccountMenu());
-    this.accountChip.on('pointerdown', () => this.openAccountMenu());
-    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
-    if (rt) {
-      void rt.auth.fetchMe().then((me) => {
-        if (!me || !this.accountChip?.active) return;
-        this.accountChip.setText(
-          me.isGuest || !me.username ? 'guest ▾' : `@${me.username} ▾`,
-        );
-        this.accountChip.setColor(me.isGuest ? COLOR.textDim : COLOR.textGold);
-      });
+    // Title — hidden on phone so nothing collides with pills.
+    if (tier !== 'phone') {
+      crispText(
+        this,
+        tier === 'wide' ? 24 : 16,
+        cy,
+        'HIVE WARS',
+        displayTextStyle(tier === 'wide' ? 20 : 16, '#ffe7b0', 4),
+      ).setOrigin(0, 0.5);
     }
 
-    // Resource readouts — big, stroked, gold digits that read like
-    // "I have this many coins." Built first so layout code below
-    // can measure their widths.
+    // Account chip — in wide it's a full pill; on phone it's a
+    // compact brass-bordered disc in the top-left corner.
+    this.drawAccountChip(tier);
+
+    // Resource readouts — gold sugar, green leaf, silver milk.
+    // On phone we hide milk (aphid milk isn't produced yet anyway)
+    // to buy back horizontal room for the first two.
+    const pillFont = tier === 'phone' ? 15 : 17;
+    const pillTextStroke = 3;
     this.sugarText = crispText(
       this,
       0,
       0,
       this.resources.sugar.toString(),
-      displayTextStyle(17, COLOR.textGold, 3),
+      displayTextStyle(pillFont, COLOR.textGold, pillTextStroke),
     ).setOrigin(1, 0.5);
     this.leafText = crispText(
       this,
       0,
       0,
       this.resources.leafBits.toString(),
-      displayTextStyle(17, '#c8f2a0', 3),
+      displayTextStyle(pillFont, '#c8f2a0', pillTextStroke),
     ).setOrigin(1, 0.5);
     this.milkText = crispText(
       this,
       0,
       0,
       this.resources.aphidMilk.toString(),
-      displayTextStyle(17, '#dfe8ff', 3),
+      displayTextStyle(pillFont, '#dfe8ff', pillTextStroke),
     ).setOrigin(1, 0.5);
+    if (tier === 'phone') this.milkText.setVisible(false);
 
-    // Resource pills — capsule panel per resource. Right-aligned
-    // so the rightmost hugs the screen edge on any viewport.
     const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
       { icon: 'ui-resource-sugar', text: this.sugarText },
       { icon: 'ui-resource-leaf', text: this.leafText },
-      { icon: 'ui-resource-milk', text: this.milkText },
     ];
-    const PILL_H = 36;
-    const PILL_PAD_X = 12;
-    const PILL_ICON_GAP = 6;
-    const PILL_GAP = SPACING.sm;
-    const ICON_SIZE = 26;
-    let x = this.scale.width - SPACING.md;
+    if (tier !== 'phone')
+      badges.push({ icon: 'ui-resource-milk', text: this.milkText });
+
+    const PILL_H = tier === 'phone' ? 32 : 36;
+    const PILL_PAD_X = tier === 'phone' ? 8 : 12;
+    const PILL_ICON_GAP = 4;
+    const PILL_GAP = tier === 'phone' ? SPACING.xs : SPACING.sm;
+    const ICON_SIZE = tier === 'phone' ? 20 : 26;
+    let x = this.scale.width - (tier === 'phone' ? SPACING.sm : SPACING.md);
     for (let i = badges.length - 1; i >= 0; i--) {
       const b = badges[i]!;
-      const textW = Math.max(b.text.width, 30);
+      const textW = Math.max(b.text.width, 24);
       const pillW = PILL_PAD_X * 2 + ICON_SIZE + PILL_ICON_GAP + textW;
       const pillX = x - pillW;
-      const pillY = HUD_H / 2 - PILL_H / 2;
+      const pillY = cy - PILL_H / 2;
       const pill = this.add.graphics();
       drawPill(pill, pillX, pillY, pillW, PILL_H);
       const icon = this.add
-        .image(pillX + PILL_PAD_X + ICON_SIZE / 2, HUD_H / 2, b.icon)
+        .image(pillX + PILL_PAD_X + ICON_SIZE / 2, cy, b.icon)
         .setDisplaySize(ICON_SIZE, ICON_SIZE);
-      b.text.setPosition(pillX + pillW - PILL_PAD_X, HUD_H / 2);
+      b.text.setPosition(pillX + pillW - PILL_PAD_X, cy);
       void pill;
       void icon;
       x = pillX - PILL_GAP;
+    }
+  }
+
+  // Tier-aware account chip. On wide viewports it's a named pill
+  // ("@myname ▾"). On narrow it shrinks to an icon-only pill so it
+  // doesn't crowd the title. On phone it becomes a compact corner
+  // disc with a down-chevron — tap target is still ≥ 36 px.
+  private drawAccountChip(tier: 'wide' | 'narrow' | 'phone'): void {
+    const cy = HUD_H / 2;
+    if (tier === 'wide') {
+      const chipX = 180;
+      const pillW = 120;
+      const pill = this.add.graphics();
+      drawPill(pill, chipX, cy - 16, pillW, 32);
+      this.accountChip = crispText(this, chipX + pillW / 2, cy, 'guest ▾', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: COLOR.textDim,
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5);
+      this.add
+        .zone(chipX + pillW / 2, cy, pillW, 32)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.openAccountMenu());
+    } else {
+      // Icon-only disc in the top-left (narrow) or top-right corner
+      // (phone, to avoid crowding the title which moves to left).
+      const size = 36;
+      const chipX = tier === 'narrow' ? 120 : size / 2 + SPACING.sm;
+      const pill = this.add.graphics();
+      drawPill(pill, chipX - size / 2, cy - size / 2, size, size);
+      this.accountChip = crispText(this, chipX, cy, '👤', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: COLOR.textDim,
+      }).setOrigin(0.5, 0.5);
+      this.add
+        .zone(chipX, cy, size, size)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.openAccountMenu());
+    }
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (rt) {
+      void rt.auth.fetchMe().then((me) => {
+        if (!me || !this.accountChip?.active) return;
+        if (tier === 'wide') {
+          this.accountChip.setText(
+            me.isGuest || !me.username ? 'guest ▾' : `@${me.username} ▾`,
+          );
+        }
+        this.accountChip.setColor(me.isGuest ? COLOR.textDim : COLOR.textGold);
+      });
     }
   }
 
@@ -535,61 +578,75 @@ export class HomeScene extends Phaser.Scene {
   private static readonly FOOTER_GAP = 10;
 
   private drawFooter(): void {
-    const flipLabel = (): string =>
+    // Labels come in two flavors. `full` is the desktop reading;
+    // `short` is a compact mobile variant that still fits in ~70 px
+    // without truncating. layoutFooter picks between them based on
+    // scale.width so a phone doesn't get a button that reads
+    // "Undergro" because "Flip → Underground" ran out of room.
+    const flipFull = (): string =>
       this.layer === 0 ? 'Flip → Underground' : 'Flip → Surface';
+    const flipShort = (): string => (this.layer === 0 ? '↓ Under' : '↑ Surface');
 
     const buttons: Array<{
-      label: () => string;
+      full: () => string;
+      short: () => string;
       variant: 'primary' | 'secondary';
       onPress: () => void;
     }> = [
       {
-        label: flipLabel,
+        full: flipFull,
+        short: flipShort,
         variant: 'secondary',
         onPress: () => {
           this.layer = this.layer === 0 ? 1 : 0;
-          // The flip button is always the first container we created.
           const btn = this.footerButtons[0];
-          btn?.setLabel(flipLabel());
+          btn?.setLabel(this.footerLabelForIndex(0));
           this.boardContainer.removeAll(true);
           this.drawBoard();
           this.drawBuildings();
         },
       },
       {
-        label: () => '🏆 Ranks',
+        full: () => '🏆 Ranks',
+        short: () => 'Ranks',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'LeaderboardScene'),
       },
       {
-        label: () => '📜 Recent',
+        full: () => '📜 Recent',
+        short: () => 'Recent',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'RaidHistoryScene'),
       },
       {
-        label: () => '⚙ Upgrades',
+        full: () => '⚙ Upgrades',
+        short: () => 'Upgrade',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'UpgradeScene'),
       },
       {
-        label: () => '👥 Clan',
+        full: () => '👥 Clan',
+        short: () => 'Clan',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'ClanScene'),
       },
       {
-        label: () => '⚔ Arena',
+        full: () => '⚔ Arena',
+        short: () => 'Arena',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'ArenaScene'),
       },
       {
-        label: () => 'Raid a base →',
+        full: () => 'Raid a base →',
+        short: () => 'Raid →',
         variant: 'primary',
         onPress: () => fadeToScene(this, 'RaidScene'),
       },
     ];
 
+    this.footerButtonDefs = buttons;
     this.footerButtons = buttons.map((b) =>
-      this.makeButton(0, 0, b.label(), b.variant, b.onPress),
+      this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
     this.layoutFooter();
     // layerLabel is legacy — keep the field populated with a noop
@@ -601,6 +658,21 @@ export class HomeScene extends Phaser.Scene {
       });
     }
   }
+
+  private footerLabelForIndex(i: number): string {
+    const def = this.footerButtonDefs[i];
+    if (!def) return '';
+    // 700 is the breakpoint: below it labels shorten so they never
+    // truncate inside the button; above it full marketing copy.
+    return this.scale.width < 700 ? def.short() : def.full();
+  }
+
+  private footerButtonDefs: Array<{
+    full: () => string;
+    short: () => string;
+    variant: 'primary' | 'secondary';
+    onPress: () => void;
+  }> = [];
 
   // Footer button records so the flip-button label can be refreshed
   // without looking it up by index. Each entry carries a setLabel
@@ -614,47 +686,55 @@ export class HomeScene extends Phaser.Scene {
     const gap = HomeScene.FOOTER_GAP;
     const btnH = HomeScene.FOOTER_BTN_H;
 
-    // Responsive footer. On wide (≥ 900 px) we keep all 7 buttons in
-    // one row; on narrow viewports we wrap to 2 rows (4 + 3) so
-    // buttons stay big enough to tap on a phone without shrinking
-    // to unreadable text. Touch-target min ≈ 44 px stays intact.
+    // Responsive footer. Wide viewports (≥ 900) stay in one row; below
+    // that we stack into two rows. Key invariants:
+    //   - Every button uses the SAME width so rows look intentional
+    //     (the previous version sized per-row, so row 1 had 80 px
+    //     buttons and row 2 had 110 px — uneven and misaligned).
+    //   - Buttons have center-origin, so the leftmost button's CENTER
+    //     sits at startX + btnW/2 (not startX). Previously we placed
+    //     the center at startX and the first button's left edge
+    //     ended up off-screen.
+    //   - Labels shorten below 700 px so "Flip → Underground" stops
+    //     truncating to "Undergro" on phones.
     const wide = this.scale.width >= 900;
-    const rowY1 = this.scale.height - (wide ? btnH / 2 + 20 : btnH * 2 + 28);
-    const rowY2 = this.scale.height - (btnH / 2 + 16);
+    // Pick the short or full label per current viewport.
+    for (let i = 0; i < count; i++) {
+      this.footerButtons[i]!.setLabel(this.footerLabelForIndex(i));
+    }
 
-    if (wide) {
-      const available = this.scale.width - marginX * 2 - gap * (count - 1);
-      const btnW = Math.min(220, Math.max(110, available / count));
-      const totalW = btnW * count + gap * (count - 1);
-      const startX = (this.scale.width - totalW) / 2;
-      for (let i = 0; i < count; i++) {
-        const b = this.footerButtons[i]!;
-        b.setSize(btnW, btnH);
-        b.setPosition(startX + i * (btnW + gap), rowY1 + btnH / 2);
+    // Compute a single button width that works for whichever row
+    // holds the most buttons. For 7 total: wide = 7 in row, narrow
+    // = 4 + 3 (so 4 is the pinch). Width clamps to a 100..220 band
+    // — big enough for our labels, small enough to center nicely.
+    const perRow = wide ? count : 4;
+    const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
+    const btnW = Math.max(100, Math.min(220, Math.floor(availW / perRow)));
+
+    const placeRow = (arr: HiveButton[], y: number): void => {
+      const rowTotalW = btnW * arr.length + gap * (arr.length - 1);
+      const rowStartX = (this.scale.width - rowTotalW) / 2;
+      for (let i = 0; i < arr.length; i++) {
+        arr[i]!.setSize(btnW, btnH);
+        // Button origin is center; add btnW/2 so left edge === rowStartX.
+        arr[i]!.setPosition(rowStartX + btnW / 2 + i * (btnW + gap), y);
       }
+    };
+
+    // Pin both rows to the bottom of the viewport with a comfortable
+    // margin from the home-indicator area (already handled by the
+    // safe-area inset on the #game div).
+    const bottomPad = 18;
+    if (wide) {
+      const y = this.scale.height - bottomPad - btnH / 2;
+      placeRow(this.footerButtons, y);
     } else {
-      // Narrow: first 4 buttons on top row, remaining 3 on bottom.
-      // 4+3 split keeps the primary "Raid a base →" at the end of
-      // row 2 where it's naturally the biggest tap target.
       const row1 = this.footerButtons.slice(0, 4);
       const row2 = this.footerButtons.slice(4);
-      const layoutRow = (
-        arr: HiveButton[],
-        y: number,
-        target: number,
-      ): void => {
-        if (arr.length === 0) return;
-        const available = this.scale.width - marginX * 2 - gap * (arr.length - 1);
-        const btnW = Math.min(target, available / arr.length);
-        const totalW = btnW * arr.length + gap * (arr.length - 1);
-        const startX = (this.scale.width - totalW) / 2;
-        for (let i = 0; i < arr.length; i++) {
-          arr[i]!.setSize(btnW, btnH);
-          arr[i]!.setPosition(startX + i * (btnW + gap), y);
-        }
-      };
-      layoutRow(row1, rowY1 + btnH / 2, 170);
-      layoutRow(row2, rowY2, 200);
+      const y2 = this.scale.height - bottomPad - btnH / 2;
+      const y1 = y2 - btnH - 12;
+      placeRow(row1, y1);
+      placeRow(row2, y2);
     }
   }
 
@@ -679,14 +759,19 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  // Vertical budget the footer needs (one or two rows of buttons
-   // plus padding). Kept in sync with layoutFooter so handleResize
-   // can reserve the space when deciding how big the board can be.
+  // Vertical budget the footer needs. Mirrors layoutFooter exactly:
+  // wide = 1 row with bottom pad; narrow = 2 rows + inter-row gap.
+  // Board sizing subtracts this so the board never runs under the
+  // footer on tall phones.
   private footerReservedHeight(): number {
-    const narrow = this.scale.width < 900;
-    const rowH = HomeScene.FOOTER_BTN_H + 16;
-    const rows = narrow ? 2 : 1;
-    return rows * rowH + 20;
+    const wide = this.scale.width >= 900;
+    const btnH = HomeScene.FOOTER_BTN_H;
+    const bottomPad = 18;
+    const interRow = 12;
+    const extraClearance = 12;
+    return wide
+      ? bottomPad + btnH + extraClearance
+      : bottomPad + btnH * 2 + interRow + extraClearance;
   }
 
   private handleResize(): void {
