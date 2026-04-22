@@ -356,10 +356,11 @@ export class CodexScene extends Phaser.Scene {
       cursorY += statsH + 10;
     }
 
-    // Story body — fills the remaining space above the power strip.
-    const powerStripH = 64;
-    const powerStripY = top + h - powerStripH - 12;
-    const storyBottomMax = powerStripY - 8;
+    // Story body — natural height up to a cap. Power strip is placed
+    // directly below the story (not pinned to the bottom) so the two
+    // blocks read as one continuous body and the card doesn't leave
+    // a wide empty band between lore and mechanics on short stories.
+    const storyMaxH = Math.max(40, Math.floor(h * 0.22));
     const storyText = this.add
       .text(left + padX, cursorY, entry.story, {
         fontFamily: 'ui-monospace, monospace',
@@ -369,15 +370,40 @@ export class CodexScene extends Phaser.Scene {
         lineSpacing: 2,
       })
       .setOrigin(0, 0);
-    // Clip long stories so they can't overflow into the power strip.
-    const storyMaxH = Math.max(0, storyBottomMax - cursorY);
+    const renderedStoryH = Math.min(storyText.height, storyMaxH);
     if (storyText.height > storyMaxH) {
       storyText.setFixedSize(w - padX * 2, storyMaxH);
       storyText.setCrop(0, 0, w - padX * 2, storyMaxH);
     }
     container.add(storyText);
+    cursorY += renderedStoryH + 10;
 
-    // Power strip — bolded mechanical blurb pinned to the bottom.
+    // Power strip — sits directly under the story. Font size matches
+    // the story body so the two reads as the same visual weight.
+    const powerLabelH = 14;
+    const powerPadY = 6;
+    const powerInnerW = w - padX * 2 - 20;
+    // Pre-size the power text so we know the strip height before we
+    // paint the background. Stays within the remaining card space.
+    const remaining = top + h - 12 - cursorY;
+    const powerTextProbe = this.add
+      .text(0, 0, entry.power, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '12px',
+        color: COLOR.textPrimary,
+        wordWrap: { width: powerInnerW, useAdvancedWrap: true },
+        lineSpacing: 2,
+      })
+      .setVisible(false);
+    const desiredPowerTextH = powerTextProbe.height;
+    powerTextProbe.destroy();
+    const powerTextH = Math.max(
+      16,
+      Math.min(desiredPowerTextH, remaining - powerLabelH - powerPadY * 2 - 4),
+    );
+    const powerStripH = powerLabelH + powerPadY * 2 + powerTextH + 2;
+    const powerStripY = cursorY;
+
     const strip = this.add.graphics();
     strip.fillStyle(0x1a2b1a, 1);
     strip.fillRoundedRect(
@@ -398,7 +424,7 @@ export class CodexScene extends Phaser.Scene {
     container.add(strip);
 
     const powerLabel = this.add
-      .text(left + padX + 10, powerStripY + 6, 'POWER', {
+      .text(left + padX + 10, powerStripY + powerPadY, 'POWER', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '10px',
         color: COLOR.textGold,
@@ -406,21 +432,22 @@ export class CodexScene extends Phaser.Scene {
       })
       .setOrigin(0, 0);
     const powerText = this.add
-      .text(left + padX + 10, powerStripY + 22, entry.power, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '11px',
-        color: COLOR.textPrimary,
-        wordWrap: {
-          width: w - padX * 2 - 20,
-          useAdvancedWrap: true,
+      .text(
+        left + padX + 10,
+        powerStripY + powerPadY + powerLabelH + 2,
+        entry.power,
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '12px',
+          color: COLOR.textPrimary,
+          wordWrap: { width: powerInnerW, useAdvancedWrap: true },
+          lineSpacing: 2,
         },
-        lineSpacing: 1,
-      })
+      )
       .setOrigin(0, 0);
-    const powerMaxH = powerStripH - 24;
-    if (powerText.height > powerMaxH) {
-      powerText.setFixedSize(w - padX * 2 - 20, powerMaxH);
-      powerText.setCrop(0, 0, w - padX * 2 - 20, powerMaxH);
+    if (powerText.height > powerTextH) {
+      powerText.setFixedSize(powerInnerW, powerTextH);
+      powerText.setCrop(0, 0, powerInnerW, powerTextH);
     }
     container.add([powerLabel, powerText]);
 
