@@ -440,10 +440,26 @@ button {
   margin-bottom: 16px;
 }
 .style-lock h3 {
-  margin: 0 0 8px;
+  margin: 0;
   font-family: var(--font);
   color: var(--accent);
   font-size: 13px;
+}
+.style-lock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.style-lock-dirty {
+  font-size: 11px;
+  color: var(--warn, #e0a240);
+  font-family: var(--font);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.style-lock-dirty:empty {
+  display: none;
 }
 .style-lock textarea {
   width: 100%;
@@ -456,6 +472,12 @@ button {
   font-family: var(--font);
   font-size: 12px;
   resize: vertical;
+}
+.style-lock-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .admin-animation {
