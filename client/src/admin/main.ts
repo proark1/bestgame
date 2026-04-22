@@ -342,6 +342,13 @@ function render(): void {
   styleSave.addEventListener('click', () => {
     void saveStyleLock();
   });
+  // Revert needs to win against the textarea's blur-save. Without
+  // this mousedown preventDefault, clicking Revert from inside the
+  // textarea fires blur first → `change` → saveStyleLock() captures
+  // the dirty value and saves it before the click handler gets to
+  // run. preventDefault on mousedown keeps focus on the textarea,
+  // so blur (and the save) never fire; click still runs normally.
+  styleRevert.addEventListener('mousedown', (e) => e.preventDefault());
   styleRevert.addEventListener('click', () => {
     if (styleSaving) return;
     styleTxt.value = lastSavedStyle;
