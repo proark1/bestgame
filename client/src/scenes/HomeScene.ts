@@ -100,6 +100,23 @@ export class HomeScene extends Phaser.Scene {
 
     this.scale.on('resize', this.handleResize, this);
     this.handleResize();
+
+    // When the viewport actually changes size (not just during the
+    // initial FIT dance), restart the scene so the HUD + footer +
+    // board all repaint against the new width. Cheap — reloads the
+    // cached player snapshot from runtime, doesn't re-hit the API.
+    // Debounced so a user dragging the window edge doesn't restart
+    // 60 times per second.
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let lastW = this.scale.width;
+    let lastH = this.scale.height;
+    this.scale.on('resize', () => {
+      if (this.scale.width === lastW && this.scale.height === lastH) return;
+      lastW = this.scale.width;
+      lastH = this.scale.height;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => this.scene.restart(), 220);
+    });
   }
 
   private catalog: Record<
