@@ -428,9 +428,18 @@ export class HomeScene extends Phaser.Scene {
     this.burgerButton = c;
   }
 
+  // Width of the slide-in burger drawer. 82 % of viewport capped at
+  // 320 px — wide enough for comfortable 48 px button rows on narrow
+  // phones, clamped on tablets so the drawer never spans the full
+  // screen. Shared by openBurgerDrawer (creates the panel at +W) and
+  // closeBurgerDrawer (tweens it out to -W) so both stay in sync.
+  private burgerDrawerWidth(): number {
+    return Math.min(320, Math.round(this.scale.width * 0.82));
+  }
+
   private openBurgerDrawer(): void {
     if (this.burgerDrawer) return;
-    const W = Math.min(320, Math.round(this.scale.width * 0.82));
+    const W = this.burgerDrawerWidth();
     const H = this.scale.height;
     const container = this.add.container(0, 0).setDepth(220);
 
@@ -561,7 +570,7 @@ export class HomeScene extends Phaser.Scene {
     this.burgerDrawer = null;
     this.tweens.add({
       targets: c,
-      x: -Math.min(320, Math.round(this.scale.width * 0.82)),
+      x: -this.burgerDrawerWidth(),
       alpha: 0,
       duration: 160,
       ease: 'Cubic.easeIn',
@@ -569,8 +578,10 @@ export class HomeScene extends Phaser.Scene {
     });
     // Stamp the picker grace window too so a pointerup inside the
     // burger's footprint doesn't immediately trigger a new board
-    // tap / picker open.
-    this.pickerClosedAtMs = Date.now();
+    // tap / picker open. Use the scene clock (not Date.now) so a
+    // background tab doesn't build up a stale grace debt the player
+    // pays when they return.
+    this.pickerClosedAtMs = this.time.now;
   }
 
   private drawCodexChip(
@@ -1347,9 +1358,10 @@ export class HomeScene extends Phaser.Scene {
       }
       if (this.pickerContainer) return;
       // Grace window after close. Defense-in-depth against any
-      // pointerdown we didn't see.
+      // pointerdown we didn't see. Scene clock so the window doesn't
+      // drift relative to pause/background state.
       if (
-        Date.now() - this.pickerClosedAtMs <
+        this.time.now - this.pickerClosedAtMs <
         HomeScene.PICKER_REOPEN_GRACE_MS
       ) {
         return;
@@ -1623,7 +1635,7 @@ export class HomeScene extends Phaser.Scene {
       this.pickerContainer = null;
       // Stamp the grace window so a pointerup that arrives just after
       // this call can't open a new picker on the closing tap's tile.
-      this.pickerClosedAtMs = Date.now();
+      this.pickerClosedAtMs = this.time.now;
     }
   }
 

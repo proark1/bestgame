@@ -11,6 +11,7 @@ import { ArenaScene } from './scenes/ArenaScene.js';
 import { CodexScene } from './scenes/CodexScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
+import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
 
 // Shared runtime bag. Scenes pull auth/api/playerState off of this
 // registry via scene.registry.get('runtime'). Keeps the Phaser Game
@@ -80,7 +81,10 @@ async function main(): Promise<void> {
   // compounded and pointer coords drifted. With Scale.RESIZE + manual
   // backing-buffer override (see syncCanvasSize below) both layers
   // stay consistent.
-  const dpr = Math.min(Math.max(1, window.devicePixelRatio || 1), 2);
+  const dpr = Math.min(
+    Math.max(1, window.devicePixelRatio || 1),
+    MAX_DEVICE_PIXEL_RATIO,
+  );
 
   // Phaser text glyphs rasterize at resolution=1 by default. Patching
   // the factory once so every scene.add.text(...) call across the app

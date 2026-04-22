@@ -6,15 +6,17 @@ import Phaser from 'phaser';
 // window.devicePixelRatio. Calling this instead of `scene.add.text`
 // directly means every label in the game picks up the DPR without
 // each caller remembering to.
-//
-// Cap at 3× — above that the texture cost stops being worth the
-// marginal sharpness gain and some mobile GPUs start complaining
-// about oversized text atlases.
+
+// Shared DPR cap. The canvas backing buffer (main.ts) and per-text
+// resolution both clamp to this value — rasterizing text at a higher
+// DPR than the canvas can display is wasted texture memory. Capped at
+// 2 to stay pointer-safe and keep fill rate sane on mobile GPUs.
+export const MAX_DEVICE_PIXEL_RATIO = 2;
 
 export function devicePixelScale(): number {
   const raw = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
   if (!Number.isFinite(raw) || raw < 1) return 1;
-  return Math.min(raw, 3);
+  return Math.min(raw, MAX_DEVICE_PIXEL_RATIO);
 }
 
 export function crispText(
