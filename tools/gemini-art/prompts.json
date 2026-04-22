@@ -35,5 +35,13 @@
     "SugarVault": "a wooden vault door with a giant sugar-cube lock, sprinkles around it",
     "TunnelJunction": "a clean carved earth tunnel entrance, multiple paths radiating out",
     "DungeonTrap": "a disguised pitfall covered with twigs and leaves, ominous shadow inside"
+  },
+  "menuUi": {
+    "ui-button-primary-bg": "a Clash-of-Clans style game button background, rich brass gold gradient top-to-bottom, thick carved wooden border in warm dark brown (#3a2512), glossy beveled top highlight suggesting 3D depth, subtle inner glow, painterly but crisp, 256x128 pixels transparent PNG, designed for 9-slice scaling (safe center region for stretching, corners hold the ornamentation). No text, no icons, no logos — just the button surface.",
+    "ui-button-secondary-bg": "a Clash-of-Clans style game button background in mossy forest green, deep green bottom to lighter leaf green top, thick carved wooden border in dark brown, bevel highlight on top, subtle leaf-vein texture in the fill, painterly finish, 256x128 pixels transparent PNG, designed for 9-slice scaling. No text, no icons.",
+    "ui-panel-bg": "a Clash-of-Clans style game panel / card background, wood-plank texture in warm deep brown tones, corners reinforced with brass rivets, painterly shading with soft inner glow at the top, dark around the edges like an aged signboard, 512x256 pixels transparent PNG, designed for 9-slice scaling so the plank grain can tile the center. No text, no icons.",
+    "ui-hud-bg": "a Clash-of-Clans style horizontal HUD / top-banner background, deep forest-green leather with brass trim top and bottom, ornamental scrollwork corners in brass, thick painterly shading, 512x96 pixels transparent PNG, designed to tile horizontally. The middle should be a plain enough texture that resource pills sit on top without visual clash. No text, no icons.",
+    "ui-title-banner": "a Clash-of-Clans style decorative title banner ribbon, warm brass / gold ribbon sash with carved wooden backing and leaf flourishes at each end, ornate scrollwork, painterly depth, 512x128 pixels transparent PNG. Empty central area so the game title can be drawn on top. No text.",
+    "ui-board-tile-surface": "a Clash-of-Clans style seamless grass / moss ground tile for a backyard colony game, hand-painted top-down view, mossy green (#2c4724 to #3d7a2c) with tiny pebbles, flower petals, dirt patches, painterly stylized not photographic, 128x128 pixels tileable PNG (edges match so the tile repeats seamlessly). Warm soft lighting from top-left. No text, no buildings, no characters — just ground."
   }
 }

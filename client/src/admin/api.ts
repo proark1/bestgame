@@ -34,6 +34,12 @@ export interface PromptsFile {
   // single 128x128 sprite. Absent on old bundles that predate the
   // animation feature.
   walkCycles?: Record<string, string>;
+  // Menu UI prompts for the game chrome (buttons, panels, HUD,
+  // banners, board tiles). Parallel to `units` but generates UI
+  // asset images designed for 9-slice or tiling. When enabled via
+  // /admin/api/settings/ui-overrides, the game renders these in
+  // place of the default Graphics/CSS fallback.
+  menuUi?: Record<string, string>;
 }
 
 export interface GeminiImage {
@@ -93,7 +99,7 @@ export async function fetchPrompts(): Promise<PromptsFile> {
 }
 
 export async function updatePrompt(args: {
-  category: 'units' | 'buildings' | 'walkCycles' | 'styleLock';
+  category: 'units' | 'buildings' | 'walkCycles' | 'menuUi' | 'styleLock';
   key?: string;
   value: string;
 }): Promise<void> {
@@ -149,6 +155,25 @@ export async function putAnimationSettings(
 ): Promise<{ ok: true; values: Record<string, boolean> }> {
   return req<{ ok: true; values: Record<string, boolean> }>(
     '/admin/api/settings/animation',
+    { method: 'PUT', json: { values } },
+  );
+}
+
+// Menu UI image-override settings. Same shape as AnimationSettings,
+// different key set.
+export interface UiOverrideSettings {
+  keys: readonly string[];
+  values: Record<string, boolean>;
+  dbPersistence: 'connected' | 'not-configured';
+}
+export async function fetchUiOverrideSettings(): Promise<UiOverrideSettings> {
+  return req<UiOverrideSettings>('/admin/api/settings/ui-overrides');
+}
+export async function putUiOverrideSettings(
+  values: Record<string, boolean>,
+): Promise<{ ok: true; values: Record<string, boolean> }> {
+  return req<{ ok: true; values: Record<string, boolean> }>(
+    '/admin/api/settings/ui-overrides',
     { method: 'PUT', json: { values } },
   );
 }

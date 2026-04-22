@@ -55,3 +55,31 @@ export const DEFAULT_UNIT_ANIMATION: UnitAnimationSettings = {
   SoldierAnt: true,
   Wasp: true,
 };
+
+// ─── UI-image overrides ─────────────────────────────────────────
+// The game's UI chrome (buttons, panels, HUD, banners, board tiles)
+// renders as Graphics/CSS by default. An admin can generate bespoke
+// images for each of these slots via the Menu UI bucket in the
+// sprite admin; when the image is on disk AND the per-key flag
+// below is true, the shared button/panel factories switch to
+// rendering that image (9-slice-scaled) instead of the Graphics
+// fallback. Absent / disabled flags keep today's Graphics-only
+// rendering so nothing regresses by default.
+export const SETTING_UI_OVERRIDES = 'ui_overrides';
+
+export const UI_OVERRIDE_KEYS = [
+  'ui-button-primary-bg',
+  'ui-button-secondary-bg',
+  'ui-panel-bg',
+  'ui-hud-bg',
+  'ui-title-banner',
+  'ui-board-tile-surface',
+] as const;
+export type UiOverrideKey = (typeof UI_OVERRIDE_KEYS)[number];
+
+export type UiOverrideSettings = Partial<Record<UiOverrideKey, boolean>>;
+
+// All overrides start disabled — the Graphics fallback is battle-
+// tested, and the generated images may not exist yet on a fresh
+// deploy. Admin toggles them on once they're happy with the art.
+export const DEFAULT_UI_OVERRIDES: UiOverrideSettings = {};

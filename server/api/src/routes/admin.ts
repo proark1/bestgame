@@ -16,10 +16,15 @@ import {
 import {
   ANIMATED_UNIT_KINDS,
   DEFAULT_UNIT_ANIMATION,
+  DEFAULT_UI_OVERRIDES,
+  SETTING_UI_OVERRIDES,
   SETTING_UNIT_ANIMATION,
+  UI_OVERRIDE_KEYS,
   getSetting,
   putSetting,
   type AnimatedUnitKind,
+  type UiOverrideKey,
+  type UiOverrideSettings,
   type UnitAnimationSettings,
 } from '../db/settings.js';
 
@@ -169,7 +174,7 @@ interface SaveBody {
 }
 
 interface UpdatePromptBody {
-  category: 'units' | 'buildings' | 'factions' | 'walkCycles' | 'styleLock';
+  category: 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'styleLock';
   key?: string;
   value: string;
 }
@@ -180,8 +185,8 @@ const ALLOWED_KEY_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
 // prototype-pollution via surprise categories like __proto__/constructor
 // and also stops ad-hoc keys from growing prompts.json unbounded.
 const ALLOWED_BUCKET_CATEGORIES = new Set<
-  'units' | 'buildings' | 'factions' | 'walkCycles'
->(['units', 'buildings', 'factions', 'walkCycles']);
+  'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi'
+>(['units', 'buildings', 'factions', 'walkCycles', 'menuUi']);
 // JavaScript's special inherited-property names. Even with a bucket
 // allowlist we reject these as sub-keys — the prompts.json bucket object
 // is iterated elsewhere, so polluting it is still a bad idea.
@@ -256,7 +261,7 @@ export function registerAdmin(app: FastifyInstance): void {
       });
     } else if (
       ALLOWED_BUCKET_CATEGORIES.has(
-        body.category as 'units' | 'buildings' | 'factions' | 'walkCycles',
+        body.category as 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi',
       )
     ) {
       const safeKey = body.key ? sanitizeKey(body.key) : null;
@@ -531,6 +536,54 @@ export function registerAdmin(app: FastifyInstance): void {
         return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
       }
       await putSetting(pool, SETTING_UNIT_ANIMATION, sanitized);
+      return { ok: true, values: sanitized };
+    },
+  );
+
+  // Menu UI image-override settings. Same shape as the animation
+  // settings, but for the in-game UI chrome. Admin flips a flag ON
+  // for a key, and if the corresponding image is also on disk, the
+  // game renders that image instead of the shared button/panel
+  // Graphics fallback. Flags OFF → fallback everywhere.
+  app.get('/admin/api/settings/ui-overrides', async () => {
+    const pool = await getPool();
+    if (!pool) {
+      return {
+        keys: UI_OVERRIDE_KEYS,
+        values: DEFAULT_UI_OVERRIDES,
+        dbPersistence: 'not-configured' as const,
+      };
+    }
+    const row = await getSetting<UiOverrideSettings>(pool, SETTING_UI_OVERRIDES);
+    return {
+      keys: UI_OVERRIDE_KEYS,
+      values: row ?? DEFAULT_UI_OVERRIDES,
+      dbPersistence: 'connected' as const,
+    };
+  });
+
+  interface UpdateUiOverridesBody {
+    values: UiOverrideSettings;
+  }
+  app.put<{ Body: UpdateUiOverridesBody }>(
+    '/admin/api/settings/ui-overrides',
+    async (req, reply) => {
+      const body = req.body;
+      if (!body || typeof body.values !== 'object' || body.values === null) {
+        reply.code(400);
+        return { error: 'values object required' };
+      }
+      const sanitized: UiOverrideSettings = {};
+      for (const key of UI_OVERRIDE_KEYS) {
+        const v = body.values[key as UiOverrideKey];
+        if (typeof v === 'boolean') sanitized[key as UiOverrideKey] = v;
+      }
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+      }
+      await putSetting(pool, SETTING_UI_OVERRIDES, sanitized);
       return { ok: true, values: sanitized };
     },
   );

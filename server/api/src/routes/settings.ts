@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { getPool } from '../db/pool.js';
 import {
+  DEFAULT_UI_OVERRIDES,
   DEFAULT_UNIT_ANIMATION,
+  SETTING_UI_OVERRIDES,
   SETTING_UNIT_ANIMATION,
   getSetting,
+  type UiOverrideSettings,
   type UnitAnimationSettings,
 } from '../db/settings.js';
 
@@ -34,6 +37,23 @@ export function registerSettings(app: FastifyInstance): void {
       app.log.warn({ err }, '/settings/animation lookup failed');
       reply.code(200); // still return defaults
       return DEFAULT_UNIT_ANIMATION;
+    }
+  });
+
+  // Menu UI overrides — same DB-offline-friendly shape as animation.
+  // Client BootScene reads this, and the shared button/panel
+  // factories check the flag when deciding whether to render a
+  // generated image vs the Graphics fallback.
+  app.get('/settings/ui-overrides', async (_req, reply) => {
+    const pool = await getPool();
+    if (!pool) return DEFAULT_UI_OVERRIDES;
+    try {
+      const row = await getSetting<UiOverrideSettings>(pool, SETTING_UI_OVERRIDES);
+      return row ?? DEFAULT_UI_OVERRIDES;
+    } catch (err) {
+      app.log.warn({ err }, '/settings/ui-overrides lookup failed');
+      reply.code(200);
+      return DEFAULT_UI_OVERRIDES;
     }
   });
 }
