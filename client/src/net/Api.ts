@@ -24,6 +24,68 @@ export interface PlayerState {
   aphidMilk: number;
   unitLevels: Partial<Record<Types.UnitKind, number>>;
   createdAt: string;
+  // Retention loop — nullable/optional so older servers keep working.
+  shieldExpiresAt?: string | null;
+  seasonId?: string;
+  seasonXp?: number;
+  seasonMilestonesClaimed?: number[];
+}
+
+export interface DailyQuestState {
+  id: string;
+  progress: number;
+  claimed: boolean;
+}
+export interface DailyQuests {
+  date: string;
+  quests: DailyQuestState[];
+}
+export interface QuestDef {
+  id: string;
+  label: string;
+  goal: number;
+  rewardSugar: number;
+  rewardLeaf: number;
+  rewardXp: number;
+}
+export interface SeasonMilestone {
+  id: number;
+  xpRequired: number;
+  label: string;
+  rewardSugar: number;
+  rewardLeaf: number;
+}
+export interface QuestsResponse {
+  dailyQuests: DailyQuests;
+  questDefs: QuestDef[];
+  season: {
+    id: string;
+    xp: number;
+    milestonesClaimed: number[];
+    milestones: SeasonMilestone[];
+  };
+}
+
+export interface ClanWarState {
+  id: string;
+  clanAId: string;
+  clanBId: string;
+  myClanSide: 'A' | 'B';
+  status: string;
+  startedAt: string;
+  endsAt: string;
+  starsA: number;
+  starsB: number;
+  attacks: Array<{
+    attackerPlayerId: string;
+    attackerClanId: string;
+    stars: number;
+  }>;
+}
+export interface ClanWarCurrentResponse {
+  inClan: boolean;
+  clanId?: string;
+  war: ClanWarState | null;
 }
 
 export interface PlayerMeResponse {
@@ -331,6 +393,102 @@ export class Api {
     } catch {
       return {};
     }
+  }
+
+  // ---- Retention loop ----------------------------------------------------
+  //
+  // Daily quests + season progress + milestone claims. These are the
+  // "why open the game today" and "what do I grind for this month"
+  // endpoints. See server/api/src/routes/quests.ts for the server
+  // side; shape mirrors the route return types.
+  async getQuests(): Promise<QuestsResponse> {
+    const res = await this.authedFetch('/player/quests');
+    if (!res.ok) throw await errorFromResponse(res, 'quests fetch failed');
+    return (await res.json()) as QuestsResponse;
+  }
+
+  async claimQuest(questId: string): Promise<{
+    ok: true;
+    questId: string;
+    reward: { sugar: number; leafBits: number; xp: number };
+    dailyQuests: DailyQuests;
+    resources: { sugar: number; leafBits: number };
+    seasonXp: number;
+  }> {
+    const res = await this.authedFetch('/player/quests/claim', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ questId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'quest claim failed');
+    return (await res.json()) as Awaited<ReturnType<Api['claimQuest']>>;
+  }
+
+  async claimSeasonMilestone(milestoneId: number): Promise<{
+    ok: true;
+    milestoneId: number;
+    reward: { sugar: number; leafBits: number };
+    resources: { sugar: number; leafBits: number };
+    milestonesClaimed: number[];
+  }> {
+    const res = await this.authedFetch('/player/season/claim', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ milestoneId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'milestone claim failed');
+    return (await res.json()) as Awaited<ReturnType<Api['claimSeasonMilestone']>>;
+  }
+
+  // ---- Clan wars ---------------------------------------------------------
+  async warCurrent(): Promise<ClanWarCurrentResponse> {
+    const res = await this.authedFetch('/clan/war/current');
+    if (!res.ok) throw await errorFromResponse(res, 'war fetch failed');
+    return (await res.json()) as ClanWarCurrentResponse;
+  }
+
+  async warStart(opponentClanId: string): Promise<{
+    ok: true;
+    warId: string;
+    endsAt: string;
+  }> {
+    const res = await this.authedFetch('/clan/war/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ opponentClanId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'war start failed');
+    return (await res.json()) as Awaited<ReturnType<Api['warStart']>>;
+  }
+
+  async warSubmitAttack(args: {
+    defenderPlayerId: string;
+    stars: 0 | 1 | 2 | 3;
+  }): Promise<{ ok: true; warId: string }> {
+    const res = await this.authedFetch('/clan/war/attack', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'war attack failed');
+    return (await res.json()) as Awaited<ReturnType<Api['warSubmitAttack']>>;
+  }
+
+  async warEnd(warId: string): Promise<{
+    ok: true;
+    alreadyEnded?: boolean;
+    winningClanId: string | null;
+    starsA: number;
+    starsB: number;
+    bonusPerMember?: number;
+  }> {
+    const res = await this.authedFetch('/clan/war/end', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ warId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'war end failed');
+    return (await res.json()) as Awaited<ReturnType<Api['warEnd']>>;
   }
 }
 

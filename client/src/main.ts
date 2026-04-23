@@ -9,6 +9,7 @@ import { UpgradeScene } from './scenes/UpgradeScene.js';
 import { ClanScene } from './scenes/ClanScene.js';
 import { ArenaScene } from './scenes/ArenaScene.js';
 import { CodexScene } from './scenes/CodexScene.js';
+import { QuestsScene } from './scenes/QuestsScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
 import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
@@ -146,6 +147,7 @@ async function main(): Promise<void> {
       new ClanScene(),
       new ArenaScene(),
       new CodexScene(),
+      new QuestsScene(),
     ],
   });
   // Runtime is attached to the game registry so scenes can pull it

@@ -27,6 +27,9 @@ export class ClanScene extends Phaser.Scene {
   private chatInputEl: HTMLInputElement | null = null;
   private chatSendBtn: Phaser.GameObjects.Text | null = null;
   private browseLoaded: ClanSummary[] | null = null;
+  // Active clan war, fetched alongside member view. Null when not in a
+  // war; cached between renders so the header re-draw doesn't flicker.
+  private activeWar: import('../net/Api.js').ClanWarState | null = null;
 
   constructor() {
     super('ClanScene');
@@ -99,6 +102,17 @@ export class ClanScene extends Phaser.Scene {
           res.messages && res.messages.length > 0
             ? Number(res.messages[res.messages.length - 1]!.id)
             : 0;
+        // Pull active war state alongside the member view. Failure is
+        // non-fatal — the war banner simply won't render. Fire-and-
+        // forget so we don't block the member list.
+        void runtime.api
+          .warCurrent()
+          .then((r) => {
+            if (!this.scene.isActive()) return;
+            this.activeWar = r.war;
+            this.renderMemberView();
+          })
+          .catch(() => undefined);
         this.renderMemberView();
         this.startPolling();
       } else {
@@ -144,10 +158,45 @@ export class ClanScene extends Phaser.Scene {
       )
       .setOrigin(0.5);
     this.layerContainer.add(title);
+    // War banner — renders just under the clan title when a war is
+    // active. Shows "A vs B" star totals and time remaining so every
+    // member can see the shared objective at a glance.
+    if (this.activeWar) {
+      const w = this.activeWar;
+      const mine = w.myClanSide === 'A' ? w.starsA : w.starsB;
+      const them = w.myClanSide === 'A' ? w.starsB : w.starsA;
+      const msLeft = Math.max(0, new Date(w.endsAt).getTime() - Date.now());
+      const hh = Math.floor(msLeft / 3600000);
+      const mm = Math.floor((msLeft % 3600000) / 60000);
+      const banner = this.add.graphics();
+      banner.fillStyle(0x2a1e1e, 1);
+      banner.lineStyle(2, 0xd94c4c, 1);
+      const bx = 20;
+      const bw = this.scale.width - 40;
+      banner.fillRoundedRect(bx, HUD_H + 40, bw, 30, 6);
+      banner.strokeRoundedRect(bx, HUD_H + 40, bw, 30, 6);
+      this.layerContainer.add(banner);
+      this.layerContainer.add(
+        this.add
+          .text(
+            this.scale.width / 2,
+            HUD_H + 55,
+            msLeft === 0
+              ? `⚔ War ended — ${mine} ★ vs ${them} ★ (tap Clan Wars to finalize)`
+              : `⚔ Clan War · ${mine} ★ vs ${them} ★ · ${hh}h ${mm}m left`,
+            {
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: '12px',
+              color: '#ffd98a',
+            },
+          )
+          .setOrigin(0.5),
+      );
+    }
     if (clan.description) {
       this.layerContainer.add(
         this.add
-          .text(this.scale.width / 2, HUD_H + 40, clan.description, {
+          .text(this.scale.width / 2, HUD_H + (this.activeWar ? 82 : 40), clan.description, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '11px',
             color: '#9cb98a',

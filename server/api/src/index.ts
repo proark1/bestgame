@@ -13,9 +13,11 @@ import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
 import { registerLeaderboard } from './routes/leaderboard.js';
 import { registerClan } from './routes/clan.js';
+import { registerWars } from './routes/wars.js';
 import { registerArena } from './routes/arena.js';
 import { registerSettings } from './routes/settings.js';
 import { registerSpritesManifest } from './routes/sprites.js';
+import { registerQuests } from './routes/quests.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -115,9 +117,11 @@ async function start(): Promise<void> {
       registerMatchmaking(scope);
       registerLeaderboard(scope);
       registerClan(scope);
+      registerWars(scope);
       registerArena(scope);
       registerSettings(scope);
       registerSpritesManifest(scope);
+      registerQuests(scope);
     },
     { prefix: '/api' },
   );
