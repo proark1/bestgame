@@ -208,6 +208,7 @@ export class RaidScene extends Phaser.Scene {
   private deckUnlockText!: Phaser.GameObjects.Text;
   private boardGuide!: Phaser.GameObjects.Container;
   private spawnZoneGraphics!: Phaser.GameObjects.Graphics;
+  private spawnZoneLabel!: Phaser.GameObjects.Text;
   private spawnZoneCue!: Phaser.GameObjects.Container;
   private deckContainers: Phaser.GameObjects.Container[] = [];
   // Parallel array to deckContainers — avoids monkey-patching the
@@ -215,6 +216,7 @@ export class RaidScene extends Phaser.Scene {
   private deckLabels: Phaser.GameObjects.Text[] = [];
 
   private simTickElapsed = 0; // fractional tick accumulator
+  private deckCardScale = 1;
   private started = false;
   private resultShown = false;
   // Captured from the match response so raid/submit can round-trip
@@ -438,7 +440,7 @@ export class RaidScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setAlpha(0.28),
     );
-    const spawnText = this.add
+    this.spawnZoneLabel = this.add
       .text(SPAWN_ZONE_W / 2, BOARD_H / 2, 'SPAWN\nEDGE', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '18px',
@@ -461,7 +463,13 @@ export class RaidScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
-    this.boardContainer.add([bg, this.spawnZoneGraphics, grid, this.spawnZoneCue, spawnText]);
+    this.boardContainer.add([
+      bg,
+      this.spawnZoneGraphics,
+      grid,
+      this.spawnZoneCue,
+      this.spawnZoneLabel,
+    ]);
   }
 
   private drawBuildingsFromState(): void {
@@ -711,10 +719,11 @@ export class RaidScene extends Phaser.Scene {
     const container = this.deckContainers[this.selectedDeckIdx];
     if (container) {
       this.tweens.killTweensOf(container);
+      container.setScale(this.deckCardScale);
       this.tweens.add({
         targets: container,
-        scaleX: container.scaleX * 1.05,
-        scaleY: container.scaleY * 1.05,
+        scaleX: this.deckCardScale * 1.05,
+        scaleY: this.deckCardScale * 1.05,
         duration: 110,
         yoyo: true,
       });
@@ -783,7 +792,10 @@ export class RaidScene extends Phaser.Scene {
         ? `Next unlocks: ${upcoming.join(' • ')}`
         : 'All attacker units unlocked at your current Queen level.',
     );
-    this.boardGuide.setVisible(!this.isDrawing && this.raidInputs.length === 0 && entry.count > 0);
+    const showOnboarding = !this.isDrawing && this.raidInputs.length === 0 && entry.count > 0;
+    this.boardGuide.setVisible(showOnboarding);
+    this.spawnZoneCue.setVisible(showOnboarding);
+    this.spawnZoneLabel.setVisible(showOnboarding);
   }
 
   private deckLayoutMetrics(): {
@@ -1372,6 +1384,7 @@ export class RaidScene extends Phaser.Scene {
       .setPosition(this.scale.width / 2, trayTop + 44);
 
     const rowHeight = DECK_CARD_H * deckLayout.scale;
+    this.deckCardScale = deckLayout.scale;
     const rowGap = DECK_GRID_GAP;
     const gridTop = trayTop + 72;
     for (let row = 0; row < deckLayout.rows; row++) {
