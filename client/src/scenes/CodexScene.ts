@@ -3,7 +3,9 @@ import { Sim, Types } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
-import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { crispText } from '../ui/text.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
 import { addNineSliceIfActive } from '../ui/uiOverrides.js';
 import { ALL_CODEX_ENTRIES, type CodexEntry } from '../codex/codexData.js';
 
@@ -94,7 +96,7 @@ export class CodexScene extends Phaser.Scene {
   private drawAmbient(): void {
     // Gradient backdrop so the card sits in a pool of light.
     const g = this.add.graphics().setDepth(-100);
-    const top = 0x162317;
+    const top = 0x1c3020;
     const bot = 0x070d08;
     const BANDS = 14;
     for (let i = 0; i < BANDS; i++) {
@@ -110,42 +112,47 @@ export class CodexScene extends Phaser.Scene {
         Math.ceil(this.scale.height / BANDS) + 1,
       );
     }
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + 140, Math.min(880, this.scale.width * 0.92), 240);
+    glow.fillStyle(COLOR.greenHi, 0.06);
+    glow.fillEllipse(this.scale.width * 0.26, this.scale.height - 120, 360, 160);
   }
 
   private drawHud(): void {
     const w = this.scale.width;
     const hud = this.add.graphics();
-    hud.fillGradientStyle(
-      COLOR.bgPanelHi,
-      COLOR.bgPanelHi,
-      COLOR.bgPanelLo,
-      COLOR.bgPanelLo,
-      1,
-    );
-    hud.fillRect(0, 0, w, HUD_H);
-    hud.fillStyle(COLOR.brass, 0.35);
-    hud.fillRect(0, 1, w, 1);
-    hud.fillStyle(COLOR.brassDeep, 1);
-    hud.fillRect(0, HUD_H - 4, w, 1);
-    hud.fillStyle(COLOR.brass, 0.7);
-    hud.fillRect(0, HUD_H - 3, w, 2);
+    drawPanel(hud, 0, 0, w, HUD_H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     hud.fillStyle(0x000000, 0.45);
     hud.fillRect(0, HUD_H, w, 3);
+
+    const pill = this.add.graphics();
+    drawPill(pill, w / 2 - 194, 18, 94, 20, { brass: true });
+    crispText(this, w / 2 - 147, 28, 'Lore deck', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
 
     makeHiveButton(this, {
       x: 72,
       y: HUD_H / 2,
       width: 120,
       height: 36,
-      label: '← Home',
+      label: 'Home',
       variant: 'ghost',
       fontSize: 13,
       onPress: () => fadeToScene(this, 'HomeScene'),
     });
 
-    this.add
-      .text(this.scale.width / 2, HUD_H / 2, '📖 Codex', displayTextStyle(20, '#ffe7b0', 4))
-      .setOrigin(0.5);
+    crispText(this, this.scale.width / 2, HUD_H / 2, 'Codex', displayTextStyle(20, '#ffe7b0', 4)).setOrigin(
+      0.5,
+    );
   }
 
   private computeLayout(): CardLayout {
@@ -243,8 +250,17 @@ export class CodexScene extends Phaser.Scene {
     //    through; when it's the Graphics fallback the fallback paints
     //    its own gradient on top. Cheap, keeps the layout stable.
     const body = this.add.graphics();
-    body.fillGradientStyle(0x2a4824, 0x2a4824, 0x162317, 0x162317, 1);
-    body.fillRoundedRect(left, top, w, h, SPACING.radiusLg);
+    drawPanel(body, left, top, w, h, {
+      topColor: 0x2c4728,
+      botColor: 0x132015,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: SPACING.radiusLg,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     container.add(body);
 
     // 3) Frame. Prefer the admin-generated ui-card-frame NineSlice
@@ -277,20 +293,17 @@ export class CodexScene extends Phaser.Scene {
     const padX = 20;
     let cursorY = top + 20;
 
-    const nameText = this.add
-      .text(0, cursorY, entry.name, displayTextStyle(24, COLOR.textGold, 4))
-      .setOrigin(0.5, 0);
+    const nameText = crispText(this, 0, cursorY, entry.name, displayTextStyle(24, COLOR.textGold, 4)).setOrigin(
+      0.5,
+      0,
+    );
     container.add(nameText);
     cursorY += 30;
 
-    const roleText = this.add
-      .text(0, cursorY, entry.role, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '12px',
-        color: COLOR.textDim,
-        fontStyle: 'italic',
-      })
-      .setOrigin(0.5, 0);
+    const roleText = crispText(this, 0, cursorY, entry.role, labelTextStyle(12, COLOR.textDim)).setOrigin(
+      0.5,
+      0,
+    );
     container.add(roleText);
     cursorY += 22;
 
@@ -301,22 +314,17 @@ export class CodexScene extends Phaser.Scene {
     const portraitX = left + padX;
     const portraitY = cursorY;
     const plate = this.add.graphics();
-    plate.fillStyle(0x0a120c, 0.7);
-    plate.fillRoundedRect(
-      portraitX,
-      portraitY,
-      portraitW,
-      portraitH,
-      SPACING.radiusMd,
-    );
-    plate.lineStyle(2, COLOR.brassDeep, 1);
-    plate.strokeRoundedRect(
-      portraitX,
-      portraitY,
-      portraitW,
-      portraitH,
-      SPACING.radiusMd,
-    );
+    drawPanel(plate, portraitX, portraitY, portraitW, portraitH, {
+      topColor: COLOR.bgInset,
+      botColor: 0x050905,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: SPACING.radiusMd,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     container.add(plate);
 
     const portraitCx = portraitX + portraitW / 2;
@@ -337,12 +345,10 @@ export class CodexScene extends Phaser.Scene {
       spr.setScale(scale);
       container.add(spr);
     } else {
-      const glyph = this.add
-        .text(portraitCx, portraitCy, '🐜', {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '48px',
-        })
-        .setOrigin(0.5, 0.5);
+      const glyph = crispText(this, portraitCx, portraitCy, '?', displayTextStyle(34, COLOR.textGold, 3)).setOrigin(
+        0.5,
+        0.5,
+      );
       container.add(glyph);
     }
     cursorY = portraitY + portraitH + 12;
@@ -361,15 +367,11 @@ export class CodexScene extends Phaser.Scene {
     // blocks read as one continuous body and the card doesn't leave
     // a wide empty band between lore and mechanics on short stories.
     const storyMaxH = Math.max(40, Math.floor(h * 0.22));
-    const storyText = this.add
-      .text(left + padX, cursorY, entry.story, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '12px',
-        color: COLOR.textPrimary,
-        wordWrap: { width: w - padX * 2, useAdvancedWrap: true },
-        lineSpacing: 2,
-      })
-      .setOrigin(0, 0);
+    const storyText = crispText(this, left + padX, cursorY, entry.story, {
+      ...bodyTextStyle(12, COLOR.textPrimary),
+      wordWrap: { width: w - padX * 2, useAdvancedWrap: true },
+      lineSpacing: 2,
+    }).setOrigin(0, 0);
     const renderedStoryH = Math.min(storyText.height, storyMaxH);
     if (storyText.height > storyMaxH) {
       storyText.setFixedSize(w - padX * 2, storyMaxH);
@@ -386,15 +388,11 @@ export class CodexScene extends Phaser.Scene {
     // Pre-size the power text so we know the strip height before we
     // paint the background. Stays within the remaining card space.
     const remaining = top + h - 12 - cursorY;
-    const powerTextProbe = this.add
-      .text(0, 0, entry.power, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '12px',
-        color: COLOR.textPrimary,
-        wordWrap: { width: powerInnerW, useAdvancedWrap: true },
-        lineSpacing: 2,
-      })
-      .setVisible(false);
+    const powerTextProbe = crispText(this, 0, 0, entry.power, {
+      ...bodyTextStyle(12, COLOR.textPrimary),
+      wordWrap: { width: powerInnerW, useAdvancedWrap: true },
+      lineSpacing: 2,
+    }).setVisible(false);
     const desiredPowerTextH = powerTextProbe.height;
     powerTextProbe.destroy();
     const powerTextH = Math.max(
@@ -405,46 +403,37 @@ export class CodexScene extends Phaser.Scene {
     const powerStripY = cursorY;
 
     const strip = this.add.graphics();
-    strip.fillStyle(0x1a2b1a, 1);
-    strip.fillRoundedRect(
-      left + padX,
-      powerStripY,
-      w - padX * 2,
-      powerStripH,
-      SPACING.radiusMd,
-    );
-    strip.lineStyle(1, COLOR.brass, 0.55);
-    strip.strokeRoundedRect(
-      left + padX,
-      powerStripY,
-      w - padX * 2,
-      powerStripH,
-      SPACING.radiusMd,
-    );
+    drawPanel(strip, left + padX, powerStripY, w - padX * 2, powerStripH, {
+      topColor: 0x1d2f1f,
+      botColor: 0x101910,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.1,
+      radius: SPACING.radiusMd,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     container.add(strip);
 
-    const powerLabel = this.add
-      .text(left + padX + 10, powerStripY + powerPadY, 'POWER', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '10px',
-        color: COLOR.textGold,
-        fontStyle: 'bold',
-      })
-      .setOrigin(0, 0);
-    const powerText = this.add
-      .text(
-        left + padX + 10,
-        powerStripY + powerPadY + powerLabelH + 2,
-        entry.power,
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: COLOR.textPrimary,
-          wordWrap: { width: powerInnerW, useAdvancedWrap: true },
-          lineSpacing: 2,
-        },
-      )
-      .setOrigin(0, 0);
+    const powerLabel = crispText(
+      this,
+      left + padX + 10,
+      powerStripY + powerPadY,
+      'Power',
+      labelTextStyle(10, COLOR.textGold),
+    ).setOrigin(0, 0);
+    const powerText = crispText(
+      this,
+      left + padX + 10,
+      powerStripY + powerPadY + powerLabelH + 2,
+      entry.power,
+      {
+        ...bodyTextStyle(12, COLOR.textPrimary),
+        wordWrap: { width: powerInnerW, useAdvancedWrap: true },
+        lineSpacing: 2,
+      },
+    ).setOrigin(0, 0);
     if (powerText.height > powerTextH) {
       powerText.setFixedSize(powerInnerW, powerTextH);
       powerText.setCrop(0, 0, powerInnerW, powerTextH);
@@ -455,18 +444,13 @@ export class CodexScene extends Phaser.Scene {
     // are in the deck. Only on the focused card; peeks would double-
     // up with the focused counter and clutter the corners.
     if (isFocus) {
-      const counter = this.add
-        .text(
-          left + w - 14,
-          top + 10,
-          `${this.currentIdx + 1} / ${this.entries.length}`,
-          {
-            fontFamily: 'ui-monospace, monospace',
-            fontSize: '11px',
-            color: COLOR.textDim,
-          },
-        )
-        .setOrigin(1, 0);
+      const counter = crispText(
+        this,
+        left + w - 14,
+        top + 10,
+        `${this.currentIdx + 1} / ${this.entries.length}`,
+        bodyTextStyle(11, COLOR.textDim),
+      ).setOrigin(1, 0);
       container.add(counter);
     }
 
@@ -503,28 +487,30 @@ export class CodexScene extends Phaser.Scene {
       const { label, value } = stats[i]!;
       const px = cardLeft + padX + i * (pillW + gap);
       const pill = this.add.graphics();
-      pill.fillStyle(0x0a120c, 0.85);
-      pill.fillRoundedRect(px, y, pillW, rowH, SPACING.radiusSm);
-      pill.lineStyle(1, COLOR.brass, 0.5);
-      pill.strokeRoundedRect(px, y, pillW, rowH, SPACING.radiusSm);
+      drawPanel(pill, px, y, pillW, rowH, {
+        topColor: COLOR.bgInset,
+        botColor: 0x091009,
+        stroke: COLOR.brassDeep,
+        strokeWidth: 1,
+        highlight: COLOR.brass,
+        highlightAlpha: 0.08,
+        radius: SPACING.radiusSm,
+        shadowOffset: 0,
+        shadowAlpha: 0,
+      });
       container.add(pill);
 
-      const labelText = this.add
-        .text(px + pillW / 2, y + 5, label, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '9px',
-          color: COLOR.textGold,
-          fontStyle: 'bold',
-        })
-        .setOrigin(0.5, 0);
-      const valueText = this.add
-        .text(px + pillW / 2, y + 17, value, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: COLOR.textPrimary,
-          fontStyle: 'bold',
-        })
-        .setOrigin(0.5, 0);
+      const labelText = crispText(this, px + pillW / 2, y + 5, label, labelTextStyle(9, COLOR.textGold)).setOrigin(
+        0.5,
+        0,
+      );
+      const valueText = crispText(
+        this,
+        px + pillW / 2,
+        y + 17,
+        value,
+        bodyTextStyle(12, COLOR.textPrimary),
+      ).setOrigin(0.5, 0);
       container.add([labelText, valueText]);
     }
   }
@@ -534,10 +520,16 @@ export class CodexScene extends Phaser.Scene {
     const y = this.scale.height - RAIL_H;
 
     const bar = this.add.graphics();
-    bar.fillStyle(0x0a120c, 0.85);
-    bar.fillRect(0, y, this.scale.width, RAIL_H);
-    bar.fillStyle(COLOR.brass, 0.35);
-    bar.fillRect(0, y, this.scale.width, 1);
+    drawPanel(bar, 0, y, this.scale.width, RAIL_H, {
+      topColor: COLOR.bgInset,
+      botColor: COLOR.bgDeep,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     this.railContainer.add(bar);
 
     const totalW =
@@ -558,16 +550,17 @@ export class CodexScene extends Phaser.Scene {
 
       const thumbBg = this.add.graphics();
       const active = i === this.currentIdx;
-      thumbBg.fillStyle(active ? 0x2a4824 : 0x162317, 1);
-      thumbBg.fillRoundedRect(thumbX, thumbY, THUMB_W, THUMB_H, SPACING.radiusSm);
-      thumbBg.lineStyle(active ? 2 : 1, active ? COLOR.brass : COLOR.brassDeep, 1);
-      thumbBg.strokeRoundedRect(
-        thumbX,
-        thumbY,
-        THUMB_W,
-        THUMB_H,
-        SPACING.radiusSm,
-      );
+      drawPanel(thumbBg, thumbX, thumbY, THUMB_W, THUMB_H, {
+        topColor: active ? 0x2a4824 : 0x18241a,
+        botColor: active ? 0x172315 : 0x0d140e,
+        stroke: active ? COLOR.brass : COLOR.brassDeep,
+        strokeWidth: active ? 2 : 1,
+        highlight: COLOR.brass,
+        highlightAlpha: active ? 0.16 : 0.06,
+        radius: SPACING.radiusSm,
+        shadowOffset: 0,
+        shadowAlpha: 0,
+      });
       thumbsHost.add(thumbBg);
 
       if (this.textures.exists(entry.spriteKey)) {
@@ -589,12 +582,13 @@ export class CodexScene extends Phaser.Scene {
         thumbImg.setScale(scale);
         thumbsHost.add(thumbImg);
       } else {
-        const glyph = this.add
-          .text(thumbX + THUMB_W / 2, thumbY + THUMB_H / 2, '❓', {
-            fontFamily: 'ui-monospace, monospace',
-            fontSize: '28px',
-          })
-          .setOrigin(0.5, 0.5);
+        const glyph = crispText(
+          this,
+          thumbX + THUMB_W / 2,
+          thumbY + THUMB_H / 2,
+          '?',
+          displayTextStyle(22, COLOR.textGold, 2),
+        ).setOrigin(0.5, 0.5);
         thumbsHost.add(glyph);
       }
 

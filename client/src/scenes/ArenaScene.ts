@@ -6,7 +6,9 @@ import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
-import { COLOR, displayTextStyle } from '../ui/theme.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { crispText } from '../ui/text.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
 //
@@ -69,7 +71,10 @@ export class ArenaScene extends Phaser.Scene {
   private cfg!: Sim.SimConfig;
   private state!: Sim.SimState;
   private boardContainer!: Phaser.GameObjects.Container;
+  private boardFrame!: Phaser.GameObjects.Graphics;
+  private statusCard!: Phaser.GameObjects.Container;
   private statusText!: Phaser.GameObjects.Text;
+  private statusHint!: Phaser.GameObjects.Text;
   private started = false;
   private hasError = false;
 
@@ -111,9 +116,12 @@ export class ArenaScene extends Phaser.Scene {
       });
     }
 
+    this.drawAmbient();
     this.drawHud();
+    this.drawBoardFrame();
     this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
+    this.drawStatusCard();
 
     // Responsive scaling — same pattern as RaidScene. Board container
     // shrinks on narrow viewports, pointer math below unscales.
@@ -127,6 +135,8 @@ export class ArenaScene extends Phaser.Scene {
       const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
       const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
       this.boardContainer.setPosition(xOffset, yOffset);
+      this.layoutBoardFrame(xOffset, yOffset, scaledW, scaledH);
+      this.layoutStatusCard(yOffset + scaledH);
     };
     applyLayout();
     this.scale.on('resize', applyLayout);
@@ -147,13 +157,7 @@ export class ArenaScene extends Phaser.Scene {
     this.trailGraphics = this.add.graphics().setDepth(10);
     this.boardContainer.add(this.trailGraphics);
 
-    this.statusText = this.add
-      .text(this.scale.width / 2, HUD_H + BOARD_H + 36, 'Connecting to arena…', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0.5);
+    this.setStatus('Connecting to arena...', 'Matchmaking and sync checks are in progress.');
 
     this.wirePointerInput();
     void this.connect();
@@ -161,31 +165,63 @@ export class ArenaScene extends Phaser.Scene {
     this.events.once('shutdown', () => void this.arena?.leave());
   }
 
+  private drawAmbient(): void {
+    const bg = this.add.graphics().setDepth(-120);
+    const top = 0x223625;
+    const mid = 0x152318;
+    const bot = 0x060b07;
+    const bands = 20;
+    for (let i = 0; i < bands; i++) {
+      const t = i / Math.max(1, bands - 1);
+      const src = t < 0.58 ? top : mid;
+      const dst = t < 0.58 ? mid : bot;
+      const localT = t < 0.58 ? t / 0.58 : (t - 0.58) / 0.42;
+      const r = Math.round(((src >> 16) & 0xff) + (((dst >> 16) & 0xff) - ((src >> 16) & 0xff)) * localT);
+      const g = Math.round(((src >> 8) & 0xff) + (((dst >> 8) & 0xff) - ((src >> 8) & 0xff)) * localT);
+      const b = Math.round((src & 0xff) + ((dst & 0xff) - (src & 0xff)) * localT);
+      bg.fillStyle((r << 16) | (g << 8) | b, 1);
+      bg.fillRect(
+        0,
+        Math.floor((i * this.scale.height) / bands),
+        this.scale.width,
+        Math.ceil(this.scale.height / bands) + 1,
+      );
+    }
+
+    const glow = this.add.graphics().setDepth(-119);
+    glow.fillStyle(COLOR.brass, 0.055);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + 120, Math.min(860, this.scale.width * 0.92), 220);
+    glow.fillStyle(COLOR.greenHi, 0.07);
+    glow.fillEllipse(this.scale.width * 0.3, this.scale.height - 96, 420, 170);
+    glow.fillEllipse(this.scale.width * 0.75, this.scale.height - 54, 360, 120);
+  }
+
   private drawHud(): void {
+    const w = this.scale.width;
     const g = this.add.graphics();
-    g.fillGradientStyle(
-      COLOR.bgPanelHi,
-      COLOR.bgPanelHi,
-      COLOR.bgPanelLo,
-      COLOR.bgPanelLo,
-      1,
-    );
-    g.fillRect(0, 0, this.scale.width, HUD_H);
-    g.fillStyle(COLOR.brass, 0.35);
-    g.fillRect(0, 1, this.scale.width, 1);
-    g.fillStyle(COLOR.brassDeep, 1);
-    g.fillRect(0, HUD_H - 4, this.scale.width, 1);
-    g.fillStyle(COLOR.brass, 0.7);
-    g.fillRect(0, HUD_H - 3, this.scale.width, 2);
-    g.fillStyle(0x000000, 0.45);
-    g.fillRect(0, HUD_H, this.scale.width, 3);
+    drawPanel(g, 0, 0, w, HUD_H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
+    g.fillStyle(0x000000, 0.42);
+    g.fillRect(0, HUD_H, w, 3);
+
+    const pill = this.add.graphics();
+    drawPill(pill, w / 2 - 184, 18, 74, 20, { brass: true });
+    crispText(this, w / 2 - 147, 28, 'PvP', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
 
     makeHiveButton(this, {
-      x: 80,
+      x: 72,
       y: HUD_H / 2,
       width: 120,
       height: 36,
-      label: '← Home',
+      label: 'Home',
       variant: 'ghost',
       fontSize: 13,
       onPress: () => {
@@ -193,27 +229,101 @@ export class ArenaScene extends Phaser.Scene {
         fadeToScene(this, 'HomeScene');
       },
     });
-    this.add
-      .text(this.scale.width / 2, HUD_H / 2, '⚔ Live Arena', displayTextStyle(20, COLOR.textGold, 4))
-      .setOrigin(0.5);
+    crispText(this, w / 2, HUD_H / 2, 'Live Arena', displayTextStyle(20, COLOR.textGold, 4)).setOrigin(
+      0.5,
+    );
+  }
+
+  private drawBoardFrame(): void {
+    this.boardFrame = this.add.graphics().setDepth(-5);
+  }
+
+  private layoutBoardFrame(x: number, y: number, w: number, h: number): void {
+    this.boardFrame.clear();
+    drawPanel(this.boardFrame, x - 12, y - 12, w + 24, h + 24, {
+      topColor: COLOR.boardUnder,
+      botColor: COLOR.boardUnderLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 18,
+      shadowOffset: 6,
+      shadowAlpha: 0.34,
+    });
+    this.boardFrame.fillStyle(0xffffff, 0.05);
+    this.boardFrame.fillRoundedRect(x - 4, y - 4, w + 8, 16, 12);
+  }
+
+  private drawStatusCard(): void {
+    const width = Math.min(560, this.scale.width - 28);
+    const g = this.add.graphics();
+    drawPanel(g, 0, 0, width, 74, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: 16,
+      shadowOffset: 5,
+      shadowAlpha: 0.3,
+    });
+
+    const pill = this.add.graphics();
+    drawPill(pill, 14, 14, 112, 20, { brass: true });
+    const label = crispText(this, 70, 24, 'Arena flow', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
+    this.statusText = crispText(this, width / 2, 40, '', displayTextStyle(15, COLOR.textPrimary, 3)).setOrigin(
+      0.5,
+      0.5,
+    );
+    this.statusHint = crispText(this, width / 2, 59, '', bodyTextStyle(11, COLOR.textDim)).setOrigin(0.5, 0.5);
+
+    this.statusCard = this.add.container(0, 0, [g, pill, label, this.statusText, this.statusHint]);
+  }
+
+  private layoutStatusCard(boardBottom: number): void {
+    if (!this.statusCard) return;
+    const targetY = Math.min(this.scale.height - 86, boardBottom + 18);
+    const targetX = Math.round((this.scale.width - this.statusCard.width) / 2);
+    this.statusCard.setPosition(targetX, targetY);
+  }
+
+  private setStatus(message: string, hint: string, tone: 'normal' | 'warn' | 'error' = 'normal'): void {
+    const color =
+      tone === 'error' ? COLOR.textError : tone === 'warn' ? COLOR.textGold : COLOR.textPrimary;
+    this.statusText.setStyle(displayTextStyle(15, color, 3));
+    this.statusText.setText(message);
+    this.statusHint.setText(hint);
   }
 
   private drawBoard(): void {
     const bg = this.add.graphics();
-    bg.fillStyle(0x1d3a1a, 1);
+    bg.fillStyle(COLOR.boardSurfaceLo, 1);
     bg.fillRect(0, 0, BOARD_W, BOARD_H);
-    bg.fillStyle(0x244a21, 1);
+    bg.fillStyle(COLOR.boardSurface, 1);
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         if ((x + y) % 2 === 0) bg.fillRect(x * TILE, y * TILE, TILE, TILE);
       }
     }
+    bg.fillStyle(0xffffff, 0.035);
+    bg.fillRect(0, 0, BOARD_W, 18);
+    bg.fillStyle(COLOR.brass, 0.08);
+    bg.fillEllipse(BOARD_W / 2, 22, BOARD_W * 0.68, 54);
+    bg.fillStyle(0x4b2f1c, 0.28);
+    bg.fillRect(0, BOARD_H - 18, BOARD_W, 18);
     const grid = this.add.graphics({
       lineStyle: { width: 1, color: 0x2c5a23, alpha: 0.5 },
     });
     for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
     for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
-    this.boardContainer.add([bg, grid]);
+    const edge = this.add.graphics();
+    edge.fillStyle(COLOR.brass, 0.18);
+    edge.fillRect(0, 0, 8, BOARD_H);
+    edge.fillStyle(COLOR.brass, 0.34);
+    edge.fillRect(8, 0, 3, BOARD_H);
+    this.boardContainer.add([bg, grid, edge]);
   }
 
   private drawStartingBuildings(): void {
@@ -366,8 +476,9 @@ export class ArenaScene extends Phaser.Scene {
       const reservation = await runtime.api.reserveArena();
       if (reservation) {
         arenaToken = reservation.arenaToken;
-        this.statusText.setText(
-          `Matched vs ${reservation.opponent.displayName} (${reservation.opponent.trophies}🏆) — connecting…`,
+        this.setStatus(
+          `Matched vs ${reservation.opponent.displayName} (${reservation.opponent.trophies} trophies)`,
+          'Syncing the shared base snapshot before the first draw command lands.',
         );
         // Replace the placeholder sim with the same snapshot+seed the
         // server seeds PicnicRoom with. Without this the client hashes
@@ -389,12 +500,16 @@ export class ArenaScene extends Phaser.Scene {
         // tickConfirm arrives.
         this.renderInitialBoard();
       } else {
-        this.statusText.setText('No opponent online — solo arena test');
+        this.setStatus('No opponent online', 'Solo arena mode is active so you can still test the flow.', 'warn');
       }
     } catch (err) {
       // Don't block arena entry on reserve failure — dev paths without
       // a DB connection still want to exercise the Colyseus netcode.
-      this.statusText.setText(`Reserve failed (${(err as Error).message}); solo test`);
+      this.setStatus(
+        'Reserve failed - solo arena test',
+        (err as Error).message,
+        'warn',
+      );
     }
 
     this.arena = new ArenaClient();
@@ -406,13 +521,13 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.scene.isActive()) return;
     switch (ev.kind) {
       case 'connecting':
-        this.statusText.setText('Connecting to arena…');
+        this.setStatus('Connecting to arena...', 'Opening the realtime room and waiting for handshake.');
         break;
       case 'joined':
-        this.statusText.setText('Waiting for opponent…');
+        this.setStatus('Waiting for opponent...', 'The match starts automatically once both players are ready.');
         break;
       case 'both-ready':
-        this.statusText.setText('Fight!');
+        this.setStatus('Fight!', 'Drag from the glowing left edge to send a pheromone trail.');
         this.started = true;
         break;
       case 'tick':
@@ -420,17 +535,17 @@ export class ArenaScene extends Phaser.Scene {
         this.applyConfirmedInputs(ev.data);
         if (!this.started) {
           this.started = true;
-          this.statusText.setText('Fight!');
+          this.setStatus('Fight!', 'Drag from the glowing left edge to send a pheromone trail.');
         }
         break;
       case 'opponent-left':
-        this.statusText.setText('Opponent left — you win by default');
+        this.setStatus('Opponent left', 'The arena awarded you the win by default.', 'warn');
         break;
       case 'error':
         this.reportOffline(ev.error.message);
         break;
       case 'closed':
-        if (!this.hasError) this.statusText.setText('Arena closed');
+        if (!this.hasError) this.setStatus('Arena closed', 'Return home to queue another live match.', 'warn');
         break;
     }
   }
@@ -494,15 +609,10 @@ export class ArenaScene extends Phaser.Scene {
 
   private reportOffline(message: string): void {
     this.hasError = true;
-    this.statusText.setText(
-      [
-        'Live arena unavailable.',
-        '',
-        message,
-        '',
-        "Deploy @hive/arena separately (Colyseus on port 2567) and set",
-        "VITE_ARENA_URL to its wss:// URL at build time.",
-      ].join('\n'),
+    this.setStatus(
+      'Live arena unavailable',
+      `${message}  Deploy @hive/arena separately (Colyseus on port 2567) and set VITE_ARENA_URL to its wss URL at build time.`,
+      'error',
     );
   }
 }
