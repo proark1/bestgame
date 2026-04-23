@@ -88,6 +88,40 @@ export interface ClanWarCurrentResponse {
   war: ClanWarState | null;
 }
 
+// Defender AI rule catalog served by /player/ai-rules/catalog. Mirrors
+// the server's AIRuleCatalog shape so the editor can render dropdowns
+// without re-hardcoding the allowed trigger/effect list.
+export type AIRuleParamKey =
+  | 'percent'
+  | 'radius'
+  | 'ticks'
+  | 'durationTicks'
+  | 'rate'
+  | 'range'
+  | 'maxExtra'
+  | 'hp';
+export interface AIRuleCatalogTrigger {
+  id: Types.AIRuleTrigger;
+  label: string;
+  params: AIRuleParamKey[];
+}
+export interface AIRuleCatalogEffect {
+  id: Types.AIRuleEffect;
+  label: string;
+  params: AIRuleParamKey[];
+  allowedKinds: Types.BuildingKind[];
+}
+export interface AIRuleCatalogResponse {
+  triggers: AIRuleCatalogTrigger[];
+  effects: AIRuleCatalogEffect[];
+  combos: Array<{ trigger: Types.AIRuleTrigger; effect: Types.AIRuleEffect }>;
+  limits: {
+    maxRulesPerBuilding: number;
+    quotaByQueenLevel: Record<number, number>;
+    unlockQueenLevel: number;
+  };
+}
+
 export interface PlayerMeResponse {
   player: PlayerState;
   base: Types.Base;
@@ -472,6 +506,35 @@ export class Api {
     });
     if (!res.ok) throw await errorFromResponse(res, 'war attack failed');
     return (await res.json()) as Awaited<ReturnType<Api['warSubmitAttack']>>;
+  }
+
+  // ---- Defender AI rules -------------------------------------------------
+  async getAIRulesCatalog(): Promise<AIRuleCatalogResponse> {
+    const res = await this.authedFetch('/player/ai-rules/catalog');
+    if (!res.ok) throw await errorFromResponse(res, 'ai catalog fetch failed');
+    return (await res.json()) as AIRuleCatalogResponse;
+  }
+
+  async setBuildingRules(
+    buildingId: string,
+    rules: Types.BuildingAIRule[],
+  ): Promise<{
+    ok: true;
+    base: Types.Base;
+    building: Types.Building;
+    quota: number;
+    rulesUsed: number;
+  }> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(buildingId)}/ai`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rules }),
+      },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'rule save failed');
+    return (await res.json()) as Awaited<ReturnType<Api['setBuildingRules']>>;
   }
 
   async warEnd(warId: string): Promise<{

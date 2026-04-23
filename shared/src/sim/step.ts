@@ -3,6 +3,7 @@ import { applyDeploy } from './systems/deploy.js';
 import { pheromoneFollowSystem } from './systems/pheromone_follow.js';
 import { combatSystem } from './systems/combat.js';
 import { outcomeSystem } from './systems/outcome.js';
+import { aiRulesSystem } from './ai_rules.js';
 import type { SimConfig, SimState } from './state.js';
 import type { SimInput } from '../types/pheromone.js';
 
@@ -40,6 +41,16 @@ export function step(
   if (state.outcome === 'ongoing') {
     // 2. Units advance along their pheromone paths.
     pheromoneFollowSystem(state);
+    // 2b. Player-authored defender AI rules. Runs BEFORE combat so
+    // any freshly-applied boost / range extension / reveal takes
+    // effect in the same tick's combat pass. The `onAllyDestroyed`
+    // trigger reads `buildingsDestroyedThisTick` from the PREVIOUS
+    // tick's combat (otherwise the counter is always zero at rule
+    // evaluation time — combat hasn't run yet). We clear it AFTER
+    // aiRulesSystem so combat writes into a fresh zero for the next
+    // tick's rules to observe.
+    aiRulesSystem(state);
+    state.buildingsDestroyedThisTick = 0;
     // 3. Combat resolution (unit<->building). Level multipliers are
     // threaded in so attacker damage scales with upgrades.
     combatSystem(state, cfg.attackerUnitLevels);
