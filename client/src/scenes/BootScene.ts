@@ -11,7 +11,7 @@ import {
 import { generateMissingPlaceholders } from '../assets/placeholders.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { crispText } from '../ui/text.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { setUiOverrides } from '../ui/uiOverrides.js';
 
 // BootScene — preloads only the sprite keys the server's
@@ -170,7 +170,7 @@ export class BootScene extends Phaser.Scene {
     const w = this.scale.width;
     const h = this.scale.height;
 
-    const bg = this.add.graphics().setDepth(-100);
+    const bg = this.add.graphics().setDepth(DEPTHS.background);
     const top = 0x203224;
     const mid = 0x142117;
     const bot = 0x060b07;
@@ -191,7 +191,7 @@ export class BootScene extends Phaser.Scene {
       bg.fillRect(0, Math.floor((i * h) / bands), w, Math.ceil(h / bands) + 1);
     }
 
-    const glow = this.add.graphics().setDepth(-99);
+    const glow = this.add.graphics().setDepth(DEPTHS.ambient);
     glow.fillStyle(COLOR.brass, 0.06);
     glow.fillEllipse(w / 2, h * 0.34, Math.min(760, w * 0.88), 220);
     glow.fillStyle(COLOR.greenHi, 0.07);

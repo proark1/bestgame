@@ -6,7 +6,7 @@ import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
 
@@ -294,7 +294,7 @@ export class RaidScene extends Phaser.Scene {
     this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
     this.drawBuildingsFromState();
-    this.trailGraphics = this.add.graphics().setDepth(10);
+    this.trailGraphics = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     this.boardContainer.add(this.trailGraphics);
     this.drawDeckTray();
     this.drawDeck();
@@ -315,7 +315,7 @@ export class RaidScene extends Phaser.Scene {
       frequency: -1, // manual emit — explode() when we want a puff
       quantity: 1,
     });
-    this.trailEmitter.setDepth(5);
+    this.trailEmitter.setDepth(DEPTHS.trail);
     this.boardContainer.add(this.trailEmitter);
 
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
@@ -1065,7 +1065,7 @@ export class RaidScene extends Phaser.Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5)
-      .setDepth(40);
+      .setDepth(DEPTHS.raidHudLabel);
     this.boardContainer.add(text);
     this.tweens.add({
       targets: text,
@@ -1087,7 +1087,7 @@ export class RaidScene extends Phaser.Scene {
         strokeThickness: 3,
       })
       .setOrigin(0.5)
-      .setDepth(40);
+      .setDepth(DEPTHS.raidHudLabel);
     this.boardContainer.add(text);
     this.tweens.add({
       targets: text,
@@ -1166,7 +1166,7 @@ export class RaidScene extends Phaser.Scene {
           color: match.opponent.isBot ? '#c3e8b0' : '#ffd98a',
         })
         .setOrigin(0.5, 0)
-        .setDepth(50);
+        .setDepth(DEPTHS.raidHudValue);
     } catch (err) {
       // Non-fatal — keep the hard-coded bot.
       console.warn('match fetch failed, staying on bot:', err);
@@ -1210,7 +1210,7 @@ export class RaidScene extends Phaser.Scene {
     void this.submitToServer();
 
     const stars = this.currentStars();
-    const overlay = this.add.graphics().setDepth(100);
+    const overlay = this.add.graphics().setDepth(DEPTHS.resultBackdrop);
     overlay.fillStyle(0x000000, 0.7);
     overlay.fillRect(0, 0, this.scale.width, this.scale.height);
 
@@ -1221,11 +1221,11 @@ export class RaidScene extends Phaser.Scene {
     const isWin = this.state.outcome === 'attackerWin' && stars > 0;
     const cardW = Math.min(400, this.scale.width - 32);
     const cardH = isWin ? 290 : 240;
-    const card = this.add.graphics().setDepth(101);
+    const card = this.add.graphics().setDepth(DEPTHS.resultCard);
     const cx = (this.scale.width - cardW) / 2;
     const cy = (this.scale.height - cardH) / 2;
     // Dim backdrop behind the card so the outcome commands the eye.
-    const backdrop = this.add.graphics().setDepth(100);
+    const backdrop = this.add.graphics().setDepth(DEPTHS.resultBackdrop);
     backdrop.fillStyle(0x000000, 0.55);
     backdrop.fillRect(0, 0, this.scale.width, this.scale.height);
     // CoC-style card: gradient fill, thick brass stroke, drop shadow.
@@ -1253,7 +1253,7 @@ export class RaidScene extends Phaser.Scene {
         displayTextStyle(24, isWin ? COLOR.textGold : '#ffb0a0', 4),
       )
       .setOrigin(0.5)
-      .setDepth(102);
+      .setDepth(DEPTHS.resultContent);
 
     this.add
       .text(
@@ -1263,7 +1263,7 @@ export class RaidScene extends Phaser.Scene {
         displayTextStyle(36, COLOR.textGold, 4),
       )
       .setOrigin(0.5)
-      .setDepth(102);
+      .setDepth(DEPTHS.resultContent);
 
     this.add
       .text(
@@ -1273,7 +1273,7 @@ export class RaidScene extends Phaser.Scene {
         displayTextStyle(15, COLOR.textDim, 3),
       )
       .setOrigin(0.5)
-      .setDepth(102);
+      .setDepth(DEPTHS.resultContent);
 
     void backdrop;
 
@@ -1298,7 +1298,7 @@ export class RaidScene extends Phaser.Scene {
       variant: 'secondary',
       fontSize: 15,
       onPress: () => fadeToScene(this, 'HomeScene'),
-    }).container.setDepth(102);
+    }).container.setDepth(DEPTHS.resultContent);
 
     if (isWin) {
       makeHiveButton(this, {
@@ -1310,7 +1310,7 @@ export class RaidScene extends Phaser.Scene {
         variant: 'primary',
         fontSize: 15,
         onPress: () => void this.shareOutcome(stars),
-      }).container.setDepth(102);
+      }).container.setDepth(DEPTHS.resultContent);
     }
   }
 
@@ -1349,7 +1349,7 @@ export class RaidScene extends Phaser.Scene {
         padding: { left: 10, right: 10, top: 6, bottom: 6 },
       })
       .setOrigin(0.5)
-      .setDepth(500);
+      .setDepth(DEPTHS.toast);
     this.tweens.add({
       targets: t,
       alpha: { from: 1, to: 0 },
