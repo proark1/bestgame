@@ -247,6 +247,70 @@ export async function deleteSprite(key: string): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------
+// User management — admin CRUD over the `users` login table.
+//
+// Matches the shape returned by server/api/src/routes/adminUsers.ts.
+// `email` and the linked player fields are nullable: a user without
+// a recorded email is legal; a user not yet attached to a player
+// (no game session) has playerId + displayName = null.
+// ---------------------------------------------------------------------
+export interface AdminUser {
+  id: string;
+  username: string;
+  email: string | null;
+  createdAt: string;
+  lastLoginAt: string | null;
+  playerId: string | null;
+  displayName: string | null;
+}
+export interface AdminUsersResponse {
+  users: AdminUser[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function listUsers(args: {
+  limit?: number;
+  offset?: number;
+  q?: string;
+} = {}): Promise<AdminUsersResponse> {
+  const params = new URLSearchParams();
+  if (args.limit !== undefined) params.set('limit', String(args.limit));
+  if (args.offset !== undefined) params.set('offset', String(args.offset));
+  if (args.q) params.set('q', args.q);
+  const qs = params.toString();
+  return req<AdminUsersResponse>(`/admin/api/users${qs ? `?${qs}` : ''}`);
+}
+
+export async function createUser(args: {
+  username: string;
+  email?: string | null;
+  password: string;
+}): Promise<{ user: AdminUser }> {
+  return req<{ user: AdminUser }>('/admin/api/users', {
+    method: 'POST',
+    json: args,
+  });
+}
+
+export async function updateUser(
+  id: string,
+  args: { username?: string; email?: string | null; password?: string },
+): Promise<{ user: AdminUser }> {
+  return req<{ user: AdminUser }>(`/admin/api/users/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    json: args,
+  });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await req<{ ok: true }>(`/admin/api/users/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
 // Trigger a browser download of the whole sprites folder as a zip. The
 // endpoint sets content-disposition: attachment, so assigning the auth'd
 // URL to an anchor and clicking it would drop the token into history —

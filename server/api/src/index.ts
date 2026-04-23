@@ -8,6 +8,7 @@ import { registerHealth } from './routes/health.js';
 import { registerRaid } from './routes/raid.js';
 import { registerMatchmaking } from './routes/matchmaking.js';
 import { registerAdmin } from './routes/admin.js';
+import { registerAdminUsers } from './routes/adminUsers.js';
 import { registerAdminHook } from './auth/adminAuth.js';
 import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
@@ -107,6 +108,7 @@ async function start(): Promise<void> {
   // before they resolve; the routes themselves live at /admin/api/*.
   registerAdminHook(app);
   registerAdmin(app);
+  registerAdminUsers(app);
 
   // Game JSON API lives under /api/*.
   await app.register(

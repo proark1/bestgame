@@ -3,6 +3,8 @@
 // so the public game bundle stays lean.
 
 import {
+  createUser,
+  deleteUser,
   downloadAllSprites,
   fetchAnimationSettings,
   fetchPrompts,
@@ -10,11 +12,14 @@ import {
   fetchUiOverrideSettings,
   generateImages,
   getToken,
+  listUsers,
   putAnimationSettings,
   putUiOverrideSettings,
   saveSprite,
   setToken,
   updatePrompt,
+  updateUser,
+  type AdminUser,
   type AnimationSettings,
   type PromptsFile,
   type UiOverrideSettings,
@@ -202,6 +207,7 @@ function render(): void {
   // it gracefully handles the "no walk sheet yet" case inline.
   root.append(renderAnimationPanel());
   root.append(renderUiOverridesPanel());
+  root.append(renderUsersPanel());
 
   // Slim progress bar tucked under the header — hidden until a batch is
   // running. Lives in the DOM permanently so state.progressEl is always
@@ -1097,6 +1103,279 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
   b.textContent = label;
   b.addEventListener('click', onClick);
   return b;
+}
+
+// Users section: a searchable table of login accounts with add /
+// edit / delete actions. The panel owns its own local state (user
+// list + search query + per-row "draft" edits) so typing in a row
+// doesn't trigger a full admin re-render on every keystroke.
+//
+// DB-unconnected deploys silently show an empty table — the server
+// returns 503 on every call, which surfaces as a toast via the
+// error handler in api.ts.
+interface UsersPanelState {
+  users: AdminUser[];
+  total: number;
+  q: string;
+  // Per-user inline-edit draft. id → { fieldChanges }. Applied on
+  // "Save"; cleared on "Cancel" or a successful save.
+  edits: Map<string, { username?: string; email?: string; password?: string }>;
+  // The panel root so async refreshes can replace content in place.
+  root?: HTMLElement;
+}
+const usersPanelState: UsersPanelState = {
+  users: [],
+  total: 0,
+  q: '',
+  edits: new Map(),
+};
+
+function renderUsersPanel(): HTMLElement {
+  const card = document.createElement('section');
+  card.className = 'admin-users';
+  usersPanelState.root = card;
+
+  const header = document.createElement('header');
+  header.innerHTML = `
+    <h2>Users</h2>
+    <small>Create, edit, or remove login accounts. Passwords are hashed server-side (scrypt) — admins never see plaintext.</small>
+  `;
+  card.append(header);
+
+  // Search box.
+  const searchRow = document.createElement('div');
+  searchRow.className = 'admin-users-search';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.placeholder = 'Filter by username or email…';
+  searchInput.value = usersPanelState.q;
+  searchInput.addEventListener('input', () => {
+    usersPanelState.q = searchInput.value;
+    // Debounce with a single timer stored on the input itself. Keeps
+    // us from firing a GET per keystroke; 200ms feels snappy.
+    const existing = (searchInput as HTMLInputElement & { _t?: number })._t;
+    if (existing !== undefined) window.clearTimeout(existing);
+    (searchInput as HTMLInputElement & { _t?: number })._t = window.setTimeout(
+      () => void refreshUsers(),
+      200,
+    );
+  });
+  searchRow.append(searchInput);
+  const refreshBtn = button('Refresh', 'btn ghost', () => void refreshUsers());
+  searchRow.append(refreshBtn);
+  card.append(searchRow);
+
+  // "Add user" form.
+  const addForm = document.createElement('form');
+  addForm.className = 'admin-users-add';
+  addForm.innerHTML = `
+    <input name="username" placeholder="username" required autocomplete="off" />
+    <input name="email" type="email" placeholder="email (optional)" autocomplete="off" />
+    <input name="password" type="password" placeholder="password (8+ chars)" required autocomplete="new-password" />
+    <button type="submit" class="btn accent">Add user</button>
+  `;
+  addForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    void onAddUserSubmit(addForm);
+  });
+  card.append(addForm);
+
+  // Results table.
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'admin-users-table';
+  card.append(tableWrap);
+
+  // First paint + async load.
+  drawUsersTable(tableWrap);
+  void refreshUsers();
+
+  return card;
+}
+
+async function refreshUsers(): Promise<void> {
+  try {
+    const res = await listUsers({ limit: 100, q: usersPanelState.q });
+    usersPanelState.users = res.users;
+    usersPanelState.total = res.total;
+    usersPanelState.edits.clear();
+    const tableWrap = usersPanelState.root?.querySelector(
+      '.admin-users-table',
+    ) as HTMLElement | null;
+    if (tableWrap) drawUsersTable(tableWrap);
+  } catch (err) {
+    statusToast((err as Error).message, 'error');
+  }
+}
+
+function drawUsersTable(container: HTMLElement): void {
+  container.innerHTML = '';
+  if (usersPanelState.users.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'admin-users-empty';
+    empty.textContent =
+      usersPanelState.q
+        ? `No users match "${usersPanelState.q}".`
+        : 'No users yet — use the form above to create one.';
+    container.append(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Email</th>
+        <th>Password</th>
+        <th>Linked player</th>
+        <th>Last login</th>
+        <th></th>
+      </tr>
+    </thead>
+  `;
+  const tbody = document.createElement('tbody');
+  for (const u of usersPanelState.users) {
+    tbody.append(userRow(u));
+  }
+  table.append(tbody);
+  container.append(table);
+
+  const meta = document.createElement('p');
+  meta.className = 'admin-users-meta';
+  meta.textContent = `${usersPanelState.users.length} of ${usersPanelState.total} user(s)`;
+  container.append(meta);
+}
+
+function userRow(u: AdminUser): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  tr.dataset.userId = u.id;
+
+  const getEdit = (): {
+    username?: string;
+    email?: string;
+    password?: string;
+  } => {
+    let e = usersPanelState.edits.get(u.id);
+    if (!e) {
+      e = {};
+      usersPanelState.edits.set(u.id, e);
+    }
+    return e;
+  };
+
+  const usernameCell = document.createElement('td');
+  const usernameInput = document.createElement('input');
+  usernameInput.value = u.username;
+  usernameInput.addEventListener('input', () => {
+    getEdit().username = usernameInput.value;
+  });
+  usernameCell.append(usernameInput);
+
+  const emailCell = document.createElement('td');
+  const emailInput = document.createElement('input');
+  emailInput.type = 'email';
+  emailInput.value = u.email ?? '';
+  emailInput.placeholder = '—';
+  emailInput.addEventListener('input', () => {
+    getEdit().email = emailInput.value;
+  });
+  emailCell.append(emailInput);
+
+  const pwCell = document.createElement('td');
+  const pwInput = document.createElement('input');
+  pwInput.type = 'password';
+  pwInput.placeholder = 'Leave blank to keep';
+  pwInput.autocomplete = 'new-password';
+  pwInput.addEventListener('input', () => {
+    getEdit().password = pwInput.value;
+  });
+  pwCell.append(pwInput);
+
+  const playerCell = document.createElement('td');
+  playerCell.textContent = u.displayName ?? '—';
+
+  const lastCell = document.createElement('td');
+  lastCell.textContent = u.lastLoginAt
+    ? new Date(u.lastLoginAt).toLocaleString()
+    : 'never';
+
+  const actionsCell = document.createElement('td');
+  actionsCell.className = 'admin-users-actions';
+  const saveBtn = button('Save', 'btn', () =>
+    void onSaveUser(u.id, usernameInput, emailInput, pwInput),
+  );
+  const deleteBtn = button('Delete', 'btn danger', () => void onDeleteUser(u));
+  actionsCell.append(saveBtn, deleteBtn);
+
+  tr.append(usernameCell, emailCell, pwCell, playerCell, lastCell, actionsCell);
+  return tr;
+}
+
+async function onAddUserSubmit(form: HTMLFormElement): Promise<void> {
+  const fd = new FormData(form);
+  const username = String(fd.get('username') ?? '').trim();
+  const email = String(fd.get('email') ?? '').trim();
+  const password = String(fd.get('password') ?? '');
+  try {
+    const res = await createUser({
+      username,
+      email: email || null,
+      password,
+    });
+    statusToast(`Created user ${res.user.username}`, 'success');
+    form.reset();
+    await refreshUsers();
+  } catch (err) {
+    statusToast((err as Error).message, 'error');
+  }
+}
+
+async function onSaveUser(
+  id: string,
+  usernameInput: HTMLInputElement,
+  emailInput: HTMLInputElement,
+  pwInput: HTMLInputElement,
+): Promise<void> {
+  // Only send fields that actually changed. Username and email are
+  // compared to the table's current row; password is only sent when
+  // the admin types something, matching the "leave blank to keep"
+  // hint on the input.
+  const existing = usersPanelState.users.find((u) => u.id === id);
+  if (!existing) return;
+  const patch: { username?: string; email?: string | null; password?: string } = {};
+  if (usernameInput.value !== existing.username) {
+    patch.username = usernameInput.value;
+  }
+  const newEmail = emailInput.value.trim();
+  if (newEmail !== (existing.email ?? '')) {
+    patch.email = newEmail === '' ? null : newEmail;
+  }
+  if (pwInput.value.length > 0) {
+    patch.password = pwInput.value;
+  }
+  if (Object.keys(patch).length === 0) {
+    statusToast('Nothing changed', 'info');
+    return;
+  }
+  try {
+    await updateUser(id, patch);
+    statusToast('User updated', 'success');
+    await refreshUsers();
+  } catch (err) {
+    statusToast((err as Error).message, 'error');
+  }
+}
+
+async function onDeleteUser(u: AdminUser): Promise<void> {
+  const label = u.email ? `${u.username} (${u.email})` : u.username;
+  if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+  try {
+    await deleteUser(u.id);
+    statusToast(`Deleted ${u.username}`, 'success');
+    await refreshUsers();
+  } catch (err) {
+    statusToast((err as Error).message, 'error');
+  }
 }
 
 // Bootstrap: auth-gate if no token, otherwise fetch and render.
