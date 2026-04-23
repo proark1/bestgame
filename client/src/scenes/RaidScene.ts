@@ -5,7 +5,8 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
-import { COLOR, displayTextStyle } from '../ui/theme.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
 
@@ -665,42 +666,36 @@ export class RaidScene extends Phaser.Scene {
       .setDisplaySize(34, 34)
       .setDepth(31);
     this.deckSelectedText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '15px',
-        color: '#ffd98a',
-      })
+      .text(0, 0, '', displayTextStyle(15, '#ffd98a', 3))
       .setOrigin(0.5, 0)
       .setDepth(31);
     this.deckHintText = this.add
-      .text(0, 0, 'Pick a unit, then drag on the battlefield to draw its path.', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '11px',
-        color: '#c3e8b0',
-        align: 'center',
-      })
+      .text(
+        0,
+        0,
+        'Pick a unit, then drag on the battlefield to draw its path.',
+        { ...bodyTextStyle(11, '#c3e8b0'), align: 'center' },
+      )
       .setOrigin(0.5, 0)
       .setDepth(31);
     this.deckUnlockText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '10px',
-        color: '#9fc79a',
-        align: 'center',
-      })
+      .text(0, 0, '', { ...labelTextStyle(10, '#9fc79a'), align: 'center' })
       .setOrigin(0.5, 0)
       .setDepth(31);
     const guideBg = this.add.graphics();
-    guideBg.fillStyle(0x09120a, 0.76);
-    guideBg.lineStyle(2, COLOR.brass, 0.8);
-    guideBg.fillRoundedRect(-114, -18, 228, 36, 14);
-    guideBg.strokeRoundedRect(-114, -18, 228, 36, 14);
+    drawPanel(guideBg, -118, -22, 236, 44, {
+      topColor: 0x172117,
+      botColor: 0x0a120b,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.2,
+      radius: 14,
+      shadowOffset: 3,
+      shadowAlpha: 0.35,
+    });
     const guideText = this.add
-      .text(0, 0, 'Drag a path here to attack', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: '#ffd98a',
-      })
+      .text(0, 0, 'Drag a path here to attack', displayTextStyle(13, '#ffd98a', 3))
       .setOrigin(0.5);
     this.boardGuide = this.add.container(BOARD_W / 2, 28, [guideBg, guideText]);
     this.boardGuide.setDepth(15);
@@ -762,6 +757,14 @@ export class RaidScene extends Phaser.Scene {
       DECK_CARD_W,
       DECK_CARD_H - 12,
       10,
+    );
+    bgObj.fillStyle(selected ? 0xffffff : COLOR.brass, selected ? 0.1 : 0.04);
+    bgObj.fillRoundedRect(
+      -DECK_CARD_W / 2 + 6,
+      -DECK_CARD_H / 2 + 12,
+      DECK_CARD_W - 12,
+      8,
+      6,
     );
     label.setText(`${entry.label} ×${entry.count}`);
     label.setColor(depleted ? '#d98080' : '#e6f5d2');
@@ -1355,24 +1358,27 @@ export class RaidScene extends Phaser.Scene {
 
     const trayTop = this.scale.height - deckLayout.trayHeight - 12;
     this.deckTrayBg.clear();
-    this.deckTrayBg.fillStyle(0x09120a, 0.94);
-    this.deckTrayBg.fillRoundedRect(
-      12,
-      trayTop,
-      this.scale.width - 24,
-      deckLayout.trayHeight,
-      16,
-    );
-    this.deckTrayBg.lineStyle(2, 0x2c5a23, 1);
-    this.deckTrayBg.strokeRoundedRect(
-      12,
-      trayTop,
-      this.scale.width - 24,
-      deckLayout.trayHeight,
-      16,
-    );
+    drawPanel(this.deckTrayBg, 12, trayTop, this.scale.width - 24, deckLayout.trayHeight, {
+      topColor: 0x182319,
+      botColor: 0x09120a,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.16,
+      radius: 16,
+      shadowOffset: 5,
+      shadowAlpha: 0.42,
+    });
     this.deckTrayBg.fillStyle(COLOR.brass, 0.18);
     this.deckTrayBg.fillRect(28, trayTop + 44, this.scale.width - 56, 2);
+    drawPill(
+      this.deckTrayBg,
+      this.scale.width / 2 - 178,
+      trayTop + 10,
+      44,
+      36,
+      { brass: true },
+    );
 
     this.deckSelectedIcon.setPosition(this.scale.width / 2 - 154, trayTop + 28);
     this.deckSelectedText.setPosition(this.scale.width / 2 + 12, trayTop + 10);

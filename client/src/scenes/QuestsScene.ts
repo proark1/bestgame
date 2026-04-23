@@ -3,16 +3,10 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import type { HiveRuntime } from '../main.js';
 import type { QuestsResponse, SeasonMilestone } from '../net/Api.js';
-
-// Quests + season screen.
-//
-// Top: today's 3 daily quests, each a row with progress bar + claim
-// button. Below: the season XP bar and a scrollable milestone list
-// with per-tier rewards + claim buttons. Everything server-authored;
-// this scene just renders + dispatches claim requests.
-//
-// Kept visually close to UpgradeScene so the game has a consistent
-// "list-with-right-side-claim-button" pattern.
+import { crispText } from '../ui/text.js';
+import { makeHiveButton } from '../ui/button.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 const HUD_H = 56;
 
@@ -36,43 +30,80 @@ export class QuestsScene extends Phaser.Scene {
     fadeInScene(this);
     installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
+    this.drawAmbient();
     this.drawHud();
     this.rowContainer = this.add.container(0, this.viewportTop);
-    this.loadingText = this.add
-      .text(this.scale.width / 2, HUD_H + 100, 'Loading quests…', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0.5);
+    this.loadingText = crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H + 104,
+      'Loading quests...',
+      bodyTextStyle(14, COLOR.textDim),
+    ).setOrigin(0.5);
     this.wireScroll();
     void this.fetchData();
   }
 
+  private drawAmbient(): void {
+    const g = this.add.graphics().setDepth(-100);
+    const top = 0x203224;
+    const bot = 0x070d08;
+    const bands = 18;
+    for (let i = 0; i < bands; i++) {
+      const t = i / (bands - 1);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const gc = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
+      g.fillStyle((r << 16) | (gc << 8) | b, 1);
+      g.fillRect(
+        0,
+        Math.floor((i * this.scale.height) / bands),
+        this.scale.width,
+        Math.ceil(this.scale.height / bands) + 1,
+      );
+    }
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + 180, Math.min(880, this.scale.width * 0.92), 240);
+    glow.fillStyle(COLOR.greenHi, 0.05);
+    glow.fillEllipse(this.scale.width / 2, this.scale.height - 60, Math.min(960, this.scale.width * 1.05), 220);
+  }
+
   private drawHud(): void {
-    const bg = this.add.graphics();
-    bg.fillStyle(0x1a2b1a, 1);
-    bg.fillRect(0, 0, this.scale.width, HUD_H);
-    bg.lineStyle(2, 0x2c5a23, 1);
-    bg.lineBetween(0, HUD_H, this.scale.width, HUD_H);
+    const w = this.scale.width;
+    const hud = this.add.graphics();
+    drawPanel(hud, 0, 0, w, HUD_H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
+    hud.fillStyle(0x000000, 0.4);
+    hud.fillRect(0, HUD_H, w, 3);
 
-    this.add
-      .text(this.scale.width / 2, HUD_H / 2, 'Quests & Season', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '18px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0.5);
+    makeHiveButton(this, {
+      x: 72,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: 'Home',
+      variant: 'ghost',
+      fontSize: 13,
+      onPress: () => fadeToScene(this, 'HomeScene'),
+    });
 
-    const back = this.add
-      .text(16, HUD_H / 2, '← Back', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    back.on('pointerdown', () => fadeToScene(this, 'HomeScene'));
+    crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H / 2,
+      'Quests and Season',
+      displayTextStyle(20, COLOR.textGold, 4),
+    ).setOrigin(0.5);
   }
 
   private wireScroll(): void {
@@ -122,59 +153,131 @@ export class QuestsScene extends Phaser.Scene {
   private render(): void {
     this.rowContainer.removeAll(true);
     if (!this.quests) return;
-    const maxW = Math.min(560, this.scale.width - 32);
+    const maxW = Math.min(640, this.scale.width - 32);
     const originX = (this.scale.width - maxW) / 2;
     let y = 0;
 
-    // Daily quests section.
-    y = this.renderSectionHeader('Today\'s Quests', originX, maxW, y);
+    y = this.renderOverviewCard(originX, maxW, y);
+    y += 16;
+    y = this.renderSectionHeader('Daily Quests', 'Finish tasks, claim loot, and push your season track.', originX, maxW, y);
     for (const q of this.quests.dailyQuests.quests) {
       const def = this.quests.questDefs.find((d) => d.id === q.id);
       if (!def) continue;
       y = this.renderQuestRow(originX, maxW, y, q, def);
     }
 
-    y += 16;
+    y += 20;
     y = this.renderSectionHeader(
-      `Season ${this.quests.season.id} · ${this.quests.season.xp} XP`,
+      `Season ${this.quests.season.id}`,
+      `${this.quests.season.xp} XP earned so far.`,
       originX,
       maxW,
       y,
     );
-    // Season progress bar across the milestone range.
-    const top = this.quests.season.milestones[this.quests.season.milestones.length - 1];
-    if (top) {
-      const barW = maxW - 24;
-      const frac = Math.min(1, this.quests.season.xp / top.xpRequired);
-      const bar = this.add.graphics();
-      bar.fillStyle(0x1a1208, 0.7);
-      bar.fillRoundedRect(originX + 12, y, barW, 10, 3);
-      bar.fillStyle(0xffd98a, 1);
-      bar.fillRoundedRect(originX + 13, y + 1, Math.max(0, (barW - 2) * frac), 8, 3);
-      this.rowContainer.add(bar);
-      y += 24;
-    }
+    y = this.renderSeasonProgress(originX, maxW, y);
     for (const m of this.quests.season.milestones) {
       y = this.renderMilestoneRow(originX, maxW, y, m);
     }
     this.contentHeight = y + 16;
   }
 
+  private renderOverviewCard(originX: number, maxW: number, y: number): number {
+    const h = 84;
+    const card = this.add.graphics();
+    drawPanel(card, originX, y, maxW, h, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: 16,
+      shadowOffset: 5,
+      shadowAlpha: 0.32,
+    });
+    this.rowContainer.add(card);
+
+    const badge = this.add.graphics();
+    drawPill(badge, originX + 16, y + 14, 102, 20, { brass: true });
+    this.rowContainer.add(badge);
+    this.rowContainer.add(
+      crispText(this, originX + 67, y + 24, 'Live track', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+    );
+
+    this.rowContainer.add(
+      crispText(this, originX + 18, y + 42, 'Keep your colony moving every day.', displayTextStyle(15, COLOR.textGold, 3))
+        .setOrigin(0, 0),
+    );
+    this.rowContainer.add(
+      crispText(
+        this,
+        originX + 18,
+        y + 62,
+        'Daily missions pay out resources now, and season milestones reward the long climb.',
+        bodyTextStyle(12, COLOR.textPrimary),
+      ).setOrigin(0, 0),
+    );
+    return y + h;
+  }
+
   private renderSectionHeader(
     label: string,
+    sublabel: string,
     originX: number,
     maxW: number,
     y: number,
   ): number {
-    const t = this.add
-      .text(originX + maxW / 2, y + 12, label, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '15px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0.5, 0);
-    this.rowContainer.add(t);
-    return y + 36;
+    const pill = this.add.graphics();
+    drawPill(pill, originX, y, 154, 24, { brass: true });
+    this.rowContainer.add(pill);
+    this.rowContainer.add(
+      crispText(this, originX + 77, y + 12, label, labelTextStyle(11, '#2a1d08')).setOrigin(0.5, 0.5),
+    );
+    this.rowContainer.add(
+      crispText(this, originX + 166, y + 3, sublabel, bodyTextStyle(12, COLOR.textDim)).setOrigin(0, 0),
+    );
+    return y + 34;
+  }
+
+  private renderSeasonProgress(originX: number, maxW: number, y: number): number {
+    const top = this.quests?.season.milestones[this.quests.season.milestones.length - 1];
+    if (!top || !this.quests) return y;
+    const cardH = 56;
+    const card = this.add.graphics();
+    drawPanel(card, originX, y, maxW, cardH, {
+      topColor: COLOR.bgCard,
+      botColor: COLOR.bgInset,
+      stroke: COLOR.outline,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 14,
+      shadowOffset: 4,
+      shadowAlpha: 0.24,
+    });
+    this.rowContainer.add(card);
+    const barX = originX + 18;
+    const barY = y + 28;
+    const barW = maxW - 36;
+    const frac = Math.min(1, this.quests.season.xp / top.xpRequired);
+    const bar = this.add.graphics();
+    bar.fillStyle(COLOR.bgDeep, 0.75);
+    bar.fillRoundedRect(barX, barY, barW, 12, 6);
+    bar.fillStyle(COLOR.brass, 1);
+    bar.fillRoundedRect(barX + 1, barY + 1, Math.max(0, (barW - 2) * frac), 10, 5);
+    bar.fillStyle(0xffffff, 0.18);
+    bar.fillRoundedRect(barX + 4, barY + 2, Math.max(12, (barW - 8) * frac), 3, 2);
+    this.rowContainer.add(bar);
+    this.rowContainer.add(
+      crispText(
+        this,
+        originX + 18,
+        y + 10,
+        `Season progress: ${this.quests.season.xp} / ${top.xpRequired} XP`,
+        bodyTextStyle(12, COLOR.textPrimary),
+      ).setOrigin(0, 0),
+    );
+    return y + cardH + 10;
   }
 
   private renderQuestRow(
@@ -184,82 +287,86 @@ export class QuestsScene extends Phaser.Scene {
     q: { id: string; progress: number; claimed: boolean },
     def: { id: string; label: string; goal: number; rewardSugar: number; rewardLeaf: number; rewardXp: number },
   ): number {
-    const rowH = 78;
+    const rowH = 104;
     const complete = q.progress >= def.goal;
     const bg = this.add.graphics();
-    bg.fillStyle(q.claimed ? 0x16221a : complete ? 0x233d24 : 0x1a2b1a, 1);
-    bg.lineStyle(1, complete ? 0x5ba445 : 0x2c5a23, 1);
-    bg.fillRoundedRect(originX, y, maxW, rowH, 8);
-    bg.strokeRoundedRect(originX, y, maxW, rowH, 8);
+    drawPanel(bg, originX, y, maxW, rowH, {
+      topColor: q.claimed ? 0x1a281c : complete ? 0x203725 : COLOR.bgCard,
+      botColor: q.claimed ? 0x0e160f : complete ? 0x142016 : COLOR.bgInset,
+      stroke: complete ? COLOR.greenHi : COLOR.outline,
+      strokeWidth: 2,
+      highlight: complete ? COLOR.brass : COLOR.greenHi,
+      highlightAlpha: 0.1,
+      radius: 14,
+      shadowOffset: 4,
+      shadowAlpha: 0.28,
+    });
     this.rowContainer.add(bg);
 
+    const statePill = this.add.graphics();
+    drawPill(statePill, originX + 16, y + 12, q.claimed ? 90 : complete ? 88 : 78, 20, {
+      brass: complete || q.claimed,
+    });
+    this.rowContainer.add(statePill);
     this.rowContainer.add(
-      this.text(originX + 14, y + 10, def.label, '#e6f5d2', 14, 0, 0),
-    );
-    this.rowContainer.add(
-      this.text(
-        originX + 14,
-        y + 32,
-        `+${def.rewardSugar}🍬 +${def.rewardLeaf}🍃 +${def.rewardXp} XP`,
-        '#c3e8b0',
-        11,
-        0,
-        0,
-      ),
-    );
-    // Progress bar
-    const barW = maxW - 28;
-    const frac = Math.min(1, q.progress / def.goal);
-    const bar = this.add.graphics();
-    bar.fillStyle(0x1a1208, 0.7);
-    bar.fillRoundedRect(originX + 14, y + 52, barW, 10, 3);
-    bar.fillStyle(complete ? 0xffd98a : 0x5ba445, 1);
-    bar.fillRoundedRect(originX + 15, y + 53, Math.max(0, (barW - 2) * frac), 8, 3);
-    this.rowContainer.add(bar);
-    this.rowContainer.add(
-      this.text(
-        originX + maxW - 14,
-        y + 38,
-        `${q.progress}/${def.goal}`,
-        '#c3e8b0',
-        11,
-        1,
-        0.5,
-      ),
+      crispText(
+        this,
+        originX + (q.claimed ? 61 : complete ? 60 : 55),
+        y + 22,
+        q.claimed ? 'Claimed' : complete ? 'Ready' : 'Active',
+        q.claimed || complete
+          ? labelTextStyle(10, '#2a1d08')
+          : labelTextStyle(10, COLOR.textPrimary),
+      ).setOrigin(0.5, 0.5),
     );
 
-    // Claim button (right side)
-    if (complete) {
-      const btnW = 80;
-      const btnH = 28;
-      const bx = originX + maxW - 14 - btnW;
-      const by = y + 8;
-      const btn = this.add.graphics();
-      btn.fillStyle(q.claimed ? 0x2a2a2a : 0x3a7f3a, 1);
-      btn.lineStyle(2, q.claimed ? 0x555555 : 0xffd98a, 1);
-      btn.fillRoundedRect(bx, by, btnW, btnH, 6);
-      btn.strokeRoundedRect(bx, by, btnW, btnH, 6);
-      this.rowContainer.add(btn);
-      this.rowContainer.add(
-        this.text(
-          bx + btnW / 2,
-          by + btnH / 2,
-          q.claimed ? 'Claimed' : 'Claim',
-          q.claimed ? '#777' : '#ffffff',
-          12,
-          0.5,
-          0.5,
-        ),
-      );
-      if (!q.claimed) {
-        const hit = this.add
-          .zone(bx + btnW / 2, by + btnH / 2, btnW, btnH)
-          .setOrigin(0.5)
-          .setInteractive({ useHandCursor: true });
-        hit.on('pointerdown', () => void this.claimQuest(q.id));
-        this.rowContainer.add(hit);
-      }
-    }
+    this.rowContainer.add(
+      crispText(this, originX + 16, y + 38, def.label, displayTextStyle(15, COLOR.textGold, 3)).setOrigin(0, 0),
+    );
+    this.rowContainer.add(
+      crispText(
+        this,
+        originX + 16,
+        y + 62,
+        `Rewards: S ${def.rewardSugar}  L ${def.rewardLeaf}  XP ${def.rewardXp}`,
+        bodyTextStyle(12, COLOR.textDim),
+      ).setOrigin(0, 0),
+    );
+
+    const barX = originX + 16;
+    const barY = y + 82;
+    const barW = maxW - 132;
+    const frac = Math.min(1, q.progress / def.goal);
+    const bar = this.add.graphics();
+    bar.fillStyle(COLOR.bgDeep, 0.75);
+    bar.fillRoundedRect(barX, barY, barW, 12, 6);
+    bar.fillStyle(complete ? COLOR.brass : COLOR.greenHi, 1);
+    bar.fillRoundedRect(barX + 1, barY + 1, Math.max(0, (barW - 2) * frac), 10, 5);
+    bar.fillStyle(0xffffff, 0.18);
+    bar.fillRoundedRect(barX + 4, barY + 2, Math.max(12, (barW - 8) * frac), 3, 2);
+    this.rowContainer.add(bar);
+    this.rowContainer.add(
+      crispText(
+        this,
+        originX + maxW - 118,
+        y + 68,
+        `${q.progress}/${def.goal}`,
+        labelTextStyle(12, COLOR.textPrimary),
+      ).setOrigin(1, 0.5),
+    );
+
+    const btn = makeHiveButton(this, {
+      x: originX + maxW - 62,
+      y: y + 34,
+      width: 92,
+      height: 34,
+      label: q.claimed ? 'Claimed' : 'Claim',
+      variant: q.claimed ? 'ghost' : 'primary',
+      fontSize: 12,
+      enabled: !q.claimed && complete,
+      onPress: () => void this.claimQuest(q.id),
+    });
+    this.rowContainer.add(btn.container);
     return y + rowH + 8;
   }
 
@@ -269,74 +376,50 @@ export class QuestsScene extends Phaser.Scene {
     y: number,
     m: SeasonMilestone,
   ): number {
-    const rowH = 44;
+    const rowH = 62;
     const xp = this.quests?.season.xp ?? 0;
     const claimed = this.quests?.season.milestonesClaimed.includes(m.id) ?? false;
     const unlocked = xp >= m.xpRequired;
     const bg = this.add.graphics();
-    bg.fillStyle(claimed ? 0x16221a : unlocked ? 0x233d24 : 0x1a2b1a, 1);
-    bg.lineStyle(1, unlocked ? 0x5ba445 : 0x2c5a23, 1);
-    bg.fillRoundedRect(originX, y, maxW, rowH, 8);
-    bg.strokeRoundedRect(originX, y, maxW, rowH, 8);
+    drawPanel(bg, originX, y, maxW, rowH, {
+      topColor: claimed ? 0x1a281c : unlocked ? 0x203725 : COLOR.bgCard,
+      botColor: claimed ? 0x0e160f : unlocked ? 0x142016 : COLOR.bgInset,
+      stroke: unlocked ? COLOR.greenHi : COLOR.outline,
+      strokeWidth: 2,
+      highlight: unlocked ? COLOR.brass : COLOR.greenHi,
+      highlightAlpha: 0.08,
+      radius: 12,
+      shadowOffset: 3,
+      shadowAlpha: 0.22,
+    });
     this.rowContainer.add(bg);
+
     this.rowContainer.add(
-      this.text(originX + 14, y + rowH / 2, m.label, '#e6f5d2', 13, 0, 0.5),
+      crispText(this, originX + 16, y + 11, m.label, bodyTextStyle(13, COLOR.textPrimary)).setOrigin(0, 0),
     );
     this.rowContainer.add(
-      this.text(
-        originX + 150,
-        y + rowH / 2,
-        `${m.xpRequired} XP`,
-        unlocked ? '#ffd98a' : '#7a8a7a',
-        12,
-        0,
-        0.5,
-      ),
-    );
-    this.rowContainer.add(
-      this.text(
-        originX + 260,
-        y + rowH / 2,
-        `+${m.rewardSugar}🍬 +${m.rewardLeaf}🍃`,
-        '#c3e8b0',
-        12,
-        0,
-        0.5,
-      ),
+      crispText(
+        this,
+        originX + 16,
+        y + 34,
+        `Unlock at ${m.xpRequired} XP  |  Rewards: S ${m.rewardSugar}  L ${m.rewardLeaf}`,
+        bodyTextStyle(11, unlocked ? COLOR.textDim : COLOR.textMuted),
+      ).setOrigin(0, 0),
     );
 
-    if (unlocked) {
-      const btnW = 80;
-      const btnH = 28;
-      const bx = originX + maxW - 14 - btnW;
-      const by = y + (rowH - btnH) / 2;
-      const btn = this.add.graphics();
-      btn.fillStyle(claimed ? 0x2a2a2a : 0x3a7f3a, 1);
-      btn.lineStyle(2, claimed ? 0x555555 : 0xffd98a, 1);
-      btn.fillRoundedRect(bx, by, btnW, btnH, 6);
-      btn.strokeRoundedRect(bx, by, btnW, btnH, 6);
-      this.rowContainer.add(btn);
-      this.rowContainer.add(
-        this.text(
-          bx + btnW / 2,
-          by + btnH / 2,
-          claimed ? 'Claimed' : 'Claim',
-          claimed ? '#777' : '#ffffff',
-          12,
-          0.5,
-          0.5,
-        ),
-      );
-      if (!claimed) {
-        const hit = this.add
-          .zone(bx + btnW / 2, by + btnH / 2, btnW, btnH)
-          .setOrigin(0.5)
-          .setInteractive({ useHandCursor: true });
-        hit.on('pointerdown', () => void this.claimMilestone(m.id));
-        this.rowContainer.add(hit);
-      }
-    }
-    return y + rowH + 6;
+    const btn = makeHiveButton(this, {
+      x: originX + maxW - 62,
+      y: y + rowH / 2,
+      width: 92,
+      height: 34,
+      label: claimed ? 'Claimed' : 'Claim',
+      variant: claimed ? 'ghost' : 'primary',
+      fontSize: 12,
+      enabled: unlocked && !claimed,
+      onPress: () => void this.claimMilestone(m.id),
+    });
+    this.rowContainer.add(btn.container);
+    return y + rowH + 8;
   }
 
   private async claimQuest(questId: string): Promise<void> {
@@ -352,6 +435,7 @@ export class QuestsScene extends Phaser.Scene {
         runtime.player.player.leafBits = res.resources.leafBits;
         runtime.player.player.seasonXp = res.seasonXp;
       }
+      this.clearError();
       this.render();
     } catch (err) {
       this.showError((err as Error).message);
@@ -370,41 +454,28 @@ export class QuestsScene extends Phaser.Scene {
         runtime.player.player.leafBits = res.resources.leafBits;
         runtime.player.player.seasonMilestonesClaimed = res.milestonesClaimed;
       }
+      this.clearError();
       this.render();
     } catch (err) {
       this.showError((err as Error).message);
     }
   }
 
+  private clearError(): void {
+    this.errorText?.setVisible(false);
+  }
+
   private showError(msg: string): void {
     if (this.errorText) {
       this.errorText.setText(msg).setVisible(true);
     } else {
-      this.errorText = this.add
-        .text(this.scale.width / 2, this.viewportTop - 4, msg, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: '#d94c4c',
-        })
-        .setOrigin(0.5);
+      this.errorText = crispText(
+        this,
+        this.scale.width / 2,
+        this.viewportTop - 6,
+        msg,
+        bodyTextStyle(12, COLOR.textError),
+      ).setOrigin(0.5);
     }
-  }
-
-  private text(
-    x: number,
-    y: number,
-    s: string,
-    color: string,
-    size: number,
-    ox: number,
-    oy: number,
-  ): Phaser.GameObjects.Text {
-    return this.add
-      .text(x, y, s, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: `${size}px`,
-        color,
-      })
-      .setOrigin(ox, oy);
   }
 }

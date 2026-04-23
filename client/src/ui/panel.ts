@@ -49,11 +49,15 @@ export function drawPanel(
   if (shadowAlpha > 0) {
     g.fillStyle(0x000000, shadowAlpha);
     g.fillRoundedRect(x + 1, y + shadowOffset, w, h + 1, radius);
+    g.fillStyle(COLOR.brassDeep, shadowAlpha * 0.22);
+    g.fillRoundedRect(x, y + 2, w, h, radius);
   }
 
   // Gradient fill via two-color top/bottom (same on each side).
   g.fillGradientStyle(topColor, topColor, botColor, botColor, 1);
   g.fillRoundedRect(x, y, w, h, radius);
+  g.fillStyle(0xffffff, 0.05);
+  g.fillRoundedRect(x + 2, y + 2, w - 4, Math.max(6, Math.min(12, h * 0.18)), radius - 2);
 
   // Inner top highlight band (bevel)
   if (highlightAlpha > 0) {
@@ -64,6 +68,14 @@ export function drawPanel(
   // Outer stroke
   g.lineStyle(strokeWidth, stroke, strokeAlpha);
   g.strokeRoundedRect(x, y, w, h, radius);
+  g.lineStyle(1, COLOR.strokeLight, 0.18);
+  g.strokeRoundedRect(
+    x + strokeWidth + 1,
+    y + strokeWidth + 1,
+    w - strokeWidth * 2 - 2,
+    h - strokeWidth * 2 - 2,
+    Math.max(2, radius - strokeWidth - 1),
+  );
 }
 
 // Resource-pill panel — wider-than-tall capsule used for sugar/leaf/
@@ -84,15 +96,23 @@ export function drawPill(
   const radius = h / 2;
   g.fillStyle(0x000000, 0.55);
   g.fillRoundedRect(x + 1, y + 3, w, h + 1, radius);
+  g.fillStyle(COLOR.brassDeep, 0.12);
+  g.fillRoundedRect(x, y + 1, w, h, radius);
   g.fillGradientStyle(COLOR.bgPanelHi, COLOR.bgPanelHi, COLOR.bgPanelLo, COLOR.bgPanelLo, 1);
   g.fillRoundedRect(x, y, w, h, radius);
+  g.fillStyle(0xffffff, brass ? 0.09 : 0.05);
+  g.fillRoundedRect(x + 2, y + 2, w - 4, Math.max(3, Math.min(7, h * 0.22)), radius - 2);
   if (brass) {
     g.fillStyle(COLOR.brass, 0.35);
     g.fillRoundedRect(x + 2, y + 2, w - 4, 2, radius - 1);
     g.lineStyle(1.5, COLOR.brassDeep, 0.9);
     g.strokeRoundedRect(x, y, w, h, radius);
+    g.lineStyle(1, COLOR.strokeLight, 0.18);
+    g.strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, radius - 2);
   } else {
     g.lineStyle(1, 0x000000, 0.35);
     g.strokeRoundedRect(x, y, w, h, radius);
+    g.lineStyle(1, 0xffffff, 0.08);
+    g.strokeRoundedRect(x + 1, y + 1, w - 2, h - 2, radius - 1);
   }
 }

@@ -4,6 +4,10 @@ import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
+import { crispText } from '../ui/text.js';
+import { makeHiveButton } from '../ui/button.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 // ClanScene — three views:
 //   1. My clan (when the player is in one)        — members + chat
@@ -39,11 +43,35 @@ export class ClanScene extends Phaser.Scene {
     fadeInScene(this);
     installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
+    this.drawAmbient();
     this.drawHud();
     this.layerContainer = this.add.container(0, 0);
     this.chatContainer = this.add.container(0, 0);
     void this.refreshMy();
     this.events.once('shutdown', () => this.cleanup());
+  }
+
+  private drawAmbient(): void {
+    const g = this.add.graphics().setDepth(-100);
+    const top = 0x203224;
+    const bot = 0x070d08;
+    const bands = 18;
+    for (let i = 0; i < bands; i++) {
+      const t = i / (bands - 1);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const gc = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
+      g.fillStyle((r << 16) | (gc << 8) | b, 1);
+      g.fillRect(
+        0,
+        Math.floor((i * this.scale.height) / bands),
+        this.scale.width,
+        Math.ceil(this.scale.height / bands) + 1,
+      );
+    }
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + 150, Math.min(860, this.scale.width * 0.9), 220);
   }
 
   private cleanup(): void {
@@ -58,32 +86,40 @@ export class ClanScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    const g = this.add.graphics();
-    g.fillStyle(0x0a120c, 1);
-    g.fillRect(0, 0, this.scale.width, HUD_H);
-    g.fillStyle(0x1a2b1a, 1);
-    g.fillRect(0, HUD_H - 2, this.scale.width, 2);
-    this.add
-      .text(16, HUD_H / 2, '← Home', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-        backgroundColor: '#1a2b1a',
-        padding: { left: 10, right: 10, top: 6, bottom: 6 },
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => {
+    const w = this.scale.width;
+    const hud = this.add.graphics();
+    drawPanel(hud, 0, 0, w, HUD_H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
+    hud.fillStyle(0x000000, 0.4);
+    hud.fillRect(0, HUD_H, w, 3);
+    makeHiveButton(this, {
+      x: 72,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: 'Home',
+      variant: 'ghost',
+      fontSize: 13,
+      onPress: () => {
         this.cleanup();
         fadeToScene(this, 'HomeScene');
-      });
-    this.add
-      .text(this.scale.width / 2, HUD_H / 2, '👥 Clan', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '18px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0.5);
+      },
+    });
+    crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H / 2,
+      'Clan',
+      displayTextStyle(20, COLOR.textGold, 4),
+    ).setOrigin(0.5);
   }
 
   private async refreshMy(): Promise<void> {
@@ -127,14 +163,30 @@ export class ClanScene extends Phaser.Scene {
 
   private statusText(msg: string): void {
     this.layerContainer.removeAll(true);
+    const w = Math.min(520, this.scale.width - 32);
+    const x = (this.scale.width - w) / 2;
+    const y = HUD_H + 44;
+    const card = this.add.graphics();
+    drawPanel(card, x, y, w, 76, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: 16,
+      shadowOffset: 5,
+      shadowAlpha: 0.32,
+    });
+    const pill = this.add.graphics();
+    drawPill(pill, x + 16, y + 14, 80, 20, { brass: true });
+    this.layerContainer.add(card);
+    this.layerContainer.add(pill);
     this.layerContainer.add(
-      this.add
-        .text(this.scale.width / 2, HUD_H + 80, msg, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '14px',
-          color: '#c3e8b0',
-        })
-        .setOrigin(0.5),
+      crispText(this, x + 56, y + 24, 'Status', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+    );
+    this.layerContainer.add(
+      crispText(this, this.scale.width / 2, y + 48, msg, bodyTextStyle(14, COLOR.textPrimary)).setOrigin(0.5, 0.5),
     );
   }
 
@@ -145,18 +197,13 @@ export class ClanScene extends Phaser.Scene {
     this.chatContainer.removeAll(true);
     if (!this.my?.clan) return;
     const clan = this.my.clan;
-    const title = this.add
-      .text(
-        this.scale.width / 2,
-        HUD_H + 18,
-        `[${clan.tag}] ${clan.name}`,
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '16px',
-          color: '#ffd98a',
-        },
-      )
-      .setOrigin(0.5);
+    const title = crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H + 20,
+      `[${clan.tag}] ${clan.name}`,
+      displayTextStyle(18, COLOR.textGold, 4),
+    ).setOrigin(0.5);
     this.layerContainer.add(title);
     // War banner — renders just under the clan title when a war is
     // active. Shows "A vs B" star totals and time remaining so every
@@ -211,19 +258,29 @@ export class ClanScene extends Phaser.Scene {
     const listW = 240;
     const listH = this.scale.height - listY - 80;
     const mBg = this.add.graphics();
-    mBg.fillStyle(0x141f11, 0.9);
-    mBg.lineStyle(1, 0x2c5a23, 1);
-    mBg.fillRoundedRect(listX, listY, listW, listH, 8);
-    mBg.strokeRoundedRect(listX, listY, listW, listH, 8);
+    drawPanel(mBg, listX, listY, listW, listH, {
+      topColor: COLOR.bgCard,
+      botColor: COLOR.bgInset,
+      stroke: COLOR.outline,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 12,
+      shadowOffset: 4,
+      shadowAlpha: 0.22,
+    });
     this.layerContainer.add(mBg);
+    const membersPill = this.add.graphics();
+    drawPill(membersPill, listX + 10, listY + 10, 110, 20, { brass: true });
+    this.layerContainer.add(membersPill);
     this.layerContainer.add(
-      this.add
-        .text(listX + 10, listY + 10, `Members (${this.my.members?.length ?? 0})`, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: '#ffd98a',
-        })
-        .setOrigin(0, 0),
+      crispText(
+        this,
+        listX + 65,
+        listY + 20,
+        `Members ${this.my.members?.length ?? 0}`,
+        labelTextStyle(10, '#2a1d08'),
+      ).setOrigin(0.5, 0.5),
     );
     (this.my.members ?? []).forEach((m, i) => {
       const y = listY + 36 + i * 22;
@@ -253,18 +310,17 @@ export class ClanScene extends Phaser.Scene {
     });
 
     // Leave button
-    const leaveBtn = this.add
-      .text(listX + listW / 2, listY + listH - 28, 'Leave clan', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '12px',
-        color: '#d94c4c',
-        backgroundColor: '#2a1e1e',
-        padding: { left: 12, right: 12, top: 6, bottom: 6 },
-      })
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    leaveBtn.on('pointerdown', () => void this.confirmLeave());
-    this.layerContainer.add(leaveBtn);
+    const leaveBtn = makeHiveButton(this, {
+      x: listX + listW / 2,
+      y: listY + listH - 24,
+      width: 120,
+      height: 34,
+      label: 'Leave clan',
+      variant: 'danger',
+      fontSize: 12,
+      onPress: () => void this.confirmLeave(),
+    });
+    this.layerContainer.add(leaveBtn.container);
 
     // Chat pane — right column
     const chatX = listX + listW + 20;
@@ -272,11 +328,24 @@ export class ClanScene extends Phaser.Scene {
     const chatW = this.scale.width - chatX - 20;
     const chatH = listH;
     const cBg = this.add.graphics();
-    cBg.fillStyle(0x141f11, 0.9);
-    cBg.lineStyle(1, 0x2c5a23, 1);
-    cBg.fillRoundedRect(chatX, chatY, chatW, chatH, 8);
-    cBg.strokeRoundedRect(chatX, chatY, chatW, chatH, 8);
+    drawPanel(cBg, chatX, chatY, chatW, chatH, {
+      topColor: COLOR.bgCard,
+      botColor: COLOR.bgInset,
+      stroke: COLOR.outline,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 12,
+      shadowOffset: 4,
+      shadowAlpha: 0.22,
+    });
     this.layerContainer.add(cBg);
+    const chatPill = this.add.graphics();
+    drawPill(chatPill, chatX + 10, chatY + 10, 86, 20, { brass: true });
+    this.layerContainer.add(chatPill);
+    this.layerContainer.add(
+      crispText(this, chatX + 53, chatY + 20, 'Clan chat', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+    );
 
     this.renderMessages(chatX, chatY, chatW, chatH);
     this.mountChatInput(chatX, chatY + chatH - 40, chatW);
@@ -440,27 +509,26 @@ export class ClanScene extends Phaser.Scene {
     if (!runtime) return;
 
     this.layerContainer.add(
-      this.add
-        .text(this.scale.width / 2, HUD_H + 14, 'Browse clans or create your own', {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '14px',
-          color: '#c3e8b0',
-        })
-        .setOrigin(0.5),
+      crispText(
+        this,
+        this.scale.width / 2,
+        HUD_H + 14,
+        'Browse clans or create your own',
+        bodyTextStyle(14, COLOR.textPrimary),
+      ).setOrigin(0.5),
     );
 
-    const createBtn = this.add
-      .text(this.scale.width - 20, HUD_H + 14, '✦ Create new clan', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: '#0f1b10',
-        backgroundColor: '#ffd98a',
-        padding: { left: 12, right: 12, top: 6, bottom: 6 },
-      })
-      .setOrigin(1, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .on('pointerdown', () => this.openCreateForm());
-    this.layerContainer.add(createBtn);
+    const createBtn = makeHiveButton(this, {
+      x: this.scale.width - 92,
+      y: HUD_H + 14,
+      width: 164,
+      height: 36,
+      label: 'Create clan',
+      variant: 'primary',
+      fontSize: 12,
+      onPress: () => this.openCreateForm(),
+    });
+    this.layerContainer.add(createBtn.container);
 
     try {
       this.browseLoaded = await runtime.api.clanBrowse();
@@ -497,10 +565,17 @@ export class ClanScene extends Phaser.Scene {
     rows.forEach((c, i) => {
       const y = HUD_H + 60 + i * (rowH + 6);
       const bg = this.add.graphics();
-      bg.fillStyle(0x141f11, 0.9);
-      bg.lineStyle(1, 0x2c5a23, 1);
-      bg.fillRoundedRect(ox, y, maxW, rowH, 8);
-      bg.strokeRoundedRect(ox, y, maxW, rowH, 8);
+      drawPanel(bg, ox, y, maxW, rowH, {
+        topColor: COLOR.bgCard,
+        botColor: COLOR.bgInset,
+        stroke: COLOR.outline,
+        strokeWidth: 2,
+        highlight: COLOR.brass,
+        highlightAlpha: 0.08,
+        radius: 12,
+        shadowOffset: 3,
+        shadowAlpha: 0.2,
+      });
       this.layerContainer.add(bg);
       this.layerContainer.add(
         this.add
@@ -535,18 +610,17 @@ export class ClanScene extends Phaser.Scene {
           })
           .setOrigin(0, 0.5),
       );
-      const joinBtn = this.add
-        .text(ox + maxW - 14, y + rowH / 2, 'Join', {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '13px',
-          color: '#ffffff',
-          backgroundColor: '#3a7f3a',
-          padding: { left: 12, right: 12, top: 6, bottom: 6 },
-        })
-        .setOrigin(1, 0.5)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerdown', () => void this.commitJoin(c.id));
-      this.layerContainer.add(joinBtn);
+      const joinBtn = makeHiveButton(this, {
+        x: ox + maxW - 52,
+        y: y + rowH / 2,
+        width: 76,
+        height: 34,
+        label: 'Join',
+        variant: 'secondary',
+        fontSize: 12,
+        onPress: () => void this.commitJoin(c.id),
+      });
+      this.layerContainer.add(joinBtn.container);
     });
   }
 

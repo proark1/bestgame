@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { BUTTON_VARIANT, SPACING, type ButtonVariant } from './theme.js';
+import { BUTTON_VARIANT, COLOR, FONT, SPACING, type ButtonVariant } from './theme.js';
 import { isUiOverrideActive } from './uiOverrides.js';
 import { isClickDebugEnabled } from './clickDebug.js';
 
@@ -57,6 +57,7 @@ export function makeHiveButton(
   const shadow = scene.add.graphics();
   const bg = scene.add.graphics();
   const highlight = scene.add.graphics();
+  const gloss = scene.add.graphics();
   // When the admin has flipped the menuUi override on AND the matching
   // texture is loaded, we render an additional NineSlice image on top
   // of the Graphics fallback and hide the Graphics parts. We never
@@ -85,11 +86,10 @@ export function makeHiveButton(
     shadow.clear();
     if (!useImage) {
       if (state !== 'press') {
-        // Drop shadow below the button for a "chunky floating" feel.
-        // Smaller + darker on press so the button looks pushed into
-        // the surface.
         shadow.fillStyle(0x000000, 0.45);
         shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h + 2, r);
+        shadow.fillStyle(COLOR.brassDeep, 0.15);
+        shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h + 1, r);
       } else {
         shadow.fillStyle(0x000000, 0.3);
         shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h, r);
@@ -121,9 +121,18 @@ export function makeHiveButton(
       bg.fillRoundedRect(-w / 2, -h / 2, w, h, r);
       bg.lineStyle(palette.strokeWidth, palette.stroke, 1);
       bg.strokeRoundedRect(-w / 2, -h / 2, w, h, r);
+      bg.lineStyle(1.5, lightenColor(palette.stroke, 0.3), 0.45);
+      bg.strokeRoundedRect(
+        -w / 2 + palette.strokeWidth,
+        -h / 2 + palette.strokeWidth,
+        w - palette.strokeWidth * 2,
+        h - palette.strokeWidth * 2,
+        Math.max(2, r - 2),
+      );
     }
 
     highlight.clear();
+    gloss.clear();
     // Inner top highlight — 2px of lighter color just inside the
     // stroke. Sells the "3D bevel" look. Hidden in press state, and
     // when the image override is active (the image carries its own
@@ -137,6 +146,14 @@ export function makeHiveButton(
         w - palette.strokeWidth * 2,
         Math.max(4, Math.min(h * 0.35, 10)),
         r - palette.strokeWidth / 2,
+      );
+      gloss.fillStyle(0xffffff, state === 'hover' ? 0.16 : 0.09);
+      gloss.fillRoundedRect(
+        -w / 2 + palette.strokeWidth + 8,
+        -h / 2 + palette.strokeWidth + 4,
+        Math.max(20, w * 0.3),
+        Math.max(3, Math.min(h * 0.14, 6)),
+        6,
       );
     }
 
@@ -183,7 +200,7 @@ export function makeHiveButton(
     }
 
     text.setStyle({
-      fontFamily: 'ui-monospace, monospace',
+      fontFamily: FONT.display,
       fontSize: `${curFontSize}px`,
       color: state === 'disabled' ? '#8a9688' : palette.textColor,
       fontStyle: 'bold',
@@ -275,7 +292,7 @@ export function makeHiveButton(
     paint();
   });
 
-  container.add([shadow, bg, highlight, text, hit]);
+  container.add([shadow, bg, highlight, gloss, text, hit]);
 
   const api: HiveButton = {
     container,

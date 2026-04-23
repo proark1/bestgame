@@ -9,7 +9,7 @@ import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { isUiOverrideActive } from '../ui/uiOverrides.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
-import { COLOR, displayTextStyle, SPACING } from '../ui/theme.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -208,7 +208,7 @@ export class HomeScene extends Phaser.Scene {
   // + a single radial fog ellipse.
   private drawAmbient(): void {
     const g = this.add.graphics().setDepth(-100);
-    const top = 0x162317;
+    const top = 0x203224;
     const bot = 0x070d08;
     const BANDS = 22;
     for (let i = 0; i < BANDS; i++) {
@@ -228,8 +228,41 @@ export class HomeScene extends Phaser.Scene {
     // a "pool of light" — reads as intentional rather than a slab of
     // the same dark green as the chrome.
     const glow = this.add.graphics().setDepth(-99);
-    glow.fillStyle(0xffd98a, 0.04);
-    glow.fillEllipse(this.scale.width / 2, HUD_H + BOARD_H / 2, BOARD_W * 1.1, BOARD_H * 1.15);
+    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillEllipse(
+      this.scale.width / 2,
+      HUD_H + BOARD_H / 2 - 24,
+      BOARD_W * 1.08,
+      BOARD_H * 1.08,
+    );
+    glow.fillStyle(COLOR.greenHi, 0.05);
+    glow.fillEllipse(
+      this.scale.width / 2,
+      this.scale.height - 64,
+      Math.min(this.scale.width * 1.1, 980),
+      220,
+    );
+
+    for (let i = 0; i < 14; i++) {
+      const mote = this.add
+        .circle(
+          40 + (i * (this.scale.width - 80)) / 13,
+          HUD_H + 70 + ((i * 47) % Math.max(160, this.scale.height - 220)),
+          i % 3 === 0 ? 3 : 2,
+          i % 4 === 0 ? COLOR.brass : COLOR.greenHi,
+          0.12,
+        )
+        .setDepth(-98);
+      this.tweens.add({
+        targets: mote,
+        y: mote.y - (16 + (i % 5) * 5),
+        alpha: { from: 0.06 + (i % 3) * 0.03, to: 0.22 },
+        duration: 1800 + i * 140,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
   }
 
   private drawHud(): void {
@@ -456,17 +489,19 @@ export class HomeScene extends Phaser.Scene {
       this.closeBurgerDrawer();
     });
 
-    // Slide-in panel on the left. Solid fill + brass accent on the
-    // right edge so it reads as a separate plane over the scene.
+    // Slide-in panel on the left.
     const panel = this.add.graphics();
-    panel.fillGradientStyle(
-      COLOR.bgPanelHi,
-      COLOR.bgPanelHi,
-      COLOR.bgPanelLo,
-      COLOR.bgPanelLo,
-      1,
-    );
-    panel.fillRect(0, 0, W, H);
+    drawPanel(panel, 0, 0, W, H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
     panel.fillStyle(COLOR.brass, 0.9);
     panel.fillRect(W - 2, 0, 2, H);
     panel.fillStyle(0x000000, 0.35);
@@ -480,27 +515,63 @@ export class HomeScene extends Phaser.Scene {
       e?.stopPropagation?.();
     });
 
-    const title = crispText(this, 16, 18, 'HIVE WARS', displayTextStyle(16, COLOR.textGold, 3));
+    const title = crispText(this, 20, 18, 'HIVE WARS', displayTextStyle(18, COLOR.textGold, 3));
+    const subtitle = crispText(
+      this,
+      20,
+      42,
+      'Choose your next move',
+      labelTextStyle(11, COLOR.textDim),
+    );
+    const quickPill = this.add.graphics();
+    drawPill(quickPill, 20, 58, 112, 22, { brass: true });
+    const quickLabel = crispText(
+      this,
+      76,
+      69,
+      'Quick access',
+      labelTextStyle(10, '#2a1d08'),
+    ).setOrigin(0.5, 0.5);
+    const tip = crispText(
+      this,
+      20,
+      88,
+      'Raid often to keep your colony growing.',
+      bodyTextStyle(12, COLOR.textPrimary),
+    );
 
     // Close ×
-    const close = crispText(this, W - 20, 18, '×', {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '24px',
-      color: '#c3e8b0',
-    }).setOrigin(1, 0);
+    const close = crispText(
+      this,
+      W - 22,
+      18,
+      'X',
+      displayTextStyle(18, '#c3e8b0', 2),
+    ).setOrigin(1, 0);
     close.setInteractive({ useHandCursor: true });
     close.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, e: Phaser.Types.Input.EventData) => {
       e?.stopPropagation?.();
       this.closeBurgerDrawer();
     });
 
-    container.add([dim, backdrop, panel, panelZone, title, close]);
+    container.add([
+      dim,
+      backdrop,
+      panel,
+      panelZone,
+      title,
+      subtitle,
+      quickPill,
+      quickLabel,
+      tip,
+      close,
+    ]);
 
     // Action list. Same set as the desktop footer, plus a Fullscreen
     // toggle and the Codex shortcut so the drawer is a complete nav
     // menu. Each entry is a full-width secondary button — big tap
     // target, one action per line, comfortable for thumb reach.
-    type Entry = { label: string; onPress: () => void };
+    type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
     const entries: Entry[] = [
       {
         label: this.layer === 0 ? '↓ Underground' : '↑ Surface',
@@ -532,9 +603,10 @@ export class HomeScene extends Phaser.Scene {
         },
       },
     ];
+    if (entries[1]) entries[1].variant = 'primary';
     const btnH = 48;
     const btnW = W - 32;
-    const startY = 60;
+    const startY = 110;
     const gap = 8;
     entries.forEach((e, i) => {
       const y = startY + i * (btnH + gap) + btnH / 2;
@@ -544,7 +616,7 @@ export class HomeScene extends Phaser.Scene {
         width: btnW,
         height: btnH,
         label: e.label,
-        variant: 'secondary',
+        variant: e.variant ?? 'secondary',
         fontSize: 15,
         onPress: e.onPress,
       });
@@ -591,16 +663,24 @@ export class HomeScene extends Phaser.Scene {
     cy: number,
     tier: 'wide' | 'narrow' | 'phone',
   ): void {
-    const size = tier === 'phone' ? 32 : 36;
-    const cx = rightEdgeX - size / 2;
+    const pillW = tier === 'phone' ? 34 : tier === 'narrow' ? 70 : 78;
+    const pillH = tier === 'phone' ? 34 : 36;
+    const left = rightEdgeX - pillW;
     const pill = this.add.graphics();
-    drawPill(pill, cx - size / 2, cy - size / 2, size, size, { brass: false });
-    const glyph = crispText(this, cx, cy, '📖', {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: tier === 'phone' ? '16px' : '18px',
-    }).setOrigin(0.5, 0.5);
+    drawPill(pill, left, cy - pillH / 2, pillW, pillH, {
+      brass: tier !== 'phone',
+    });
+    const glyph = crispText(
+      this,
+      left + pillW / 2,
+      cy,
+      tier === 'phone' ? 'C' : 'CODEX',
+      tier === 'phone'
+        ? displayTextStyle(14, COLOR.textPrimary, 2)
+        : labelTextStyle(11, '#2a1d08'),
+    ).setOrigin(0.5, 0.5);
     this.add
-      .zone(cx, cy, size, size)
+      .zone(left + pillW / 2, cy, pillW, pillH)
       .setOrigin(0.5, 0.5)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => fadeToScene(this, 'CodexScene'));
@@ -615,27 +695,39 @@ export class HomeScene extends Phaser.Scene {
   private drawAccountChip(tier: 'wide' | 'narrow' | 'phone'): void {
     const cy = HUD_H / 2;
     if (tier === 'wide') {
-      const chipX = 180;
-      const pillW = 120;
+      const chipX = 168;
+      const pillW = 136;
+      const pillH = 38;
       const pill = this.add.graphics();
-      drawPill(pill, chipX, cy - 16, pillW, 32, { brass: false });
-      this.accountChip = crispText(this, chipX + pillW / 2, cy, 'guest ▾', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: COLOR.textDim,
-        fontStyle: 'bold',
-      }).setOrigin(0.5, 0.5);
+      drawPill(pill, chipX, cy - pillH / 2, pillW, pillH, { brass: false });
+      const badge = this.add.graphics();
+      drawPill(badge, chipX + 8, cy - 15, 52, 14, { brass: true });
+      crispText(
+        this,
+        chipX + 34,
+        cy - 8,
+        'COLONY',
+        labelTextStyle(9, '#2a1d08'),
+      ).setOrigin(0.5, 0.5);
+      this.accountChip = crispText(
+        this,
+        chipX + pillW / 2,
+        cy + 8,
+        'GUEST',
+        displayTextStyle(13, COLOR.textDim, 2),
+      ).setOrigin(0.5, 0.5);
       this.add
-        .zone(chipX + pillW / 2, cy, pillW, 32)
+        .zone(chipX + pillW / 2, cy, pillW, pillH)
         .setOrigin(0.5, 0.5)
         .setInteractive({ useHandCursor: true })
         .on('pointerdown', () => this.openAccountMenu());
+      void badge;
     } else {
       // Icon-only disc. On narrow, it slots in where the title sat;
       // on phone it pins to the top-left, shifted right past the
       // burger button (which owns the very first slot when the
       // mobile layout is active).
-      const size = 36;
+      const size = tier === 'phone' ? 36 : 40;
       const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
       const chipX =
         tier === 'narrow' ? 120 : burgerSlot + size / 2 + SPACING.sm;
@@ -643,11 +735,13 @@ export class HomeScene extends Phaser.Scene {
       drawPill(pill, chipX - size / 2, cy - size / 2, size, size, {
         brass: false,
       });
-      this.accountChip = crispText(this, chipX, cy, '👤', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '16px',
-        color: COLOR.textDim,
-      }).setOrigin(0.5, 0.5);
+      this.accountChip = crispText(
+        this,
+        chipX,
+        cy,
+        '@',
+        displayTextStyle(tier === 'phone' ? 15 : 16, COLOR.textDim, 2),
+      ).setOrigin(0.5, 0.5);
       this.add
         .zone(chipX, cy, size, size)
         .setOrigin(0.5, 0.5)
@@ -660,7 +754,7 @@ export class HomeScene extends Phaser.Scene {
         if (!me || !this.accountChip?.active) return;
         if (tier === 'wide') {
           this.accountChip.setText(
-            me.isGuest || !me.username ? 'guest ▾' : `@${me.username} ▾`,
+            me.isGuest || !me.username ? 'GUEST' : `@${me.username}`,
           );
         }
         this.accountChip.setColor(me.isGuest ? COLOR.textDim : COLOR.textGold);
@@ -821,7 +915,28 @@ export class HomeScene extends Phaser.Scene {
     frame.lineStyle(1, COLOR.brass, 0.55);
     frame.strokeRoundedRect(5, 5, BOARD_W - 10, BOARD_H - 10, 6);
 
-    this.boardContainer.add([bg, deco, grid, frame]);
+    const badge = this.add.graphics();
+    drawPill(badge, 18, 16, 184, 28, { brass: true });
+    const modeTitle =
+      this.layer === 0 ? 'Surface Colony' : 'Underground Warren';
+    const modeSubtitle =
+      this.layer === 0 ? 'Build, collect, and scout your defenses' : 'Tunnels, stores, and inner chambers';
+    const badgeTitle = crispText(
+      this,
+      30,
+      30,
+      modeTitle,
+      displayTextStyle(13, COLOR.textGold, 3),
+    ).setOrigin(0, 0.5);
+    const badgeSub = crispText(
+      this,
+      30,
+      48,
+      modeSubtitle,
+      bodyTextStyle(10, COLOR.textDim),
+    ).setOrigin(0, 0.5);
+
+    this.boardContainer.add([bg, deco, grid, frame, badge, badgeTitle, badgeSub]);
   }
 
   private drawBuildings(): void {
@@ -897,6 +1012,8 @@ export class HomeScene extends Phaser.Scene {
   private static readonly FOOTER_GAP = 10;
 
   private drawFooter(): void {
+    this.footerChrome?.destroy();
+    this.footerChrome = null;
     // Mobile: the burger drawer owns every nav action, so skip the
     // desktop footer entirely. We still keep a single pinned CTA
     // at bottom-right — the primary "Raid" action — so players don't
@@ -993,7 +1110,7 @@ export class HomeScene extends Phaser.Scene {
         // position still gives it CTA weight without the color clash.
         full: () => 'Raid a base →',
         short: () => 'Raid →',
-        variant: 'secondary',
+        variant: 'primary',
         onPress: () => fadeToScene(this, 'RaidScene'),
       },
     ];
@@ -1002,6 +1119,7 @@ export class HomeScene extends Phaser.Scene {
     this.footerButtons = buttons.map((b) =>
       this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
+    this.footerChrome = this.add.graphics().setDepth(1);
     this.layoutFooter();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.
@@ -1034,6 +1152,7 @@ export class HomeScene extends Phaser.Scene {
   private footerButtons: HiveButton[] = [];
 
   private mobileRaidCta: HiveButton | null = null;
+  private footerChrome: Phaser.GameObjects.Graphics | null = null;
 
   private drawMobileRaidCta(): void {
     const btnW = 140;
@@ -1056,6 +1175,14 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => fadeToScene(this, 'RaidScene'),
     });
     btn.container.setDepth(8);
+    this.tweens.add({
+      targets: btn.container,
+      scale: { from: 1, to: 1.03 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
     this.mobileRaidCta = btn;
   }
 
@@ -1090,6 +1217,34 @@ export class HomeScene extends Phaser.Scene {
     const perRow = wide ? count : Math.ceil(count / 2);
     const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
     const btnW = Math.max(110, Math.min(220, Math.floor(availW / perRow)));
+    const bottomPad = 36;
+    const footerTop = wide
+      ? this.scale.height - bottomPad - btnH - 18
+      : this.scale.height - bottomPad - btnH * 2 - 12 - 18;
+    const footerHeight = wide ? btnH + 30 : btnH * 2 + 42;
+    this.footerChrome?.clear();
+    if (this.footerChrome) {
+      drawPanel(
+        this.footerChrome,
+        14,
+        footerTop,
+        this.scale.width - 28,
+        footerHeight,
+        {
+          topColor: 0x182319,
+          botColor: 0x0a120b,
+          stroke: COLOR.brassDeep,
+          strokeWidth: 3,
+          highlight: COLOR.brass,
+          highlightAlpha: 0.14,
+          radius: 18,
+          shadowOffset: 5,
+          shadowAlpha: 0.38,
+        },
+      );
+      this.footerChrome.fillStyle(COLOR.brass, 0.12);
+      this.footerChrome.fillRect(28, footerTop + 34, this.scale.width - 56, 2);
+    }
 
     const placeRow = (arr: HiveButton[], y: number): void => {
       const rowTotalW = btnW * arr.length + gap * (arr.length - 1);
@@ -1107,7 +1262,6 @@ export class HomeScene extends Phaser.Scene {
     // pushes the whole footer (and by consequence the board above it)
     // up the screen. 36 px keeps the green board from hugging the
     // first row of buttons on laptop viewports.
-    const bottomPad = 36;
     const half = Math.ceil(count / 2);
     if (wide) {
       const y = this.scale.height - bottomPad - btnH / 2;
@@ -1164,7 +1318,7 @@ export class HomeScene extends Phaser.Scene {
     const btnH = HomeScene.FOOTER_BTN_H;
     const bottomPad = 36;
     const interRow = 12;
-    const extraClearance = 12;
+    const extraClearance = 28;
     return wide
       ? bottomPad + btnH + extraClearance
       : bottomPad + btnH * 2 + interRow + extraClearance;
@@ -1451,10 +1605,10 @@ export class HomeScene extends Phaser.Scene {
     // follows the row count so adding new building kinds never spills
     // off the bottom.
     const cols = 4;
-    const slotH = 110;
+    const slotH = 122;
     const rows = Math.ceil(kinds.length / cols);
     const W = Math.min(640, this.scale.width - 32);
-    const naturalH = 60 + rows * (slotH + 12) + 32;
+    const naturalH = 86 + rows * (slotH + 12) + 32;
     const maxH = this.scale.height - 80;
     const H = Math.min(naturalH, maxH);
     const ox = (this.scale.width - W) / 2;
@@ -1476,10 +1630,17 @@ export class HomeScene extends Phaser.Scene {
     backdrop.on('pointerdown', () => this.closePicker());
 
     const card = this.add.graphics().setDepth(201);
-    card.fillStyle(0x1a2b1a, 0.98);
-    card.lineStyle(3, 0xffd98a, 1);
-    card.fillRoundedRect(ox, oy, W, H, 14);
-    card.strokeRoundedRect(ox, oy, W, H, 14);
+    drawPanel(card, ox, oy, W, H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: 16,
+      shadowOffset: 5,
+      shadowAlpha: 0.35,
+    });
     // Also make the card itself swallow pointer events so taps on the
     // card's padding (outside slots) don't bubble to `backdrop` and
     // accidentally close the picker.
@@ -1492,27 +1653,51 @@ export class HomeScene extends Phaser.Scene {
     const container = this.add.container(0, 0).setDepth(202);
     container.add([bg, backdrop, card, cardZone]);
 
+    const headerPill = this.add.graphics().setDepth(203);
+    drawPill(headerPill, ox + 20, oy + 18, 126, 22, { brass: true });
+    container.add(headerPill);
+    const headerLabel = crispText(
+      this,
+      ox + 83,
+      oy + 29,
+      'Build menu',
+      labelTextStyle(10, '#2a1d08'),
+    )
+      .setOrigin(0.5, 0.5)
+      .setDepth(203);
+    container.add(headerLabel);
+
     const title = crispText(
       this,
-      this.scale.width / 2,
-      oy + 18,
-      `Place building at (${tx}, ${ty}, ${this.layer === 0 ? 'surface' : 'underground'})`,
-      {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#ffd98a',
-      },
+      ox + 20,
+      oy + 48,
+      this.layer === 0
+        ? `Build on surface tile ${tx}, ${ty}`
+        : `Build on underground tile ${tx}, ${ty}`,
+      displayTextStyle(15, COLOR.textGold, 3),
     )
-      .setOrigin(0.5, 0)
+      .setOrigin(0, 0)
       .setDepth(203);
     container.add(title);
+    const subtitle = crispText(
+      this,
+      ox + 20,
+      oy + 70,
+      'Choose a structure to place in this slot.',
+      bodyTextStyle(12, COLOR.textPrimary),
+    )
+      .setOrigin(0, 0)
+      .setDepth(203);
+    container.add(subtitle);
 
     // Close button
-    const close = crispText(this, ox + W - 14, oy + 14, '×', {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '22px',
-      color: '#c3e8b0',
-    })
+    const close = crispText(
+      this,
+      ox + W - 18,
+      oy + 16,
+      'X',
+      displayTextStyle(18, '#c3e8b0', 2),
+    )
       .setOrigin(1, 0)
       .setDepth(203)
       .setInteractive({ useHandCursor: true })
@@ -1530,7 +1715,7 @@ export class HomeScene extends Phaser.Scene {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const cx = ox + 24 + col * slotW + slotW / 2;
-      const cy = oy + 60 + row * (slotH + 12) + slotH / 2;
+      const cy = oy + 92 + row * (slotH + 12) + slotH / 2;
       const cost = this.catalog[kind]!;
       const canAfford =
         this.resources.sugar >= cost.sugar &&
@@ -1559,15 +1744,22 @@ export class HomeScene extends Phaser.Scene {
       const placeable = denyReason === null;
 
       const slotBg = this.add.graphics().setDepth(203);
-      slotBg.fillStyle(placeable ? 0x233d24 : 0x2a1e1e, 1);
-      slotBg.lineStyle(2, placeable ? 0x5ba445 : 0xd94c4c, 1);
-      slotBg.fillRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
-      slotBg.strokeRoundedRect(cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, 8);
+      drawPanel(slotBg, cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, {
+        topColor: placeable ? 0x203725 : 0x342121,
+        botColor: placeable ? 0x122016 : 0x1f1212,
+        stroke: placeable ? 0x5ba445 : 0xa84848,
+        strokeWidth: 2,
+        highlight: placeable ? COLOR.brass : 0xffa0a0,
+        highlightAlpha: 0.1,
+        radius: 10,
+        shadowOffset: 3,
+        shadowAlpha: 0.25,
+      });
       container.add(slotBg);
 
       const icon = this.add
         .image(cx, cy - 24, `building-${kind}`)
-        .setDisplaySize(40, 40)
+        .setDisplaySize(44, 44)
         .setDepth(204)
         .setAlpha(placeable ? 1 : 0.5);
       container.add(icon);
@@ -1575,13 +1767,9 @@ export class HomeScene extends Phaser.Scene {
       const nameText = crispText(
         this,
         cx,
-        cy + 4,
+        cy + 8,
         kind.replace(/([A-Z])/g, ' $1').trim(),
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '11px',
-          color: placeable ? '#e6f5d2' : '#c79090',
-        },
+        bodyTextStyle(11, placeable ? COLOR.textPrimary : '#d7aaaa'),
       )
         .setOrigin(0.5)
         .setDepth(204);
@@ -1589,11 +1777,13 @@ export class HomeScene extends Phaser.Scene {
 
       // Count/cap badge shows right next to the name so the player can
       // see the "2/3 turrets" state at a glance.
-      const capText = crispText(this, cx, cy + 18, `${current}/${cap}`, {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '10px',
-        color: capOk ? '#c3e8b0' : '#d98080',
-      })
+      const capText = crispText(
+        this,
+        cx,
+        cy + 32,
+        `Slots ${current}/${cap}`,
+        labelTextStyle(10, capOk ? '#c3e8b0' : '#d98080'),
+      )
         .setOrigin(0.5)
         .setDepth(204);
       container.add(capText);
@@ -1601,13 +1791,9 @@ export class HomeScene extends Phaser.Scene {
       const costText = crispText(
         this,
         cx,
-        cy + 34,
-        `${cost.sugar}🍬 ${cost.leafBits}🍃`,
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '10px',
-          color: canAfford ? '#c3e8b0' : '#d98080',
-        },
+        cy + 48,
+        `S ${cost.sugar}  L ${cost.leafBits}`,
+        labelTextStyle(10, canAfford ? '#c3e8b0' : '#d98080'),
       )
         .setOrigin(0.5)
         .setDepth(204);
@@ -1705,27 +1891,69 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  private toast: Phaser.GameObjects.Text | null = null;
+  private toast: Phaser.GameObjects.Container | null = null;
   private flashToast(msg: string): void {
     this.toast?.destroy();
-    const t = crispText(this, this.scale.width / 2, this.scale.height - 40, msg, {
-      fontFamily: 'ui-monospace, monospace',
-      fontSize: '13px',
-      color: '#0f1b10',
-      backgroundColor: '#ffd98a',
-      padding: { left: 10, right: 10, top: 6, bottom: 6 },
-    })
-      .setOrigin(0.5)
-      .setDepth(500);
-    this.toast = t;
+    const width = Math.min(
+      Math.max(180, msg.length * 8 + 56),
+      this.scale.width - 28,
+    );
+    const height = 50;
+    const baseY = this.scale.height - (this.isMobileLayout() ? 92 : 56);
+    const container = this.add
+      .container(this.scale.width / 2, baseY)
+      .setDepth(500)
+      .setAlpha(0)
+      .setScale(0.97);
+    const bg = this.add.graphics();
+    drawPanel(bg, -width / 2, -height / 2, width, height, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 14,
+      shadowOffset: 4,
+      shadowAlpha: 0.35,
+    });
+    drawPill(bg, -width / 2 + 10, -height / 2 + 8, 58, 16, { brass: true });
+    const accent = crispText(
+      this,
+      -width / 2 + 39,
+      -height / 2 + 16,
+      'NOTICE',
+      labelTextStyle(9, '#2a1d08'),
+    ).setOrigin(0.5, 0.5);
+    const text = crispText(
+      this,
+      0,
+      7,
+      msg,
+      bodyTextStyle(13, COLOR.textPrimary),
+    )
+      .setOrigin(0.5, 0.5)
+      .setWordWrapWidth(width - 36, true)
+      .setAlign('center');
+    container.add([bg, accent, text]);
+    this.toast = container;
     this.tweens.add({
-      targets: t,
+      targets: container,
+      alpha: 1,
+      scale: 1,
+      y: baseY - 6,
+      duration: 180,
+      ease: 'Back.easeOut',
+    });
+    this.tweens.add({
+      targets: container,
       alpha: { from: 1, to: 0 },
+      y: baseY - 14,
       delay: 1800,
-      duration: 400,
+      duration: 320,
       onComplete: () => {
-        t.destroy();
-        if (this.toast === t) this.toast = null;
+        container.destroy();
+        if (this.toast === container) this.toast = null;
       },
     });
   }

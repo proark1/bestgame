@@ -10,22 +10,23 @@
 
 export const COLOR = {
   // Dark chrome (HUD panels, modal backgrounds, button presses)
-  bgDeep: 0x0a120c,
-  bgPanel: 0x162317,
-  bgPanelHi: 0x243824,
-  bgPanelLo: 0x060a06,
-  bgCard: 0x1b2c1c,
+  bgDeep: 0x08100d,
+  bgPanel: 0x16261b,
+  bgPanelHi: 0x2a3f2d,
+  bgPanelLo: 0x09100a,
+  bgCard: 0x203224,
+  bgInset: 0x101910,
 
   // Board
-  boardSurface: 0x274a21,
-  boardSurfaceLo: 0x1d3a1a,
-  boardUnder: 0x35241a,
-  boardUnderLo: 0x1f150e,
+  boardSurface: 0x305829,
+  boardSurfaceLo: 0x1d3b1a,
+  boardUnder: 0x3a271b,
+  boardUnderLo: 0x21140d,
 
   // Text
-  textPrimary: '#f4e9cc',
-  textDim: '#a7c08a',
-  textMuted: '#7b9a6c',
+  textPrimary: '#f7edd0',
+  textDim: '#bad3a3',
+  textMuted: '#86a676',
   textGold: '#ffd98a',
   textDark: '#0f1b10',
   textError: '#ffb0a0',
@@ -40,11 +41,18 @@ export const COLOR = {
   green: 0x5ba445,
   greenHi: 0x83c76b,
   greenLo: 0x2c4724,
+  cyan: 0x8fd3c4,
 
   // Outlines / strokes
   strokeDark: 0x0a120c,
   strokeLight: 0xffe7b0,
   outline: 0x2c5a23,
+} as const;
+
+export const FONT = {
+  display: "'Arial Black', 'Trebuchet MS', sans-serif",
+  body: "'Trebuchet MS', Verdana, sans-serif",
+  accent: "Georgia, 'Times New Roman', serif",
 } as const;
 
 // Stroked text style helper. CoC-style UI uses thick dark strokes
@@ -56,7 +64,7 @@ export function displayTextStyle(
   strokeThickness: number = 4,
 ): Phaser.Types.GameObjects.Text.TextStyle {
   return {
-    fontFamily: 'ui-monospace, monospace',
+    fontFamily: FONT.display,
     fontSize: `${size}px`,
     color,
     stroke: '#0a120c',
@@ -64,9 +72,9 @@ export function displayTextStyle(
     fontStyle: 'bold',
     shadow: {
       offsetX: 0,
-      offsetY: 2,
+      offsetY: 3,
       color: '#000000',
-      blur: 3,
+      blur: 6,
       stroke: false,
       fill: true,
     },
@@ -80,9 +88,21 @@ export function bodyTextStyle(
   color: string = COLOR.textPrimary,
 ): Phaser.Types.GameObjects.Text.TextStyle {
   return {
-    fontFamily: 'ui-monospace, monospace',
+    fontFamily: FONT.body,
     fontSize: `${size}px`,
     color,
+  };
+}
+
+export function labelTextStyle(
+  size: number = 11,
+  color: string = COLOR.textMuted,
+): Phaser.Types.GameObjects.Text.TextStyle {
+  return {
+    fontFamily: FONT.body,
+    fontSize: `${size}px`,
+    color,
+    fontStyle: 'bold',
   };
 }
 
