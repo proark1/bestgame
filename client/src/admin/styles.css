@@ -1023,6 +1023,119 @@ button {
   letter-spacing: 0.5px;
 }
 
+/* ------------------------------------------------------------------
+   Users panel — admin CRUD over the `users` login table.
+   Shares the visual vocabulary of .admin-animation (dark card, amber
+   accents) so the panel drops into the page without a style jump.
+   ------------------------------------------------------------------ */
+.admin-users {
+  background: #182518;
+  border: 1px solid #2c5a23;
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  margin-bottom: 16px;
+}
+.admin-users header h2 {
+  margin: 0 0 2px;
+  font-size: 15px;
+  color: #ffd98a;
+}
+.admin-users header small {
+  color: #9cb98a;
+}
+.admin-users-search {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 10px;
+}
+.admin-users-search input[type='search'] {
+  flex: 1 1 auto;
+  background: #0f1b10;
+  color: #e6f5d2;
+  border: 1px solid #2c5a23;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+}
+.admin-users-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.admin-users-add input {
+  background: #0f1b10;
+  color: #e6f5d2;
+  border: 1px solid #2c5a23;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+}
+.admin-users-add input:focus,
+.admin-users-search input:focus,
+.admin-users-table input:focus {
+  outline: 2px solid #ffd98a;
+  outline-offset: -2px;
+}
+.admin-users-table {
+  overflow-x: auto;
+}
+.admin-users-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.admin-users-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: #ffd98a;
+  border-bottom: 1px solid #2c5a23;
+  font-weight: 600;
+}
+.admin-users-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #1a2b1a;
+  color: #c3e8b0;
+  vertical-align: middle;
+}
+.admin-users-table input {
+  width: 100%;
+  background: #0f1b10;
+  color: #e6f5d2;
+  border: 1px solid #2c5a23;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+.admin-users-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.admin-users-actions .btn {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+.admin-users-empty {
+  color: #9cb98a;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.admin-users-meta {
+  color: #9cb98a;
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+
+/* Stack the add-user form on narrow screens so the three inputs
+   don't get crushed into unreadable 60px-wide columns. */
+@media (max-width: 640px) {
+  .admin-users-add {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Ultra-narrow adjustments (≤ 380 px — iPhone SE et al). */
 @media (max-width: 380px) {
   .admin-root {
