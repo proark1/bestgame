@@ -188,6 +188,30 @@ export class LeaderboardScene extends Phaser.Scene {
     );
     y += 52;
 
+    if (rows.length === 0) {
+      // Empty state — brand-new seasons (or a server with no recent
+      // raids) would otherwise land the user on a header-only page.
+      this.rowContainer.add(
+        crispText(
+          this,
+          this.scale.width / 2,
+          y + 28,
+          'No commanders on the board yet.',
+          displayTextStyle(15, COLOR.textDim, 3),
+        ).setOrigin(0.5, 0),
+      );
+      this.rowContainer.add(
+        crispText(
+          this,
+          this.scale.width / 2,
+          y + 56,
+          'Raid a base to log your first trophies — you might take the top slot.',
+          bodyTextStyle(12, COLOR.textMuted),
+        ).setOrigin(0.5, 0),
+      );
+      y += 96;
+    }
+
     rows.forEach((r, i) => {
       y = this.renderRow(originX, maxW, y, rowH, r, i, r.playerId === mePlayerId);
     });

@@ -802,23 +802,36 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private deckLayoutMetrics(): {
-    rows: 1 | 2;
+    rows: 1 | 2 | 3;
     cols: number;
     scale: number;
     trayHeight: number;
   } {
+    // Minimum scale that keeps a card tap-friendly (48 px physical
+    // targets per iOS HIG; DECK_CARD_W * 0.62 ≈ 67 px, comfortable for
+    // thumbs and still shows the icon + count). Below this we wrap to
+    // another row rather than shrinking cards further.
+    const MIN_SCALE = 0.62;
+    const WRAP_SCALE = 0.78;
+
     const count = Math.max(1, this.deckEntries.length);
     const availW = this.scale.width - 24;
-    const oneRowScale = Math.min(
-      1,
-      (availW - DECK_GRID_GAP * Math.max(0, count - 1)) / (DECK_CARD_W * count),
-    );
-    const rows: 1 | 2 = oneRowScale >= 0.78 ? 1 : 2;
+    const scaleFor = (cols: number): number =>
+      Math.min(
+        1,
+        (availW - DECK_GRID_GAP * Math.max(0, cols - 1)) / (DECK_CARD_W * cols),
+      );
+
+    // Pick the fewest rows that keep cards readable. Previously capped
+    // at 2 rows, which on ≤360 px phones packed 5 cards into a row at
+    // scale ~0.53 — below the tap-target floor. Now we fall through to
+    // 3 rows when 2 would still shrink cards past MIN_SCALE.
+    let rows: 1 | 2 | 3 = 1;
+    if (scaleFor(count) < WRAP_SCALE) rows = 2;
+    if (rows === 2 && scaleFor(Math.ceil(count / 2)) < MIN_SCALE) rows = 3;
+
     const cols = Math.ceil(count / rows);
-    const scale = Math.min(
-      1,
-      (availW - DECK_GRID_GAP * Math.max(0, cols - 1)) / (DECK_CARD_W * cols),
-    );
+    const scale = Math.max(MIN_SCALE, scaleFor(cols));
     const rowHeight = DECK_CARD_H * scale;
     const trayHeight =
       Math.ceil(56 + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 18);
@@ -1202,8 +1215,11 @@ export class RaidScene extends Phaser.Scene {
     overlay.fillRect(0, 0, this.scale.width, this.scale.height);
 
     // Card is a bit taller on wins to accommodate the Share button.
+    // Width clamps to the viewport (minus a 16 px margin each side) so
+    // the card never bleeds off ultra-narrow phones. On normal widths
+    // this is a no-op — min(400, viewport-32) is still 400.
     const isWin = this.state.outcome === 'attackerWin' && stars > 0;
-    const cardW = 400;
+    const cardW = Math.min(400, this.scale.width - 32);
     const cardH = isWin ? 290 : 240;
     const card = this.add.graphics().setDepth(101);
     const cx = (this.scale.width - cardW) / 2;
@@ -1266,11 +1282,17 @@ export class RaidScene extends Phaser.Scene {
     // Replace the old Text-backed buttons with our shared beveled
     // buttons so the result modal matches the rest of the UI. On a
     // win we render two side-by-side; on a loss the single "back"
-    // button centers.
+    // button centers. Widths scale with the card so the pair stays
+    // inside the card rather than overflowing on narrow phones —
+    // previously these were hard-wired to 180 px at ±100 from center,
+    // which overlapped badly at ≤400 px viewports.
+    const innerW = cardW - 32;
+    const btnW = isWin ? Math.min(180, Math.floor((innerW - 12) / 2)) : Math.min(220, innerW);
+    const split = isWin ? btnW / 2 + 6 : 0;
     makeHiveButton(this, {
-      x: isWin ? this.scale.width / 2 - 100 : this.scale.width / 2,
+      x: this.scale.width / 2 - split,
       y: actionsY,
-      width: 180,
+      width: btnW,
       height: 46,
       label: 'Back to home',
       variant: 'secondary',
@@ -1280,9 +1302,9 @@ export class RaidScene extends Phaser.Scene {
 
     if (isWin) {
       makeHiveButton(this, {
-        x: this.scale.width / 2 + 100,
+        x: this.scale.width / 2 + split,
         y: actionsY,
-        width: 180,
+        width: btnW,
         height: 46,
         label: '📣 Share',
         variant: 'primary',

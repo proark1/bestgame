@@ -1103,11 +1103,9 @@ export class HomeScene extends Phaser.Scene {
         },
       },
       {
-        // Used to be a brass `primary` button. In context the rest of
-        // the row was all green `secondary`, so the gold Raid button
-        // read as a different control belonging to a different banner.
-        // Same variant as its neighbors now — arrow glyph + rightmost
-        // position still gives it CTA weight without the color clash.
+        // Primary CTA — brass colour + extra width in layoutFooter()
+        // so it reads as the main action. Arrow glyph + rightmost
+        // position reinforce the "go forward" cue.
         full: () => 'Raid a base →',
         short: () => 'Raid →',
         variant: 'primary',
@@ -1200,8 +1198,15 @@ export class HomeScene extends Phaser.Scene {
     // the breakpoint was a hard-coded 900 px which packed 7-8 buttons
     // onto a 900 px row — giving the Flip button ~115 px to fit a
     // ~150 px label.
+    //
+    // The primary CTA gets +28% width below, so the wide threshold
+    // reserves enough room that the primary doesn't push its neighbors
+    // into truncation territory once it scales up.
     const minBtnWide = 140;
-    const minWideRow = marginX * 2 + count * minBtnWide + (count - 1) * gap;
+    const primaryBump = this.footerButtonDefs.some((d) => d.variant === 'primary')
+      ? Math.round(minBtnWide * 0.28)
+      : 0;
+    const minWideRow = marginX * 2 + count * minBtnWide + (count - 1) * gap + primaryBump;
     const wide = this.scale.width >= minWideRow;
 
     // Pick the short or full label per current viewport.
@@ -1217,6 +1222,11 @@ export class HomeScene extends Phaser.Scene {
     const perRow = wide ? count : Math.ceil(count / 2);
     const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
     const btnW = Math.max(110, Math.min(220, Math.floor(availW / perRow)));
+    // Emphasize the primary CTA: +28% width over a secondary button so
+    // the gold Raid button reads as the primary action rather than
+    // "one of eight". Clamped so we never exceed the hard 220 px cap
+    // that keeps ultra-wide footers looking proportional.
+    const primaryBtnW = Math.min(260, Math.round(btnW * 1.28));
     const bottomPad = 36;
     const footerTop = wide
       ? this.scale.height - bottomPad - btnH - 18
@@ -1246,13 +1256,24 @@ export class HomeScene extends Phaser.Scene {
       this.footerChrome.fillRect(28, footerTop + 34, this.scale.width - 56, 2);
     }
 
-    const placeRow = (arr: HiveButton[], y: number): void => {
-      const rowTotalW = btnW * arr.length + gap * (arr.length - 1);
-      const rowStartX = (this.scale.width - rowTotalW) / 2;
+    // Per-button width so the primary CTA can be wider than its
+    // secondary siblings. Everything reads off footerButtonDefs[i]
+    // instead of assuming uniform widths.
+    const widthFor = (globalIdx: number): number =>
+      this.footerButtonDefs[globalIdx]?.variant === 'primary' ? primaryBtnW : btnW;
+    const placeRow = (arr: HiveButton[], y: number, rowStartGlobalIdx: number): void => {
+      let rowTotalW = 0;
       for (let i = 0; i < arr.length; i++) {
-        arr[i]!.setSize(btnW, btnH);
-        // Button origin is center; add btnW/2 so left edge === rowStartX.
-        arr[i]!.setPosition(rowStartX + btnW / 2 + i * (btnW + gap), y);
+        rowTotalW += widthFor(rowStartGlobalIdx + i);
+      }
+      rowTotalW += gap * Math.max(0, arr.length - 1);
+      let cursor = (this.scale.width - rowTotalW) / 2;
+      for (let i = 0; i < arr.length; i++) {
+        const w = widthFor(rowStartGlobalIdx + i);
+        arr[i]!.setSize(w, btnH);
+        // Button origin is center; add w/2 so left edge === cursor.
+        arr[i]!.setPosition(cursor + w / 2, y);
+        cursor += w + gap;
       }
     };
 
@@ -1265,14 +1286,14 @@ export class HomeScene extends Phaser.Scene {
     const half = Math.ceil(count / 2);
     if (wide) {
       const y = this.scale.height - bottomPad - btnH / 2;
-      placeRow(this.footerButtons, y);
+      placeRow(this.footerButtons, y, 0);
     } else {
       const row1 = this.footerButtons.slice(0, half);
       const row2 = this.footerButtons.slice(half);
       const y2 = this.scale.height - bottomPad - btnH / 2;
       const y1 = y2 - btnH - 12;
-      placeRow(row1, y1);
-      placeRow(row2, y2);
+      placeRow(row1, y1, 0);
+      placeRow(row2, y2, half);
     }
   }
 
