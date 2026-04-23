@@ -204,11 +204,14 @@ function applyEffect(
       break;
     case 'extraSpawn': {
       const cap = p.maxExtra ?? 2;
-      // Bank the bonus spawn for combat.ts to pop next tick. We cap
-      // the running total (not per-fire) so a 10-use rule with cap=2
-      // still grants only 2 bonus spawns across the raid.
-      const current = b.bonusSpawnsRemaining ?? 0;
-      if (current < cap) b.bonusSpawnsRemaining = current + 1;
+      // Cap the CUMULATIVE grants, not the currently-banked amount.
+      // Otherwise a fast-firing rule (e.g. onTick every 60 ticks)
+      // could keep topping up the nest's bank as combat consumes
+      // each spawn, bypassing `maxExtra` as a raid-wide ceiling.
+      // `extraSpawnsGranted` is the single counter we compare against.
+      if (rs.extraSpawnsGranted >= cap) break;
+      rs.extraSpawnsGranted++;
+      b.bonusSpawnsRemaining = (b.bonusSpawnsRemaining ?? 0) + 1;
       break;
     }
     case 'healSelf': {

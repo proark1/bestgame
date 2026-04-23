@@ -16,6 +16,7 @@ function hydrateRule(r: BuildingAIRule): SimRuleState {
     rearmCooldown: 0,
     prevConditionTrue: false,
     tickAccumulator: 0,
+    extraSpawnsGranted: 0,
   };
 }
 

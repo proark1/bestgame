@@ -43,11 +43,14 @@ export function step(
     pheromoneFollowSystem(state);
     // 2b. Player-authored defender AI rules. Runs BEFORE combat so
     // any freshly-applied boost / range extension / reveal takes
-    // effect in the same tick's combat pass. Ticking cooldowns
-    // down and reading pre-combat state (e.g. "any enemy in range")
-    // is what makes rules predictable to both sides.
-    state.buildingsDestroyedThisTick = 0;
+    // effect in the same tick's combat pass. The `onAllyDestroyed`
+    // trigger reads `buildingsDestroyedThisTick` from the PREVIOUS
+    // tick's combat (otherwise the counter is always zero at rule
+    // evaluation time — combat hasn't run yet). We clear it AFTER
+    // aiRulesSystem so combat writes into a fresh zero for the next
+    // tick's rules to observe.
     aiRulesSystem(state);
+    state.buildingsDestroyedThisTick = 0;
     // 3. Combat resolution (unit<->building). Level multipliers are
     // threaded in so attacker damage scales with upgrades.
     combatSystem(state, cfg.attackerUnitLevels);

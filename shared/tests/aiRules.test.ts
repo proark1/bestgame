@@ -160,6 +160,60 @@ describe('defender AI — effects take hold', () => {
   });
 });
 
+describe('defender AI — extraSpawn total cap', () => {
+  it('maxExtra caps cumulative grants across the raid, not banked', () => {
+    // onTick rule that would fire every 30 ticks. Even though combat
+    // consumes the banked spawn each tick, the rule should stop
+    // granting after maxExtra cumulative grants — not reset each
+    // time the bank hits zero.
+    const rules: BuildingAIRule[] = [
+      {
+        id: 'r',
+        trigger: 'onTick',
+        effect: 'extraSpawn',
+        params: { ticks: 30, maxExtra: 2 },
+      },
+    ];
+    const snap: Base = {
+      baseId: 'x', ownerId: 'x', faction: 'Ants',
+      gridSize: { w: 16, h: 12 },
+      resources: { sugar: 0, leafBits: 0, aphidMilk: 0 },
+      trophies: 0, version: 1, tunnels: [],
+      buildings: [
+        {
+          id: 'queen', kind: 'QueenChamber',
+          anchor: { x: 7, y: 5, layer: 0 }, footprint: { w: 2, h: 2 },
+          spans: [0, 1], level: 1, hp: 800, hpMax: 800,
+        },
+        {
+          id: 'nest', kind: 'SpiderNest',
+          anchor: { x: 3, y: 3, layer: 1 },
+          footprint: { w: 2, h: 2 },
+          level: 1, hp: 260, hpMax: 260,
+          aiRules: rules,
+        },
+      ],
+    };
+    const cfg: SimConfig = {
+      tickRate: 30,
+      maxTicks: 300,
+      initialSnapshot: snap,
+      seed: 42,
+    };
+    const state = createInitialState(cfg);
+    // Need an attacker alive for the nest to spawn anything; deploy
+    // one worker on the surface so the nest is "under pressure".
+    runReplay(state, cfg, [straightDeploy()]);
+    while (state.tick < 300 && state.outcome === 'ongoing') step(state, cfg, []);
+    // Walk the SimRuleState on the nest; the cumulative counter
+    // must not exceed the rule's maxExtra cap even though onTick
+    // fires many times across 300 ticks.
+    const nest = state.buildings.find((b) => b.kind === 'SpiderNest')!;
+    const ruleState = nest.rules?.[0];
+    expect(ruleState?.extraSpawnsGranted).toBeLessThanOrEqual(2);
+  });
+});
+
 describe('defender AI — determinism', () => {
   it('same inputs + same rules produce bit-identical hashes', () => {
     const rules: BuildingAIRule[] = [

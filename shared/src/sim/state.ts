@@ -75,6 +75,12 @@ export interface SimRuleState {
   prevConditionTrue: boolean;
   // For onTick: ticks since last fire.
   tickAccumulator: number;
+  // Cumulative number of extraSpawn grants this rule has produced
+  // this raid. Compared against params.maxExtra so a rule can't
+  // indefinitely top up the nest's spawn bank — once the cap is
+  // reached, the effect stops granting even if combat consumes
+  // the banked spawn between fires.
+  extraSpawnsGranted: number;
 }
 
 export interface SimState {
