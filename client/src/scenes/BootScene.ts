@@ -9,6 +9,9 @@ import {
   WALK_CYCLE_FPS,
 } from '../assets/atlas.js';
 import { generateMissingPlaceholders } from '../assets/placeholders.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { crispText } from '../ui/text.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { setUiOverrides } from '../ui/uiOverrides.js';
 
 // BootScene — preloads only the sprite keys the server's
@@ -97,6 +100,11 @@ function parseManifest(raw: unknown): ManifestResponse | null {
 }
 
 export class BootScene extends Phaser.Scene {
+  private statusText!: Phaser.GameObjects.Text;
+  private progressText!: Phaser.GameObjects.Text;
+  private progressFill!: Phaser.GameObjects.Graphics;
+  private progressTrack = { x: 0, y: 0, w: 0, h: 0 };
+
   constructor(private readonly fb: FBInstantBridge) {
     super('BootScene');
   }
@@ -105,12 +113,23 @@ export class BootScene extends Phaser.Scene {
   private manifestQueued = false;
 
   preload(): void {
-    this.load.on('progress', (p: number) => this.fb.setLoadingProgress(p));
+    this.drawLoadingScreen();
+    this.setLoadingStatus('Checking colony manifest...');
+    this.updateLoadingProgress(0);
+    this.load.on('progress', (p: number) => {
+      this.fb.setLoadingProgress(p);
+      this.updateLoadingProgress(p);
+    });
+    this.load.once('complete', () => {
+      this.updateLoadingProgress(1);
+      this.setLoadingStatus('Finalizing colony systems...');
+    });
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
       // Manifest-fetch failure → queue the legacy every-key path so
       // the game still boots against an older server that doesn't
       // expose /api/sprites/manifest.
       if (file.key === MANIFEST_KEY) {
+        this.setLoadingStatus('Manifest unavailable - switching to fallback art pack.');
         if (!this.manifestQueued) {
           this.manifestQueued = true;
           this.queueLegacyLoads();
@@ -134,13 +153,166 @@ export class BootScene extends Phaser.Scene {
         this.manifestQueued = true;
         const parsed = parseManifest(data);
         if (!parsed) {
+          this.setLoadingStatus('Manifest unreadable - loading fallback art pack.');
           this.queueLegacyLoads();
           return;
         }
         this.manifest = parsed;
+        this.setLoadingStatus(
+          `Loading ${parsed.images.length + parsed.sheets.length} colony assets...`,
+        );
         this.queueManifestLoads(parsed);
       },
     );
+  }
+
+  private drawLoadingScreen(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+
+    const bg = this.add.graphics().setDepth(-100);
+    const top = 0x203224;
+    const mid = 0x142117;
+    const bot = 0x060b07;
+    const bands = 18;
+    for (let i = 0; i < bands; i++) {
+      const t = i / Math.max(1, bands - 1);
+      const src = t < 0.62 ? top : mid;
+      const dst = t < 0.62 ? mid : bot;
+      const localT = t < 0.62 ? t / 0.62 : (t - 0.62) / 0.38;
+      const r = Math.round(
+        ((src >> 16) & 0xff) + (((dst >> 16) & 0xff) - ((src >> 16) & 0xff)) * localT,
+      );
+      const g = Math.round(
+        ((src >> 8) & 0xff) + (((dst >> 8) & 0xff) - ((src >> 8) & 0xff)) * localT,
+      );
+      const b = Math.round((src & 0xff) + ((dst & 0xff) - (src & 0xff)) * localT);
+      bg.fillStyle((r << 16) | (g << 8) | b, 1);
+      bg.fillRect(0, Math.floor((i * h) / bands), w, Math.ceil(h / bands) + 1);
+    }
+
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(COLOR.brass, 0.06);
+    glow.fillEllipse(w / 2, h * 0.34, Math.min(760, w * 0.88), 220);
+    glow.fillStyle(COLOR.greenHi, 0.07);
+    glow.fillEllipse(w * 0.28, h - 110, 320, 130);
+    glow.fillEllipse(w * 0.76, h - 80, 260, 110);
+
+    const cardW = Math.min(520, w - 32);
+    const cardH = 228;
+    const cardX = (w - cardW) / 2;
+    const cardY = Math.max(68, h * 0.5 - cardH / 2);
+
+    const card = this.add.graphics();
+    drawPanel(card, cardX, cardY, cardW, cardH, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.16,
+      radius: 18,
+      shadowOffset: 6,
+      shadowAlpha: 0.34,
+    });
+
+    const pill = this.add.graphics();
+    drawPill(pill, cardX + 18, cardY + 18, 92, 22, { brass: true });
+    crispText(this, cardX + 64, cardY + 29, 'Live build', labelTextStyle(10, '#2a1d08')).setOrigin(
+      0.5,
+      0.5,
+    );
+
+    const title = crispText(
+      this,
+      w / 2,
+      cardY + 54,
+      'Hive Wars',
+      displayTextStyle(32, COLOR.textGold, 5),
+    ).setOrigin(0.5, 0.5);
+    crispText(
+      this,
+      w / 2,
+      cardY + 88,
+      'Raising the colony and sharpening the battlefield...',
+      bodyTextStyle(14, COLOR.textDim),
+    ).setOrigin(0.5, 0.5);
+
+    const trackX = cardX + 24;
+    const trackY = cardY + 126;
+    const trackW = cardW - 48;
+    const trackH = 30;
+    const track = this.add.graphics();
+    drawPanel(track, trackX, trackY, trackW, trackH, {
+      topColor: COLOR.bgInset,
+      botColor: COLOR.bgDeep,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 14,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
+
+    this.progressTrack = { x: trackX + 3, y: trackY + 3, w: trackW - 6, h: trackH - 6 };
+    this.progressFill = this.add.graphics();
+    this.progressText = crispText(
+      this,
+      cardX + cardW - 24,
+      trackY - 18,
+      '0%',
+      labelTextStyle(11, COLOR.textMuted),
+    ).setOrigin(1, 0.5);
+    this.statusText = crispText(this, w / 2, trackY + 58, '', bodyTextStyle(13, COLOR.textPrimary)).setOrigin(
+      0.5,
+      0.5,
+    );
+    crispText(
+      this,
+      w / 2,
+      trackY + 88,
+      'Missing art falls back to procedural placeholders, so the game still boots cleanly.',
+      bodyTextStyle(11, COLOR.textMuted),
+    ).setOrigin(0.5, 0.5);
+
+    this.tweens.add({
+      targets: title,
+      scale: { from: 1, to: 1.02 },
+      duration: 1500,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
+  private updateLoadingProgress(progress: number): void {
+    const clamped = Phaser.Math.Clamp(progress, 0, 1);
+    const fillW = Math.max(18, this.progressTrack.w * clamped);
+    this.progressFill.clear();
+    drawPanel(
+      this.progressFill,
+      this.progressTrack.x,
+      this.progressTrack.y,
+      fillW,
+      this.progressTrack.h,
+      {
+        topColor: COLOR.brass,
+        botColor: COLOR.goldLo,
+        stroke: COLOR.brassDeep,
+        strokeWidth: 1,
+        highlight: COLOR.goldHi,
+        highlightAlpha: 0.18,
+        radius: 12,
+        shadowOffset: 0,
+        shadowAlpha: 0,
+      },
+    );
+    this.progressText.setText(`${Math.round(clamped * 100)}%`);
+  }
+
+  private setLoadingStatus(text: string): void {
+    this.statusText.setText(text);
   }
 
   private queueManifestLoads(m: ManifestResponse): void {
@@ -180,6 +352,8 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.setLoadingStatus('Sharpening textures and preparing the colony...');
+    this.updateLoadingProgress(1);
     if (this.manifest) {
       // Manifest path: one URL per sprite, already loaded under the
       // canonical key. Nothing to promote. Just build the walk anims.
