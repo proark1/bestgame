@@ -70,19 +70,27 @@ export function registerWars(app: FastifyInstance): void {
         return { error: 'cannot war against your own clan' };
       }
 
-      // Opponent clan must exist.
-      const oppRes = await client.query<{ id: string }>(
-        'SELECT id FROM clans WHERE id = $1',
-        [body.opponentClanId],
+      // Lock both clan rows before checking existing wars — without
+      // this, two leaders racing each other could each see "no active
+      // war" and both succeed at the INSERT, leaving a clan in two
+      // wars at once. ORDER BY id keeps lock acquisition deterministic
+      // across concurrent starters so we don't deadlock on reverse
+      // pairs. The SELECT also validates opponent clan existence;
+      // missing id → 404 in the same hop.
+      const lockIds = [myClan.clan_id, body.opponentClanId].sort();
+      const lockRes = await client.query<{ id: string }>(
+        'SELECT id FROM clans WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE',
+        [lockIds],
       );
-      if (oppRes.rows.length === 0) {
+      if (lockRes.rows.length !== 2) {
         await client.query('ROLLBACK');
         reply.code(404);
         return { error: 'opponent clan not found' };
       }
 
-      // Neither clan may already be in an active war. Condition mirrors
-      // the partial index in migrations/0011 so Postgres picks it up.
+      // Neither clan may already be in an active war. Safe now that
+      // we hold row locks on both clans — any concurrent start will
+      // block here until our transaction commits.
       const busy = await client.query<{ id: string }>(
         `SELECT id FROM clan_wars
           WHERE status = 'active'
@@ -317,6 +325,12 @@ export function registerWars(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Pull `has_ended` from Postgres itself rather than comparing
+      // `ends_at` against the API node's `Date.now()` — the app and
+      // DB clocks can drift, especially across deploys, and the
+      // shield + matchmaking code already uses DB-side NOW() for the
+      // same reason. One extra boolean column on the result keeps
+      // the expiration decision consistent with the source of truth.
       const war = await client.query<{
         id: string;
         clan_a_id: string;
@@ -326,9 +340,11 @@ export function registerWars(app: FastifyInstance): void {
         stars_a: number;
         stars_b: number;
         winning_clan_id: string | null;
+        has_ended: boolean;
       }>(
         `SELECT id, clan_a_id, clan_b_id, status, ends_at,
-                stars_a, stars_b, winning_clan_id
+                stars_a, stars_b, winning_clan_id,
+                ends_at <= NOW() AS has_ended
            FROM clan_wars
           WHERE id = $1
           FOR UPDATE`,
@@ -350,7 +366,7 @@ export function registerWars(app: FastifyInstance): void {
           starsB: w.stars_b,
         };
       }
-      if (w.ends_at.getTime() > Date.now()) {
+      if (!w.has_ended) {
         await client.query('ROLLBACK');
         reply.code(409);
         return { error: 'war has not ended yet', endsAt: w.ends_at.toISOString() };

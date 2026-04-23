@@ -152,12 +152,12 @@ export function registerRaid(app: FastifyInstance): void {
 
       // Retention-loop book-keeping computed from the raid result +
       // input timeline. The sim is single-source-of-truth; we only
-      // _read_ from it here.
-      const seasonXpGain =
-        lv.rows[0]?.season_id === CURRENT_SEASON_ID ? xpForRaid(stars) : xpForRaid(stars);
-      // When the season rolls over (`season_id` mismatch), the UPDATE
-      // below resets the count and stamps the new id. `seasonXpGain`
-      // is applied on top of that reset value.
+      // _read_ from it here. `seasonXpGain` is the raw XP payout for
+      // this raid; when the stored season_id mismatches the current
+      // one, the UPDATE below resets the counter and applies this
+      // gain on top of zero (same CASE pattern as the quest-claim
+      // and milestone-claim routes).
+      const seasonXpGain = xpForRaid(stars);
       let unitsDeployed = 0;
       const deployedKinds = new Set<Types.UnitKind>();
       for (const inp of body.inputs) {
