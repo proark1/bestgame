@@ -28,6 +28,10 @@ import {
 import { SpriteCard } from './SpriteCard.js';
 import { compressBase64Image, humanBytes } from './compress.js';
 import {
+  BUILDING_SPRITE_KEYS,
+  UNIT_SPRITE_KEYS,
+} from '../assets/atlas.js';
+import {
   WALK_FRAME_COUNT,
   WALK_STRIP_WIDTH,
   composeWalkPosePrompt,
@@ -36,32 +40,12 @@ import {
 } from './walkCycle.js';
 import { WalkCycleEditor } from './WalkCycleEditor.js';
 
-// Keep in sync with client/src/assets/atlas.ts UNIT_SPRITE_KEYS / BUILDING_SPRITE_KEYS.
-const UNIT_KEYS = [
-  'WorkerAnt',
-  'SoldierAnt',
-  'DirtDigger',
-  'Forager',
-  'Wasp',
-  'HoneyTank',
-  'ShieldBeetle',
-  'BombBeetle',
-  'Roller',
-  'Jumper',
-  'WebSetter',
-  'Ambusher',
-];
-const BUILDING_KEYS = [
-  'QueenChamber',
-  'DewCollector',
-  'MushroomTurret',
-  'LeafWall',
-  'PebbleBunker',
-  'LarvaNursery',
-  'SugarVault',
-  'TunnelJunction',
-  'DungeonTrap',
-];
+// Source the admin sprite cards from the same manifest BootScene loads so
+// new live roster entries cannot ship without showing up in the art tools.
+const UNIT_KEYS = UNIT_SPRITE_KEYS.map((key) => key.replace(/^unit-/, ''));
+const BUILDING_KEYS = BUILDING_SPRITE_KEYS.map((key) =>
+  key.replace(/^building-/, ''),
+);
 
 interface Compression {
   format: 'webp' | 'png';

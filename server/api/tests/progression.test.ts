@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Types } from '@hive/shared';
 import {
   LEVEL_COST_MULT,
   MAX_UNIT_LEVEL,
@@ -7,7 +8,7 @@ import {
   trophyDelta,
   upgradeCostMult,
 } from '../src/game/progression.js';
-import { upgradeCost } from '../src/game/upgradeCosts.js';
+import { upgradeCatalog, upgradeCost } from '../src/game/upgradeCosts.js';
 import { LEVEL_STAT_PERCENT } from '@hive/shared/sim';
 
 // Progression curve is the single most important balance knob in the
@@ -52,6 +53,35 @@ describe('cost curve — Golden-ratio Fibonacci', () => {
     const l9 = upgradeCost('SoldierAnt', 9)!;
     // L9→L10 (28.8×) should cost dramatically more than L1→L2 (0.5×).
     expect(l9.sugar / l1.sugar).toBeGreaterThan(50);
+  });
+
+  it('every unit gets strictly more expensive every level', () => {
+    for (const kind of Object.keys(upgradeCatalog())) {
+      let lastSugar = 0;
+      let lastLeaf = 0;
+      for (let level = 1; level < MAX_UNIT_LEVEL; level++) {
+        const cost = upgradeCost(kind as Types.UnitKind, level);
+        expect(cost).not.toBeNull();
+        expect(cost!.sugar).toBeGreaterThan(lastSugar);
+        expect(cost!.leafBits).toBeGreaterThan(lastLeaf);
+        lastSugar = cost!.sugar;
+        lastLeaf = cost!.leafBits;
+      }
+    }
+  });
+
+  it('maxing the full upgradeable roster is a meaningful long-tail grind', () => {
+    let totalSugar = 0;
+    let totalLeaf = 0;
+    for (const kind of Object.keys(upgradeCatalog())) {
+      for (let level = 1; level < MAX_UNIT_LEVEL; level++) {
+        const cost = upgradeCost(kind as Types.UnitKind, level)!;
+        totalSugar += cost.sugar;
+        totalLeaf += cost.leafBits;
+      }
+    }
+    expect(totalSugar).toBeGreaterThan(650_000);
+    expect(totalLeaf).toBeGreaterThan(200_000);
   });
 });
 

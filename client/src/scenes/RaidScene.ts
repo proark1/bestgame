@@ -22,9 +22,12 @@ const GRID_H = 12;
 const BOARD_W = TILE * GRID_W;
 const BOARD_H = TILE * GRID_H;
 const HUD_H = 56;
-const DECK_H = 96;
+const DECK_CARD_H = 96;
+const DECK_CARD_W = 108;
+const DECK_GRID_GAP = 12;
 const TICK_HZ = 30;
 const RAID_SECONDS = 90;
+const SPAWN_ZONE_W = TILE * 2;
 
 interface DeckEntry {
   kind: Types.UnitKind;
@@ -182,10 +185,14 @@ export class RaidScene extends Phaser.Scene {
   // (this Record has it set to true) AND (the walk texture loaded).
   private animationEnabled: Record<string, boolean> = {};
   private trailEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private attackerQueenLevel = 1;
 
   // Trail drawing state.
   private selectedDeckIdx = 0;
   private deckEntries: DeckEntry[] = [];
+  // Stored in board-local pixels, not world/screen pixels, so the drawn
+  // trail and the committed deploy path stay locked together even when the
+  // board is scaled for mobile layouts.
   private drawingPoints: Array<{ x: number; y: number }> = [];
   private trailGraphics!: Phaser.GameObjects.Graphics;
   private isDrawing = false;
@@ -194,6 +201,14 @@ export class RaidScene extends Phaser.Scene {
   private timerText!: Phaser.GameObjects.Text;
   private starsText!: Phaser.GameObjects.Text;
   private lootText!: Phaser.GameObjects.Text;
+  private deckTrayBg!: Phaser.GameObjects.Graphics;
+  private deckSelectedIcon!: Phaser.GameObjects.Image;
+  private deckSelectedText!: Phaser.GameObjects.Text;
+  private deckHintText!: Phaser.GameObjects.Text;
+  private deckUnlockText!: Phaser.GameObjects.Text;
+  private boardGuide!: Phaser.GameObjects.Container;
+  private spawnZoneGraphics!: Phaser.GameObjects.Graphics;
+  private spawnZoneCue!: Phaser.GameObjects.Container;
   private deckContainers: Phaser.GameObjects.Container[] = [];
   // Parallel array to deckContainers — avoids monkey-patching the
   // container with a labelText property.
@@ -223,8 +238,8 @@ export class RaidScene extends Phaser.Scene {
     // kinds aren't shown at all. Matches CoC's barracks-gated card
     // roster and keeps raid UI uncluttered at low tiers.
     const initRuntime = this.registry.get('runtime') as HiveRuntime | undefined;
-    const attackerQueenLevel = queenLevelFromBase(initRuntime?.player?.base);
-    this.deckEntries = buildDeck(attackerQueenLevel);
+    this.attackerQueenLevel = queenLevelFromBase(initRuntime?.player?.base);
+    this.deckEntries = buildDeck(this.attackerQueenLevel);
     this.deckContainers = [];
     this.deckLabels = [];
     this.buildingSprites.clear();
@@ -278,6 +293,7 @@ export class RaidScene extends Phaser.Scene {
     this.drawBuildingsFromState();
     this.trailGraphics = this.add.graphics().setDepth(10);
     this.boardContainer.add(this.trailGraphics);
+    this.drawDeckTray();
     this.drawDeck();
 
     this.wirePointerInput();
@@ -407,7 +423,45 @@ export class RaidScene extends Phaser.Scene {
     for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
     for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
 
-    this.boardContainer.add([bg, grid]);
+    this.spawnZoneGraphics = this.add.graphics().setDepth(2);
+    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillRect(0, 0, SPAWN_ZONE_W, BOARD_H);
+    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.strokeRect(0, 0, SPAWN_ZONE_W, BOARD_H);
+    const chevrons = [0, 1, 2].map((i) =>
+      this.add
+        .text(SPAWN_ZONE_W / 2, 140 + i * 120, '>>>', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '22px',
+          color: '#c3e8b0',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0.28),
+    );
+    const spawnText = this.add
+      .text(SPAWN_ZONE_W / 2, BOARD_H / 2, 'SPAWN\nEDGE', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '18px',
+        color: '#c3e8b0',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setAlpha(0.75)
+      .setDepth(3);
+    this.spawnZoneCue = this.add.container(0, 0, chevrons);
+    this.spawnZoneCue.setDepth(3);
+    this.tweens.add({
+      targets: chevrons,
+      x: `+=10`,
+      alpha: { from: 0.18, to: 0.55 },
+      duration: 900,
+      stagger: 120,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    this.boardContainer.add([bg, this.spawnZoneGraphics, grid, this.spawnZoneCue, spawnText]);
   }
 
   private drawBuildingsFromState(): void {
@@ -434,26 +488,11 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private drawDeck(): void {
-    const y = HUD_H + BOARD_H + DECK_H / 2;
-    const slotW = 108;
-    const totalW = slotW * this.deckEntries.length + 16 * (this.deckEntries.length - 1);
-    const startX = (this.scale.width - totalW) / 2 + slotW / 2;
-
     for (let i = 0; i < this.deckEntries.length; i++) {
       const e = this.deckEntries[i]!;
-      const x = startX + i * (slotW + 16);
-      const container = this.add.container(x, y);
+      const container = this.add.container(0, 0).setDepth(31);
 
       const bg = this.add.graphics();
-      const redraw = (selected: boolean): void => {
-        bg.clear();
-        bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
-        bg.lineStyle(3, selected ? 0xffd98a : 0x2c5a23, 1);
-        bg.fillRoundedRect(-slotW / 2, -DECK_H / 2 + 6, slotW, DECK_H - 12, 10);
-        bg.strokeRoundedRect(-slotW / 2, -DECK_H / 2 + 6, slotW, DECK_H - 12, 10);
-      };
-      redraw(i === this.selectedDeckIdx);
-
       const icon = this.add.image(0, -12, e.icon).setDisplaySize(48, 48);
       const label = this.add
         .text(0, 18, `${e.label} ×${e.count}`, {
@@ -464,28 +503,26 @@ export class RaidScene extends Phaser.Scene {
         .setOrigin(0.5);
 
       container.add([bg, icon, label]);
-      container.setSize(slotW, DECK_H);
+      container.setSize(DECK_CARD_W, DECK_CARD_H);
       container
         .setInteractive(
-          new Phaser.Geom.Rectangle(-slotW / 2, -DECK_H / 2, slotW, DECK_H),
+          new Phaser.Geom.Rectangle(
+            -DECK_CARD_W / 2,
+            -DECK_CARD_H / 2,
+            DECK_CARD_W,
+            DECK_CARD_H,
+          ),
           Phaser.Geom.Rectangle.Contains,
         )
         .on('pointerdown', () => {
-          this.selectedDeckIdx = i;
-          this.deckContainers.forEach((c, j) => {
-            const bgObj = c.getAt(0) as Phaser.GameObjects.Graphics;
-            bgObj.clear();
-            const isSel = j === this.selectedDeckIdx;
-            bgObj.fillStyle(isSel ? 0x3a7f3a : 0x1a2b1a, 1);
-            bgObj.lineStyle(3, isSel ? 0xffd98a : 0x2c5a23, 1);
-            bgObj.fillRoundedRect(-slotW / 2, -DECK_H / 2 + 6, slotW, DECK_H - 12, 10);
-            bgObj.strokeRoundedRect(-slotW / 2, -DECK_H / 2 + 6, slotW, DECK_H - 12, 10);
-          });
+          this.selectDeckIndex(i);
         });
 
       this.deckContainers.push(container);
       this.deckLabels.push(label);
+      this.redrawDeckCard(i);
     }
+    this.refreshDeckUi();
   }
 
   private wirePointerInput(): void {
@@ -509,51 +546,71 @@ export class RaidScene extends Phaser.Scene {
       const h = BOARD_H * scale;
       return px >= x0 && px <= x0 + w && py >= y0 && py <= y0 + h;
     };
-    const toTile = (px: number, py: number): { tx: number; ty: number } => {
+    const toBoardLocal = (px: number, py: number): { x: number; y: number } => {
       const scale = this.boardContainer.scaleX || 1;
       return {
-        tx: (px - this.boardContainer.x) / scale / TILE,
-        ty: (py - this.boardContainer.y) / scale / TILE,
+        x: Phaser.Math.Clamp((px - this.boardContainer.x) / scale, 0, BOARD_W),
+        y: Phaser.Math.Clamp((py - this.boardContainer.y) / scale, 0, BOARD_H),
       };
+    };
+    const withinSpawnZone = (px: number, py: number): boolean => {
+      const local = toBoardLocal(px, py);
+      return local.x <= SPAWN_ZONE_W;
     };
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!withinBoard(p.x, p.y)) return;
       if (this.state.outcome !== 'ongoing') return;
       if (this.currentDeckEntry().count <= 0) return;
+      if (!withinSpawnZone(p.x, p.y)) {
+        this.deckHintText.setText('Start your drag from the glowing spawn edge on the left.');
+        return;
+      }
+      const local = toBoardLocal(p.x, p.y);
       this.isDrawing = true;
-      this.drawingPoints = [{ x: p.x, y: p.y }];
+      this.drawingPoints = [local];
+      this.boardGuide.setVisible(false);
+      const burst = Math.min(this.currentDeckEntry().count, 5);
+      this.deckHintText.setText(`Draw through the base, then release to deploy up to ${burst}.`);
       this.renderTrailPreview();
     });
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!this.isDrawing) return;
+      const local = toBoardLocal(p.x, p.y);
       const last = this.drawingPoints[this.drawingPoints.length - 1]!;
-      const dx = p.x - last.x;
-      const dy = p.y - last.y;
-      if (dx * dx + dy * dy < 18 * 18) return;
+      const dx = local.x - last.x;
+      const dy = local.y - last.y;
+      if (dx * dx + dy * dy < 14 * 14) return;
       if (this.drawingPoints.length >= 32) return;
-      this.drawingPoints.push({ x: p.x, y: p.y });
+      this.drawingPoints.push(local);
       this.renderTrailPreview();
     });
 
     this.input.on('pointerup', () => {
       if (!this.isDrawing) return;
       this.isDrawing = false;
+      this.deckHintText.setText('Pick a unit, then drag on the battlefield to draw its path.');
       if (this.drawingPoints.length < 2) {
         this.trailGraphics.clear();
+        this.boardGuide.setVisible(this.raidInputs.length === 0 && this.currentDeckEntry().count > 0);
         return;
       }
       // Commit as a deploy input targeted for the next tick.
       const entry = this.currentDeckEntry();
       const tilePoints: Types.PheromonePoint[] = this.drawingPoints.map((p) => {
-        const { tx, ty } = toTile(p.x, p.y);
-        return { x: Sim.fromFloat(tx), y: Sim.fromFloat(ty) };
+        return {
+          x: Sim.fromFloat(p.x / TILE),
+          y: Sim.fromFloat(p.y / TILE),
+        };
       });
       const burst = Math.min(entry.count, 5);
       entry.count -= burst;
-      const label = this.deckLabels[this.selectedDeckIdx]!;
-      label.setText(`${entry.label} ×${entry.count}`);
+      if (entry.count <= 0) {
+        const next = this.deckEntries.findIndex((candidate) => candidate.count > 0);
+        if (next >= 0) this.selectedDeckIdx = next;
+      }
+      this.refreshDeckUi();
 
       const input: Types.SimInput = {
         type: 'deployPath',
@@ -573,6 +630,8 @@ export class RaidScene extends Phaser.Scene {
       // via /api/raid/submit, where the shared sim re-runs it to verify
       // the outcome before awarding trophies/loot.
       this.raidInputs.push(input);
+      const start = this.drawingPoints[0];
+      if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
 
       // fade the committed trail
       this.tweens.add({
@@ -589,6 +648,166 @@ export class RaidScene extends Phaser.Scene {
 
   private currentDeckEntry(): DeckEntry {
     return this.deckEntries[this.selectedDeckIdx]!;
+  }
+
+  private drawDeckTray(): void {
+    this.deckTrayBg = this.add.graphics().setDepth(30);
+    this.deckSelectedIcon = this.add
+      .image(0, 0, this.deckEntries[0]?.icon ?? 'unit-WorkerAnt')
+      .setDisplaySize(34, 34)
+      .setDepth(31);
+    this.deckSelectedText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '15px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(31);
+    this.deckHintText = this.add
+      .text(0, 0, 'Pick a unit, then drag on the battlefield to draw its path.', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '11px',
+        color: '#c3e8b0',
+        align: 'center',
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(31);
+    this.deckUnlockText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '10px',
+        color: '#9fc79a',
+        align: 'center',
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(31);
+    const guideBg = this.add.graphics();
+    guideBg.fillStyle(0x09120a, 0.76);
+    guideBg.lineStyle(2, COLOR.brass, 0.8);
+    guideBg.fillRoundedRect(-114, -18, 228, 36, 14);
+    guideBg.strokeRoundedRect(-114, -18, 228, 36, 14);
+    const guideText = this.add
+      .text(0, 0, 'Drag a path here to attack', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+    this.boardGuide = this.add.container(BOARD_W / 2, 28, [guideBg, guideText]);
+    this.boardGuide.setDepth(15);
+    this.boardContainer.add(this.boardGuide);
+    this.tweens.add({
+      targets: this.boardGuide,
+      alpha: { from: 0.55, to: 1 },
+      duration: 850,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private selectDeckIndex(index: number): void {
+    this.selectedDeckIdx = Phaser.Math.Clamp(index, 0, this.deckEntries.length - 1);
+    const container = this.deckContainers[this.selectedDeckIdx];
+    if (container) {
+      this.tweens.killTweensOf(container);
+      this.tweens.add({
+        targets: container,
+        scaleX: container.scaleX * 1.05,
+        scaleY: container.scaleY * 1.05,
+        duration: 110,
+        yoyo: true,
+      });
+    }
+    this.refreshDeckUi();
+  }
+
+  private redrawDeckCard(index: number): void {
+    const container = this.deckContainers[index];
+    const bgObj = container?.getAt(0) as Phaser.GameObjects.Graphics | undefined;
+    const label = this.deckLabels[index];
+    const entry = this.deckEntries[index];
+    if (!container || !bgObj || !label || !entry) return;
+    const selected = index === this.selectedDeckIdx;
+    const depleted = entry.count <= 0;
+    bgObj.clear();
+    bgObj.fillStyle(
+      depleted ? 0x241d1d : selected ? 0x3a7f3a : 0x1a2b1a,
+      1,
+    );
+    bgObj.lineStyle(
+      3,
+      depleted ? 0x5a4141 : selected ? 0xffd98a : 0x2c5a23,
+      1,
+    );
+    bgObj.fillRoundedRect(
+      -DECK_CARD_W / 2,
+      -DECK_CARD_H / 2 + 6,
+      DECK_CARD_W,
+      DECK_CARD_H - 12,
+      10,
+    );
+    bgObj.strokeRoundedRect(
+      -DECK_CARD_W / 2,
+      -DECK_CARD_H / 2 + 6,
+      DECK_CARD_W,
+      DECK_CARD_H - 12,
+      10,
+    );
+    label.setText(`${entry.label} ×${entry.count}`);
+    label.setColor(depleted ? '#d98080' : '#e6f5d2');
+    container.setAlpha(depleted ? 0.55 : 1);
+  }
+
+  private refreshDeckUi(): void {
+    for (let i = 0; i < this.deckContainers.length; i++) this.redrawDeckCard(i);
+    const entry = this.currentDeckEntry();
+    if (!entry) return;
+    this.deckSelectedIcon.setTexture(entry.icon);
+    this.deckSelectedIcon.setAlpha(entry.count > 0 ? 1 : 0.5);
+    const status = entry.count > 0 ? `${entry.count} ready` : 'depleted';
+    const burst = Math.min(entry.count, 5);
+    this.deckSelectedText.setText(
+      `Selected: ${entry.label} (${status})${entry.count > 0 ? ` • deploys ${burst} per drag` : ''}`,
+    );
+    this.deckHintText.setText(
+      entry.count > 0
+        ? 'Tap a card, then drag across the battlefield to draw its attack path.'
+        : 'Selected unit is depleted. Pick another card to keep attacking.',
+    );
+    const upcoming = ALL_DECK.filter((d) => d.unlockQueenLevel > this.attackerQueenLevel)
+      .slice(0, 2)
+      .map((d) => `${d.label} L${d.unlockQueenLevel}`);
+    this.deckUnlockText.setText(
+      upcoming.length > 0
+        ? `Next unlocks: ${upcoming.join(' • ')}`
+        : 'All attacker units unlocked at your current Queen level.',
+    );
+    this.boardGuide.setVisible(!this.isDrawing && this.raidInputs.length === 0 && entry.count > 0);
+  }
+
+  private deckLayoutMetrics(): {
+    rows: 1 | 2;
+    cols: number;
+    scale: number;
+    trayHeight: number;
+  } {
+    const count = Math.max(1, this.deckEntries.length);
+    const availW = this.scale.width - 24;
+    const oneRowScale = Math.min(
+      1,
+      (availW - DECK_GRID_GAP * Math.max(0, count - 1)) / (DECK_CARD_W * count),
+    );
+    const rows: 1 | 2 = oneRowScale >= 0.78 ? 1 : 2;
+    const cols = Math.ceil(count / rows);
+    const scale = Math.min(
+      1,
+      (availW - DECK_GRID_GAP * Math.max(0, cols - 1)) / (DECK_CARD_W * cols),
+    );
+    const rowHeight = DECK_CARD_H * scale;
+    const trayHeight =
+      Math.ceil(56 + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 18);
+    return { rows, cols, scale, trayHeight };
   }
 
   // Spawn the right visual for a unit. Three conditions must all be
@@ -632,28 +851,32 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private renderTrailPreview(): void {
-    // trailGraphics is a child of boardContainer, so drawing at
-    // local (x, y) here displays at world (container.x + x*scale,
-    // container.y + y*scale). Invert that to place the preview
-    // exactly under the cursor. See wirePointerInput() for why we
-    // read (.x, .y, .scaleX) directly instead of getBounds().
-    const x0 = this.boardContainer.x;
-    const y0 = this.boardContainer.y;
-    const scale = this.boardContainer.scaleX || 1;
+    // drawingPoints already live in board-local coordinates, so the
+    // preview can be drawn directly without any world-to-local math.
     this.trailGraphics.clear();
     this.trailGraphics.lineStyle(6, 0xffd98a, 0.85);
     this.trailGraphics.beginPath();
     for (let i = 0; i < this.drawingPoints.length; i++) {
       const p = this.drawingPoints[i]!;
-      const x = (p.x - x0) / scale;
-      const y = (p.y - y0) / scale;
-      if (i === 0) this.trailGraphics.moveTo(x, y);
-      else this.trailGraphics.lineTo(x, y);
+      if (i === 0) this.trailGraphics.moveTo(p.x, p.y);
+      else this.trailGraphics.lineTo(p.x, p.y);
     }
     this.trailGraphics.strokePath();
     this.trailGraphics.fillStyle(0xffd98a, 0.9);
     for (const p of this.drawingPoints) {
-      this.trailGraphics.fillCircle((p.x - x0) / scale, (p.y - y0) / scale, 4);
+      this.trailGraphics.fillCircle(p.x, p.y, 4);
+    }
+    const start = this.drawingPoints[0];
+    const end = this.drawingPoints[this.drawingPoints.length - 1];
+    if (start) {
+      this.trailGraphics.lineStyle(3, 0xc3e8b0, 0.95);
+      this.trailGraphics.strokeCircle(start.x, start.y, 10);
+      this.trailGraphics.fillStyle(0xc3e8b0, 0.95);
+      this.trailGraphics.fillCircle(start.x, start.y, 5);
+    }
+    if (end) {
+      this.trailGraphics.lineStyle(3, 0xffd98a, 1);
+      this.trailGraphics.strokeCircle(end.x, end.y, 12);
     }
   }
 
@@ -821,6 +1044,28 @@ export class RaidScene extends Phaser.Scene {
       y: y - 36,
       alpha: { from: 1, to: 0 },
       duration: 900,
+      ease: 'Sine.easeOut',
+      onComplete: () => text.destroy(),
+    });
+  }
+
+  private spawnDeployPopup(x: number, y: number, label: string, count: number): void {
+    const text = this.add
+      .text(x, y, `+${count} ${label}`, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+        stroke: '#1a1208',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setDepth(40);
+    this.boardContainer.add(text);
+    this.tweens.add({
+      targets: text,
+      y: y - 24,
+      alpha: { from: 1, to: 0 },
+      duration: 700,
       ease: 'Sine.easeOut',
       onComplete: () => text.destroy(),
     });
@@ -1082,8 +1327,9 @@ export class RaidScene extends Phaser.Scene {
     // fit the remaining rectangle, center with padding. Everything
     // else (units, buildings, trail graphics) lives inside the
     // container so they scale together; pointer math unscales.
+    const deckLayout = this.deckLayoutMetrics();
     const availW = this.scale.width - 24;
-    const availH = this.scale.height - HUD_H - DECK_H - 40;
+    const availH = this.scale.height - HUD_H - deckLayout.trayHeight - 40;
     const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
     this.boardContainer.setScale(scale);
     const scaledW = BOARD_W * scale;
@@ -1094,5 +1340,61 @@ export class RaidScene extends Phaser.Scene {
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
+
+    const trayTop = this.scale.height - deckLayout.trayHeight - 12;
+    this.deckTrayBg.clear();
+    this.deckTrayBg.fillStyle(0x09120a, 0.94);
+    this.deckTrayBg.fillRoundedRect(
+      12,
+      trayTop,
+      this.scale.width - 24,
+      deckLayout.trayHeight,
+      16,
+    );
+    this.deckTrayBg.lineStyle(2, 0x2c5a23, 1);
+    this.deckTrayBg.strokeRoundedRect(
+      12,
+      trayTop,
+      this.scale.width - 24,
+      deckLayout.trayHeight,
+      16,
+    );
+    this.deckTrayBg.fillStyle(COLOR.brass, 0.18);
+    this.deckTrayBg.fillRect(28, trayTop + 44, this.scale.width - 56, 2);
+
+    this.deckSelectedIcon.setPosition(this.scale.width / 2 - 154, trayTop + 28);
+    this.deckSelectedText.setPosition(this.scale.width / 2 + 12, trayTop + 10);
+    this.deckHintText
+      .setWordWrapWidth(this.scale.width - 56)
+      .setPosition(this.scale.width / 2, trayTop + 28);
+    this.deckUnlockText
+      .setWordWrapWidth(this.scale.width - 56)
+      .setPosition(this.scale.width / 2, trayTop + 44);
+
+    const rowHeight = DECK_CARD_H * deckLayout.scale;
+    const rowGap = DECK_GRID_GAP;
+    const gridTop = trayTop + 72;
+    for (let row = 0; row < deckLayout.rows; row++) {
+      const rowStartIndex = row * deckLayout.cols;
+      const rowCount = Math.min(
+        deckLayout.cols,
+        Math.max(0, this.deckEntries.length - rowStartIndex),
+      );
+      if (rowCount <= 0) continue;
+      const rowWidth =
+        rowCount * DECK_CARD_W * deckLayout.scale +
+        Math.max(0, rowCount - 1) * DECK_GRID_GAP;
+      const rowStartX = (this.scale.width - rowWidth) / 2 + (DECK_CARD_W * deckLayout.scale) / 2;
+      for (let col = 0; col < rowCount; col++) {
+        const index = rowStartIndex + col;
+        const container = this.deckContainers[index];
+        if (!container) continue;
+        container.setScale(deckLayout.scale);
+        container.setPosition(
+          rowStartX + col * (DECK_CARD_W * deckLayout.scale + DECK_GRID_GAP),
+          gridTop + row * (rowHeight + rowGap) + rowHeight / 2,
+        );
+      }
+    }
   }
 }
