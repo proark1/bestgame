@@ -1201,27 +1201,38 @@ export class HomeScene extends Phaser.Scene {
     //
     // The primary CTA gets +28% width below, so the wide threshold
     // reserves enough room that the primary doesn't push its neighbors
-    // into truncation territory once it scales up.
-    const minBtnWide = 140;
-    const primaryBump = this.footerButtonDefs.some((d) => d.variant === 'primary')
-      ? Math.round(minBtnWide * 0.28)
-      : 0;
-    const minWideRow = marginX * 2 + count * minBtnWide + (count - 1) * gap + primaryBump;
-    const wide = this.scale.width >= minWideRow;
+    // into truncation territory once it scales up. Computed via
+    // footerMinWideRow() so footerReservedHeight() can mirror it
+    // exactly — a mismatch here would let the board lay out under a
+    // 2-row footer the layout predicted as 1 row.
+    const wide = this.scale.width >= this.footerMinWideRow();
 
     // Pick the short or full label per current viewport.
     for (let i = 0; i < count; i++) {
       this.footerButtons[i]!.setLabel(this.footerLabelForIndex(i));
     }
 
-    // Compute a single button width that works for whichever row
-    // holds the most buttons. Width clamps to a 110..220 band —
-    // enough for the longest short label on narrow / phone viewports
-    // and cosmetic-only cap so rows centered on ultra-wide screens
-    // don't look comically stretched.
+    // Solve button width from the *widest* row's weighted capacity.
+    // A primary button occupies 1.28 slots instead of 1, so treating
+    // every button as equal-weight (floor(availW / count)) let the
+    // expanded primary shove the row off the viewport on widths where
+    // btnW stayed below the 220 px clamp (e.g. 1366 px with 8 buttons
+    // overflowed by ~45 px). In narrow mode each row is solved
+    // independently because the primary only sits in one of them.
     const perRow = wide ? count : Math.ceil(count / 2);
     const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
-    const btnW = Math.max(110, Math.min(220, Math.floor(availW / perRow)));
+    const half = Math.ceil(count / 2);
+    const rowWeight = (from: number, to: number): number => {
+      let w = 0;
+      for (let i = from; i < to; i++) {
+        w += this.footerButtonDefs[i]?.variant === 'primary' ? 1.28 : 1;
+      }
+      return w;
+    };
+    const maxWeight = wide
+      ? rowWeight(0, count)
+      : Math.max(rowWeight(0, half), rowWeight(half, count));
+    const btnW = Math.max(110, Math.min(220, Math.floor(availW / maxWeight)));
     // Emphasize the primary CTA: +28% width over a secondary button so
     // the gold Raid button reads as the primary action rather than
     // "one of eight". Clamped so we never exceed the hard 220 px cap
@@ -1283,7 +1294,6 @@ export class HomeScene extends Phaser.Scene {
     // pushes the whole footer (and by consequence the board above it)
     // up the screen. 36 px keeps the green board from hugging the
     // first row of buttons on laptop viewports.
-    const half = Math.ceil(count / 2);
     if (wide) {
       const y = this.scale.height - bottomPad - btnH / 2;
       placeRow(this.footerButtons, y, 0);
@@ -1318,6 +1328,28 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
+  // Minimum viewport width that fits the full footer in one row.
+  // Shared between layoutFooter (which paints the row) and
+  // footerReservedHeight (which tells the board how much vertical
+  // space to leave). Both must agree or the board can be laid out
+  // under a 2-row footer that the layout code has actually painted.
+  private footerMinWideRow(): number {
+    const count = this.footerButtons.length || 8;
+    const marginX = HomeScene.FOOTER_MARGIN_X;
+    const gap = HomeScene.FOOTER_GAP;
+    const minBtnWide = 140;
+    // +28% for the primary CTA (footer currently has one Raid button).
+    // Missing this bump in `footerReservedHeight()` was leaving a
+    // ~40 px dead band around 1222–1262 px where the footer wrapped to
+    // 2 rows while the board still reserved space for 1.
+    const defs = this.footerButtonDefs;
+    const hasPrimary = defs.length > 0
+      ? defs.some((d) => d.variant === 'primary')
+      : true;
+    const primaryBump = hasPrimary ? Math.round(minBtnWide * 0.28) : 0;
+    return marginX * 2 + count * minBtnWide + (count - 1) * gap + primaryBump;
+  }
+
   // Vertical budget the footer needs. Mirrors layoutFooter exactly:
   // wide = 1 row with bottom pad; narrow = 2 rows + inter-row gap.
   // Board sizing subtracts this so the board never runs under the
@@ -1331,11 +1363,7 @@ export class HomeScene extends Phaser.Scene {
     // reservation is needed. 20 px keeps the pan clamp from gluing the
     // board's bottom edge under the CTA on extreme viewports.
     if (this.isMobileLayout()) return 20;
-    const count = this.footerButtons.length || 8;
-    const marginX = HomeScene.FOOTER_MARGIN_X;
-    const gap = HomeScene.FOOTER_GAP;
-    const minWideRow = marginX * 2 + count * 140 + (count - 1) * gap;
-    const wide = this.scale.width >= minWideRow;
+    const wide = this.scale.width >= this.footerMinWideRow();
     const btnH = HomeScene.FOOTER_BTN_H;
     const bottomPad = 36;
     const interRow = 12;
