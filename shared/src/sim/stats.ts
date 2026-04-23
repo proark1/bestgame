@@ -1,4 +1,5 @@
 import { fromFloat, fromInt } from './fixed.js';
+import type { Fixed } from './fixed.js';
 import type { UnitKind } from '../types/units.js';
 import type { UnitStats } from '../types/units.js';
 import type { BuildingKind } from '../types/base.js';
@@ -117,6 +118,127 @@ export const UNIT_STATS: Record<UnitKind, UnitStats> = {
     canFly: false,
     canDig: false,
   },
+  // Burn-DoT specialist — modest direct hit, lights a sticky burn on
+  // whatever it touches. Burn parameters live in UNIT_BEHAVIOR.
+  FireAnt: {
+    hpMax: fromInt(28),
+    speed: fromFloat(0.08),
+    attackRange: fromFloat(0.6),
+    attackDamage: fromInt(3),
+    attackCooldownTicks: 24,
+    canFly: false,
+    canDig: false,
+  },
+  // Anti-building specialist — 2× damage vs buildings (UNIT_BEHAVIOR),
+  // baseline vs units. Low hp; needs a meatshield escort.
+  Termite: {
+    hpMax: fromInt(35),
+    speed: fromFloat(0.07),
+    attackRange: fromFloat(0.5),
+    attackDamage: fromInt(6),
+    attackCooldownTicks: 22,
+    canFly: false,
+    canDig: true,
+  },
+  // Fast low-HP flyer — scouts splash/mortar clusters, dodges ground
+  // defenses. Vulnerable to SporeTower (anti-air).
+  Dragonfly: {
+    hpMax: fromInt(22),
+    speed: fromFloat(0.13),
+    attackRange: fromFloat(1.6),
+    attackDamage: fromInt(4),
+    attackCooldownTicks: 28,
+    canFly: true,
+    canDig: false,
+  },
+  // Single-target burst. Hits hard on cooldown, not DPS-efficient.
+  // Intended as a Queen / SugarVault finisher.
+  Mantis: {
+    hpMax: fromInt(55),
+    speed: fromFloat(0.08),
+    attackRange: fromFloat(0.9),
+    attackDamage: fromInt(22),
+    attackCooldownTicks: 48,
+    canFly: false,
+    canDig: false,
+  },
+  // Swarm enabler — spawns 2 mini-scarabs on death (UNIT_BEHAVIOR
+  // deathSpawn). Think CoC Witch vibes, minus the necromancy.
+  Scarab: {
+    hpMax: fromInt(60),
+    speed: fromFloat(0.07),
+    attackRange: fromFloat(0.7),
+    attackDamage: fromInt(5),
+    attackCooldownTicks: 30,
+    canFly: false,
+    canDig: false,
+  },
+  // Death-spawn offspring of a Scarab. Cannot be directly deployed
+  // (gate this via UNIT_UNLOCK_QUEEN_LEVEL / isUpgradeableUnit —
+  // neither treats MiniScarab as deployable).
+  MiniScarab: {
+    hpMax: fromInt(12),
+    speed: fromFloat(0.10),
+    attackRange: fromFloat(0.5),
+    attackDamage: fromInt(2),
+    attackCooldownTicks: 20,
+    canFly: false,
+    canDig: false,
+  },
+  // Defender AI unit spawned by SpiderNest. Short leash (fixed lifespan
+  // handled in combat.ts); acts on owner === 1 side.
+  NestSpider: {
+    hpMax: fromInt(22),
+    speed: fromFloat(0.10),
+    attackRange: fromFloat(0.6),
+    attackDamage: fromInt(4),
+    attackCooldownTicks: 22,
+    canFly: false,
+    canDig: false,
+  },
+};
+
+// Extended per-unit behavior flags that don't fit neatly into UnitStats.
+// Keeping these in a separate table keeps UnitStats lean (speed/range/dmg
+// only) and makes it easy to add a new behaviour without touching every
+// unit. Absent entry = no special behaviour (the default for all the
+// original 12 kinds).
+export interface UnitBehavior {
+  // FireAnt / ThornHedge reflect: lay a burn on the target. Duration in
+  // ticks, damage Fixed HP per tick.
+  burnTicks?: number;
+  burnDamagePerTick?: Fixed;
+  // Termite: multiplier applied when the target is a building. 200 =
+  // 2× damage. Applied on top of the per-level stat percent.
+  vsBuildingPercent?: number;
+  // Scarab: kind + count of units spawned at death. Spawned unit is
+  // owner=0 (attacker-side) for a Scarab death.
+  deathSpawnKind?: UnitKind;
+  deathSpawnCount?: number;
+  // Hidden flag: the client hides these from the deploy roster /
+  // upgrade catalog. Used for MiniScarab (not directly summonable) and
+  // NestSpider (defender AI, never in the attacker's hand).
+  hiddenFromRoster?: boolean;
+}
+
+export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
+  FireAnt: {
+    burnTicks: 90, // 3 seconds at 30 Hz
+    burnDamagePerTick: fromInt(1),
+  },
+  Termite: {
+    vsBuildingPercent: 200,
+  },
+  Scarab: {
+    deathSpawnKind: 'MiniScarab',
+    deathSpawnCount: 2,
+  },
+  MiniScarab: {
+    hiddenFromRoster: true,
+  },
+  NestSpider: {
+    hiddenFromRoster: true,
+  },
 };
 
 export interface BuildingStats {
@@ -210,5 +332,128 @@ export const BUILDING_STATS: Record<BuildingKind, BuildingStats> = {
     attackCooldownTicks: 120,
     dropsSugarOnDestroy: 0,
     dropsLeafBitsOnDestroy: 5,
+  },
+  // Mortar-style splash. Long range, heavy reload. Splash radius
+  // lives in BUILDING_BEHAVIOR so we don't pollute the base stats shape.
+  AcidSpitter: {
+    hpMax: 350,
+    canAttack: true,
+    attackRange: fromFloat(5.0),
+    attackDamage: fromInt(8),
+    attackCooldownTicks: 90,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 15,
+  },
+  // Anti-air only. Won't acquire ground targets — BUILDING_BEHAVIOR
+  // sets antiAirOnly which combat.ts filters by.
+  SporeTower: {
+    hpMax: 280,
+    canAttack: true,
+    attackRange: fromFloat(4.0),
+    attackDamage: fromInt(14),
+    attackCooldownTicks: 36,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 12,
+  },
+  // Single-shot trap. hp=1 so killing its "attack" state drops it
+  // from the building list like any destroyed building; combat.ts
+  // zeros hp the tick it fires.
+  RootSnare: {
+    hpMax: 1,
+    canAttack: true,
+    attackRange: fromFloat(1.2),
+    attackDamage: fromInt(12),
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 3,
+  },
+  // CoC Tesla analog — cloaked until combat.ts flips `revealed` on
+  // the tick a unit enters range.
+  HiddenStinger: {
+    hpMax: 220,
+    canAttack: true,
+    attackRange: fromFloat(2.5),
+    attackDamage: fromInt(10),
+    attackCooldownTicks: 18,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 18,
+  },
+  // Spawns NestSpider defenders every N ticks while attackers are
+  // present. BUILDING_BEHAVIOR.spawnIntervalTicks controls cadence;
+  // spawns happen in combat.ts.
+  SpiderNest: {
+    hpMax: 260,
+    canAttack: false,
+    attackRange: 0,
+    attackDamage: 0,
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 20,
+  },
+  // Wall T2. Reflects chip burn on melee contact (BUILDING_BEHAVIOR
+  // reflectBurn). Still not `canAttack` — the reflect is implicit.
+  ThornHedge: {
+    hpMax: 1100,
+    canAttack: false,
+    attackRange: 0,
+    attackDamage: 0,
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 12,
+  },
+};
+
+// Extended per-building behavior. Same pattern as UNIT_BEHAVIOR:
+// everything that doesn't fit the flat "range/damage/cooldown" mold
+// goes here so BuildingStats stays minimal and the combat system can
+// branch on a single behaviour table.
+export interface BuildingBehavior {
+  // AcidSpitter: Fixed-point radius within which the splash hit lands
+  // on every enemy unit. 0 or missing = single-target.
+  splashRadius?: number;
+  // SporeTower: true means only units with canFly can be targeted.
+  antiAirOnly?: boolean;
+  // HiddenStinger: true means the building is invisible to units /
+  // client until the first target enters range. Cannot be targeted
+  // by attackers while hidden (combat.ts skips hp pull on it).
+  stealth?: boolean;
+  // RootSnare: apply a root to the target (ticks of immobilisation)
+  // on its single trigger in addition to its damage.
+  rootTicks?: number;
+  // RootSnare: one-shot flag. After firing, hp is zeroed so it counts
+  // toward the destroyed-building outcome share.
+  singleUse?: boolean;
+  // SpiderNest: cadence (ticks) between spawns while a raid is live.
+  spawnIntervalTicks?: number;
+  // SpiderNest: kind + max concurrent defenders. Extra spawns are
+  // suppressed until some of the existing defenders die.
+  spawnKind?: UnitKind;
+  spawnMaxAlive?: number;
+  // SpiderNest: how many ticks each spawned defender lives before the
+  // combat system auto-kills it. Keeps the nest from stockpiling.
+  spawnLifetimeTicks?: number;
+  // ThornHedge: on melee contact (unit attack against this building),
+  // lay a burn back onto the attacker. Same shape as UnitBehavior.
+  reflectBurnTicks?: number;
+  reflectBurnDamagePerTick?: number; // Fixed HP per tick
+}
+
+export const BUILDING_BEHAVIOR: Partial<Record<BuildingKind, BuildingBehavior>> = {
+  AcidSpitter: { splashRadius: fromFloat(1.4) },
+  SporeTower: { antiAirOnly: true },
+  HiddenStinger: { stealth: true },
+  RootSnare: {
+    rootTicks: 60, // 2 seconds
+    singleUse: true,
+  },
+  SpiderNest: {
+    spawnIntervalTicks: 120, // ~4 seconds
+    spawnKind: 'NestSpider',
+    spawnMaxAlive: 3,
+    spawnLifetimeTicks: 360, // 12 seconds
+  },
+  ThornHedge: {
+    reflectBurnTicks: 45,
+    reflectBurnDamagePerTick: fromInt(1),
   },
 };

@@ -13,7 +13,22 @@ export type UnitKind =
   | 'Roller'
   | 'Jumper'
   | 'WebSetter'
-  | 'Ambusher';
+  | 'Ambusher'
+  // Expanded attacker roster — each is unlocked at a specific Queen
+  // Chamber level (see server/api/src/game/buildingRules.ts
+  // UNIT_UNLOCK_QUEEN_LEVEL). FireAnt lays a burn DoT; Termite gets a
+  // 2× damage bonus vs buildings; Dragonfly is a fast low-hp flyer;
+  // Mantis is single-target burst; Scarab spawns two mini-scarabs on
+  // death.
+  | 'FireAnt'
+  | 'Termite'
+  | 'Dragonfly'
+  | 'Mantis'
+  | 'Scarab'
+  | 'MiniScarab'
+  // Defender-side unit spawned by SpiderNest during a raid. Not in the
+  // player's deployable roster — the combat system owns its lifecycle.
+  | 'NestSpider';
 
 // A live unit inside a running sim. Positions are Fixed (Q16.16) in world
 // sub-tile coordinates; the grid is 16x12 tiles so values stay small.
@@ -36,6 +51,15 @@ export interface Unit {
   // Target building id, 0 if none. Units prefer buildings but auto-switch
   // to nearby enemy units via the combat system.
   targetBuildingId: number;
+  // DoT — remaining ticks of burn damage (FireAnt, ThornHedge reflect).
+  // Zero when not burning. Damage-per-tick is fixed per source kind;
+  // combat.ts drips burnDamagePerTick of HP each tick while > 0.
+  burnTicks?: number;
+  burnDamagePerTick?: Fixed;
+  // Root/slow — remaining ticks while the unit is immobilised (speed
+  // clamped to 0 in pheromoneFollow). Set when a RootSnare triggers on
+  // this unit. Zero or absent = free to move.
+  rootedTicks?: number;
 }
 
 export interface UnitStats {

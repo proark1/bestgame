@@ -5,6 +5,7 @@ import { validateReplay } from '../replay/validator.js';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
 import { trophyDelta } from '../game/progression.js';
+import { isUnitUnlocked, queenLevel } from '../game/buildingRules.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -86,6 +87,31 @@ export function registerRaid(app: FastifyInstance): void {
       );
       const attackerUnitLevels = lv.rows[0]?.unit_levels ?? {};
       const attackerTrophies = lv.rows[0]?.trophies ?? 0;
+
+      // Gate unit kinds against the attacker's own queen level. A
+      // player can't deploy a unit they haven't unlocked — this is the
+      // server half of the progression gate, complementing the
+      // client's deck picker. Cost: one extra SELECT per raid to pull
+      // the attacker's base snapshot. Cheap compared to the replay
+      // sim itself.
+      const atkBase = await client.query<{ snapshot: Types.Base }>(
+        'SELECT snapshot FROM bases WHERE player_id = $1',
+        [attackerId],
+      );
+      const attackerQueenLevel = atkBase.rows[0]?.snapshot
+        ? queenLevel(atkBase.rows[0]!.snapshot)
+        : 1;
+      for (const inp of body.inputs) {
+        if (inp.type !== 'deployPath') continue;
+        const kind = inp.path?.unitKind;
+        if (!kind || !isUnitUnlocked(kind, attackerQueenLevel)) {
+          await client.query('ROLLBACK');
+          reply.code(403);
+          return {
+            error: `unit ${String(kind)} is locked at queen level ${attackerQueenLevel}`,
+          };
+        }
+      }
 
       // Authoritative replay validation runs against the server-owned
       // snapshot. A malicious client can't spoof defenses away because

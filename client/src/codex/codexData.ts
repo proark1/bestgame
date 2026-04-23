@@ -198,6 +198,97 @@ export const UNIT_CODEX: Record<Types.UnitKind, CodexEntry> = {
       'First strike deals triple damage. Best aimed at the queen ' +
       'chamber directly — wasted on fodder.',
   },
+  FireAnt: {
+    kind: 'FireAnt',
+    name: 'Fire Ant',
+    role: 'Sticky burn',
+    faction: 'Ants',
+    spriteKey: 'unit-FireAnt',
+    story:
+      'Venom runs hot in her mandibles. Every bite leaves a smolder ' +
+      'that eats through chitin long after the column has moved on.',
+    power:
+      'Lays a burn DoT on whatever she bites. The burn keeps ticking ' +
+      'after she dies — great against heavy buildings like vaults.',
+  },
+  Termite: {
+    kind: 'Termite',
+    name: 'Termite',
+    role: 'Building-eater',
+    faction: 'Ants',
+    spriteKey: 'unit-Termite',
+    story:
+      'Pale, soft, harmless-looking — until her jaws meet wood. The ' +
+      'hedge line heard the gnawing two seconds before it fell.',
+    power:
+      'Deals double damage to buildings. Thin HP — send her in with ' +
+      'a shield beetle escort, not alone.',
+  },
+  Dragonfly: {
+    kind: 'Dragonfly',
+    name: 'Dragonfly',
+    role: 'Fast flyer',
+    faction: 'Bees',
+    spriteKey: 'unit-Dragonfly',
+    story:
+      'Four wings, a hunting record the hive still talks about. She ' +
+      'skims the mortars and strafes the turrets before they turn.',
+    power:
+      'Flies over walls. Fast, low HP. Spore Towers eat her alive — ' +
+      'scout for them and path around.',
+  },
+  Mantis: {
+    kind: 'Mantis',
+    name: 'Mantis',
+    role: 'Single-target burst',
+    faction: 'Beetles',
+    spriteKey: 'unit-Mantis',
+    story:
+      'Folded arms open once, close once. The turret she chose had ' +
+      'time to swivel, not time to fire.',
+    power:
+      'Huge damage per swing but a slow cooldown. Aim her at a ' +
+      'single high-value target — a turret, a vault, the queen.',
+  },
+  Scarab: {
+    kind: 'Scarab',
+    name: 'Scarab',
+    role: 'Spawns on death',
+    faction: 'Beetles',
+    spriteKey: 'unit-Scarab',
+    story:
+      'When the shell cracks open, two smaller shells crawl out. ' +
+      'Ancient priests said the same thing about the sun god.',
+    power:
+      'Spawns two mini-scarabs when killed. Trade one big unit for ' +
+      'three attacks on the way down.',
+  },
+  MiniScarab: {
+    kind: 'MiniScarab',
+    name: 'Mini Scarab',
+    role: 'Scarab offspring',
+    faction: 'Beetles',
+    spriteKey: 'unit-MiniScarab',
+    story:
+      'Half the size, all the same bite. Nobody deploys one on ' +
+      'purpose — they show up when a big sister falls.',
+    power:
+      'Spawned from a dying Scarab. Not directly recruitable; plan ' +
+      'around the parent, not the child.',
+  },
+  NestSpider: {
+    kind: 'NestSpider',
+    name: 'Nest Spider',
+    role: 'Defender AI',
+    faction: 'Spiders',
+    spriteKey: 'unit-NestSpider',
+    story:
+      'Lives in the silk cocoons underground and boils up any time a ' +
+      'raider gets too close to the queen.',
+    power:
+      'Only spawns from a Spider Nest during a raid. Not in any ' +
+      'attacker\'s hand — this is the defender\'s answer.',
+  },
 };
 
 export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {
@@ -325,6 +416,84 @@ export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {
       'Fires one spike volley the first time a unit crosses it, ' +
       'then consumes itself. High burst damage; position near ' +
       'the queen chamber for a last-ditch surprise.',
+  },
+  AcidSpitter: {
+    kind: 'AcidSpitter',
+    name: 'Acid Spitter',
+    role: 'Splash mortar',
+    faction: 'Ants',
+    spriteKey: 'building-AcidSpitter',
+    story:
+      'A pitcher plant trained to aim. Spits a long arc of caustic ' +
+      'nectar that turns a tight line of raiders into a wet smoke.',
+    power:
+      'Long range, slow reload, splash damage. Devastating against ' +
+      'clumped swarms; wasted on a single fast unit.',
+  },
+  SporeTower: {
+    kind: 'SporeTower',
+    name: 'Spore Tower',
+    role: 'Anti-air',
+    faction: 'Ants',
+    spriteKey: 'building-SporeTower',
+    story:
+      'A mushroom grown to cough. The cloud it throws clots in a ' +
+      'flyer\'s wings faster than they can clear it.',
+    power:
+      'Only targets flying units. Hard-counters Wasp and Dragonfly ' +
+      'swarms. Ignored by ground attackers.',
+  },
+  RootSnare: {
+    kind: 'RootSnare',
+    name: 'Root Snare',
+    role: 'One-shot trap',
+    faction: 'Ants',
+    spriteKey: 'building-RootSnare',
+    story:
+      'A noose of living root coiled under a leaf. Springs the ' +
+      'first foot that steps on it, then wilts.',
+    power:
+      'Fires once: damage + roots the target in place for two ' +
+      'seconds. Great for freezing a champion mid-push.',
+  },
+  HiddenStinger: {
+    kind: 'HiddenStinger',
+    name: 'Hidden Stinger',
+    role: 'Cloaked ambush',
+    faction: 'Ants',
+    spriteKey: 'building-HiddenStinger',
+    story:
+      'A buried wasp nest with a rigged lid. The raid force never ' +
+      'sees it — until the lid pops and the stingers come up.',
+    power:
+      'Invisible until a raider walks into range. Fast cadence once ' +
+      'revealed; keeps firing until destroyed.',
+  },
+  SpiderNest: {
+    kind: 'SpiderNest',
+    name: 'Spider Nest',
+    role: 'Defender spawner',
+    faction: 'Spiders',
+    spriteKey: 'building-SpiderNest',
+    story:
+      'The spiders don\'t take orders. They take rent. And when the ' +
+      'queen\'s walls shake, they crawl up from their cocoon to pay it.',
+    power:
+      'Spawns Nest Spiders every few seconds during a raid. Up to ' +
+      'three defenders alive at once — pull them in with fodder.',
+  },
+  ThornHedge: {
+    kind: 'ThornHedge',
+    name: 'Thorn Hedge',
+    role: 'Reinforced wall',
+    faction: 'Ants',
+    spriteKey: 'building-ThornHedge',
+    story:
+      'Leaf walls that grew back barbed. What the first raid taught, ' +
+      'the colony stitched into every next one.',
+    power:
+      'Higher HP than a Leaf Wall and lays a burn on any melee ' +
+      'attacker. Gates the path; punishes the push.',
   },
 };
 

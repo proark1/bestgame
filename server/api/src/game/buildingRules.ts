@@ -29,6 +29,17 @@ export const ALLOWED_LAYERS: Record<Types.BuildingKind, readonly Types.Layer[]> 
   LarvaNursery: [1],
   SugarVault: [1],
   TunnelJunction: [0, 1],
+  // Expanded defensive roster. AcidSpitter + SporeTower + HiddenStinger
+  // are surface-only (they shoot into the open air). SpiderNest lives
+  // underground — defenders crawl up tunnels to fight. RootSnare works
+  // on either layer (same as DungeonTrap). ThornHedge is surface-only
+  // (it's a wall).
+  AcidSpitter: [0],
+  SporeTower: [0],
+  RootSnare: [0, 1],
+  HiddenStinger: [0],
+  SpiderNest: [1],
+  ThornHedge: [0],
 };
 
 // Maximum count per kind at queen level N (1..MAX_QUEEN_LEVEL).
@@ -44,6 +55,18 @@ export const QUOTA_BY_TIER: Record<Types.BuildingKind, readonly number[]> = {
   LarvaNursery:   [1, 2, 3, 4, 5],
   SugarVault:     [1, 1, 2, 2, 3],
   TunnelJunction: [0, 1, 2, 3, 4],
+  // New defensive kinds — index = queen level - 1 (so first slot is L2).
+  // Pacing: one unlock per tier keeps progression stepwise instead of a
+  // "L2 is everything" wall. AcidSpitter + SporeTower arrive at L2 to
+  // answer early flyer rushes; HiddenStinger + RootSnare at L3 give
+  // ambush options; SpiderNest + ThornHedge at L4 form the late-game
+  // core.
+  AcidSpitter:    [0, 1, 2, 3, 4],
+  SporeTower:     [0, 1, 2, 3, 4],
+  RootSnare:      [0, 0, 2, 4, 6],
+  HiddenStinger:  [0, 0, 1, 2, 3],
+  SpiderNest:     [0, 0, 0, 1, 2],
+  ThornHedge:     [0, 0, 0, 4, 8],
 };
 
 // Cost to upgrade the Queen from level N to N+1. Index = fromLevel-1,
@@ -87,6 +110,49 @@ export function quotaFor(kind: Types.BuildingKind, qLevel: number): number {
 
 export function isLayerAllowed(kind: Types.BuildingKind, layer: Types.Layer): boolean {
   return ALLOWED_LAYERS[kind].includes(layer);
+}
+
+// Per-kind Queen level at which an attacker unit becomes deployable.
+// Kinds not listed default to level 1 (available from account start).
+// MiniScarab + NestSpider are never player-deployable — they spawn
+// via behaviors in shared/src/sim/systems/combat.ts.
+//
+// Pacing mirrors QUOTA_BY_TIER unlocks: FireAnt + Termite at L2/L3
+// answer the new early-tier defenders; Dragonfly at L3 when SporeTower
+// isn't yet on the defender's board; Mantis + Scarab land at L4/L5 as
+// late-game power picks. This keeps the "I just hit Queen L3, what can
+// I do now?" loop loud.
+export const UNIT_UNLOCK_QUEEN_LEVEL: Partial<Record<Types.UnitKind, number>> = {
+  FireAnt: 2,
+  Termite: 3,
+  Dragonfly: 3,
+  Mantis: 4,
+  Scarab: 5,
+};
+
+// Hidden-from-roster units: summoned by behaviors, not by the player.
+// Client upgrade / deploy UIs filter these out. Kept in sync with
+// UNIT_BEHAVIOR.hiddenFromRoster in shared/src/sim/stats.ts.
+export const ROSTER_HIDDEN_UNITS: readonly Types.UnitKind[] = [
+  'MiniScarab',
+  'NestSpider',
+];
+
+export function isRosterHidden(kind: Types.UnitKind): boolean {
+  return ROSTER_HIDDEN_UNITS.includes(kind);
+}
+
+// Minimum Queen level required to deploy this unit kind. 1 means
+// "available from start" (matches every original roster entry). The
+// client uses this to lock / grey-out cards in the deck picker so the
+// restriction is visible before the player tries and fails.
+export function unlockQueenLevelFor(kind: Types.UnitKind): number {
+  return UNIT_UNLOCK_QUEEN_LEVEL[kind] ?? 1;
+}
+
+export function isUnitUnlocked(kind: Types.UnitKind, qLevel: number): boolean {
+  if (isRosterHidden(kind)) return false;
+  return qLevel >= unlockQueenLevelFor(kind);
 }
 
 // Package the full rules table for the client catalog. Kept

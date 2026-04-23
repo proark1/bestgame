@@ -740,6 +740,10 @@ export function registerPlayer(app: FastifyInstance): void {
         level,
         maxLevel: base.maxLevel,
         nextCost: next,
+        // Queen level required to deploy this kind. Upgrade UI greys
+        // out cards and surfaces the requirement before the player
+        // spends on a unit they can't yet field.
+        unlockQueenLevel: base.unlockQueenLevel,
       };
     });
     return {

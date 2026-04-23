@@ -20,7 +20,17 @@ export type BuildingKind =
   | 'LarvaNursery'
   | 'SugarVault'
   | 'TunnelJunction'
-  | 'DungeonTrap';
+  | 'DungeonTrap'
+  // Expanded defensive roster (Clash-style). Each kind has a distinct
+  // combat role — see shared/src/sim/stats.ts BUILDING_STATS for
+  // concrete numbers and shared/src/sim/systems/combat.ts for the
+  // splash / anti-air / stealth / trap / nest-spawn semantics.
+  | 'AcidSpitter'    // long-range splash (mortar analog)
+  | 'SporeTower'     // anti-air only (cannot hit ground)
+  | 'RootSnare'      // one-shot trap, roots/slows on trigger
+  | 'HiddenStinger'  // cloaked until a unit enters range, then reveals
+  | 'SpiderNest'     // periodically spawns defender units during a raid
+  | 'ThornHedge';    // tier-2 wall: higher hp + chip-damage reflect
 
 export interface Building {
   id: string;

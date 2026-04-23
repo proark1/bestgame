@@ -19,6 +19,21 @@ export interface SimBuilding {
   hpMax: Fixed;
   level: number;
   attackCooldown: number;
+  // HiddenStinger stealth state — set true the first tick an attacker
+  // enters range. Once revealed, a stinger attacks at its fast cadence
+  // until destroyed. Unused for other kinds.
+  revealed?: boolean;
+  // RootSnare single-shot latch — true once the trap has fired. The
+  // building hp is zeroed at trigger time too; the flag is redundant
+  // but makes intent obvious when reading combat code.
+  triggered?: boolean;
+  // SpiderNest spawn cadence — counts down each tick, spawns a
+  // NestSpider defender when it hits 0, then resets.
+  spawnCooldown?: number;
+  // FireAnt burn — DoT remaining on this building. Damage-per-tick is
+  // Fixed HP; ticks count down in combat.ts.
+  burnTicks?: number;
+  burnDamagePerTick?: Fixed;
 }
 
 export interface SimState {
