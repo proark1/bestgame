@@ -195,6 +195,54 @@ export function combatSystem(
   }
 
   // -------------------------------------------------------------------
+  // 1b. Attacker units → defender-side units (NestSpider).
+  //
+  // Runs after the building-attack pass so buildings stay the primary
+  // target: an attacker that hit a building this tick has its cooldown
+  // reset and won't engage a defender until next tick. Attackers that
+  // DIDN'T find or reach a building this tick (cooldown still 0) will
+  // swing at any defender unit inside their melee range. This makes
+  // NestSpider actually killable and lights up FireAnt burn / Termite
+  // behaviours on defender units.
+  // -------------------------------------------------------------------
+  for (let i = 0; i < state.units.length; i++) {
+    const u = state.units[i]!;
+    if (u.hp <= 0 || u.owner !== 0 || u.attackCooldown > 0) continue;
+    const stats = UNIT_STATS[u.kind];
+    const rangeSq = mul(stats.attackRange, stats.attackRange);
+    let bestIdx = -1;
+    let bestD2: Fixed = rangeSq + 1;
+    for (let k = 0; k < state.units.length; k++) {
+      const t = state.units[k]!;
+      if (t.hp <= 0 || t.owner !== 1) continue;
+      if (t.layer !== u.layer) continue;
+      const d2 = dist2(u.x, u.y, t.x, t.y);
+      if (d2 <= rangeSq && d2 < bestD2) {
+        bestD2 = d2;
+        bestIdx = k;
+      }
+    }
+    if (bestIdx < 0) continue;
+    const target = state.units[bestIdx]!;
+    const pct = levelStatPercent(attackerUnitLevels?.[u.kind]);
+    const dmg = scaleFixedByPercent(stats.attackDamage, pct);
+    target.hp = sub(target.hp, dmg);
+    if (target.hp < 0) target.hp = 0;
+    u.attackCooldown = stats.attackCooldownTicks;
+    // FireAnt-style burn applied to defender units. Building-side burn
+    // lives above in loop 1; this is the unit-side branch that makes
+    // FireAnt genuinely useful against a NestSpider swarm.
+    const ub = UNIT_BEHAVIOR[u.kind];
+    if (ub?.burnTicks && ub.burnDamagePerTick) {
+      target.burnTicks = Math.max(target.burnTicks ?? 0, ub.burnTicks);
+      target.burnDamagePerTick = Math.max(
+        target.burnDamagePerTick ?? 0,
+        ub.burnDamagePerTick,
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------
   // 2. Buildings → attacker units.
   //
   // Adds antiAirOnly filter (SporeTower), splash radius (AcidSpitter),
@@ -338,13 +386,21 @@ export function combatSystem(
   //
   // Each tick while a raid is live, tick every nest's spawn cooldown;
   // when it hits 0, spawn a defender if alive count < max.
+  //
+  // Single pre-pass over units computes both (a) whether any attacker
+  // is alive AND (b) per-kind alive counts for defender-side units.
+  // This keeps the whole nest branch O(U + B) instead of O(U × B):
+  // a previous revision re-scanned state.units inside each nest loop.
   // -------------------------------------------------------------------
   let anyLiveAttacker = false;
+  const defenderAliveByKind: Partial<Record<UnitKind, number>> = {};
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
-    if (u.hp > 0 && u.owner === 0) {
+    if (u.hp <= 0) continue;
+    if (u.owner === 0) {
       anyLiveAttacker = true;
-      break;
+    } else {
+      defenderAliveByKind[u.kind] = (defenderAliveByKind[u.kind] ?? 0) + 1;
     }
   }
   // Only spawn while attackers are in play — avoids the nest quietly
@@ -364,25 +420,25 @@ export function combatSystem(
         continue;
       }
 
-      // Count alive defender units of this kind.
       const maxAlive = beh.spawnMaxAlive ?? 999;
-      let aliveCount = 0;
-      for (let i = 0; i < state.units.length; i++) {
-        const u = state.units[i]!;
-        if (u.hp > 0 && u.owner === 1 && u.kind === beh.spawnKind) {
-          aliveCount++;
-        }
-      }
+      const aliveCount = defenderAliveByKind[beh.spawnKind] ?? 0;
       if (aliveCount >= maxAlive) {
         // Don't reset cooldown — we'll retry every tick until a defender
         // dies, which matches CoC-style clan castle urgency.
         continue;
       }
 
-      // Spawn at the nest's footprint center.
-      const spawnX = buildingCenterX(b);
-      const spawnY = buildingCenterY(b);
+      // Stagger successive spawns on x so multiple defenders from the
+      // same nest don't pixel-stack (hurts visual read AND pointer hit
+      // detection for any click-to-inspect UI). Deterministic offset
+      // based on the current alive count + max-alive keeps replays
+      // bit-identical.
       const spawnStats = UNIT_STATS[beh.spawnKind];
+      const spacing = fromFloat(0.25);
+      const offsetSlot = aliveCount - ((maxAlive - 1) >> 1);
+      const offset: Fixed = mul(fromInt(offsetSlot), spacing);
+      const spawnX = add(buildingCenterX(b), offset);
+      const spawnY = buildingCenterY(b);
       const newUnit: Unit & { lifespanTicks?: number } = {
         id: state.nextUnitId++,
         kind: beh.spawnKind,
@@ -401,6 +457,9 @@ export function combatSystem(
         newUnit.lifespanTicks = beh.spawnLifetimeTicks;
       }
       state.units.push(newUnit);
+      // Reflect the new defender in the cached count so two nests
+      // spawning in the same tick respect each other's max-alive gate.
+      defenderAliveByKind[beh.spawnKind] = aliveCount + 1;
       b.spawnCooldown = beh.spawnIntervalTicks;
     }
   }
