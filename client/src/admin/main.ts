@@ -1107,8 +1107,9 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
 
 // Users section: a searchable table of login accounts with add /
 // edit / delete actions. The panel owns its own local state (user
-// list + search query + per-row "draft" edits) so typing in a row
-// doesn't trigger a full admin re-render on every keystroke.
+// list + search query) so typing in a row doesn't trigger a full
+// admin re-render on every keystroke — `onSaveUser` reads draft
+// values directly from the row's <input> elements at submit time.
 //
 // DB-unconnected deploys silently show an empty table — the server
 // returns 503 on every call, which surfaces as a toast via the
@@ -1117,9 +1118,6 @@ interface UsersPanelState {
   users: AdminUser[];
   total: number;
   q: string;
-  // Per-user inline-edit draft. id → { fieldChanges }. Applied on
-  // "Save"; cleared on "Cancel" or a successful save.
-  edits: Map<string, { username?: string; email?: string; password?: string }>;
   // The panel root so async refreshes can replace content in place.
   root?: HTMLElement;
 }
@@ -1127,7 +1125,6 @@ const usersPanelState: UsersPanelState = {
   users: [],
   total: 0,
   q: '',
-  edits: new Map(),
 };
 
 function renderUsersPanel(): HTMLElement {
@@ -1197,7 +1194,6 @@ async function refreshUsers(): Promise<void> {
     const res = await listUsers({ limit: 100, q: usersPanelState.q });
     usersPanelState.users = res.users;
     usersPanelState.total = res.total;
-    usersPanelState.edits.clear();
     const tableWrap = usersPanelState.root?.querySelector(
       '.admin-users-table',
     ) as HTMLElement | null;
@@ -1250,25 +1246,13 @@ function userRow(u: AdminUser): HTMLTableRowElement {
   const tr = document.createElement('tr');
   tr.dataset.userId = u.id;
 
-  const getEdit = (): {
-    username?: string;
-    email?: string;
-    password?: string;
-  } => {
-    let e = usersPanelState.edits.get(u.id);
-    if (!e) {
-      e = {};
-      usersPanelState.edits.set(u.id, e);
-    }
-    return e;
-  };
-
+  // Each row's draft values live in the <input>s themselves — onSaveUser
+  // reads current DOM values at submit time and diffs against the
+  // server-side snapshot in usersPanelState.users. No extra state map
+  // needed; keystrokes are free.
   const usernameCell = document.createElement('td');
   const usernameInput = document.createElement('input');
   usernameInput.value = u.username;
-  usernameInput.addEventListener('input', () => {
-    getEdit().username = usernameInput.value;
-  });
   usernameCell.append(usernameInput);
 
   const emailCell = document.createElement('td');
@@ -1276,9 +1260,6 @@ function userRow(u: AdminUser): HTMLTableRowElement {
   emailInput.type = 'email';
   emailInput.value = u.email ?? '';
   emailInput.placeholder = '—';
-  emailInput.addEventListener('input', () => {
-    getEdit().email = emailInput.value;
-  });
   emailCell.append(emailInput);
 
   const pwCell = document.createElement('td');
@@ -1286,9 +1267,6 @@ function userRow(u: AdminUser): HTMLTableRowElement {
   pwInput.type = 'password';
   pwInput.placeholder = 'Leave blank to keep';
   pwInput.autocomplete = 'new-password';
-  pwInput.addEventListener('input', () => {
-    getEdit().password = pwInput.value;
-  });
   pwCell.append(pwInput);
 
   const playerCell = document.createElement('td');

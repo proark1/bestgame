@@ -291,29 +291,29 @@ export function registerAdminUsers(app: FastifyInstance): void {
       params.push(req.params.id);
       const idPlaceholder = `$${params.length}`;
       try {
+        // RETURNING fills in the joined player fields via a correlated
+        // scalar subquery so one round-trip covers both the mutation
+        // and the UI-facing row shape. The client still calls
+        // /users after every successful save to refresh the full
+        // table, so optimising this path is more about keeping the
+        // route's contract honest (always returns a fully-populated
+        // row) than latency.
         const upd = await pool.query<UserRow>(
           `UPDATE users SET ${sets.join(', ')}
             WHERE id = ${idPlaceholder}
-          RETURNING id, username, email::text AS email, created_at, last_login_at,
-                    NULL::uuid AS player_id, NULL::text AS display_name`,
+          RETURNING id, username, email::text AS email,
+                    created_at, last_login_at,
+                    (SELECT id FROM players WHERE user_id = users.id LIMIT 1)
+                      AS player_id,
+                    (SELECT display_name FROM players WHERE user_id = users.id LIMIT 1)
+                      AS display_name`,
           params,
         );
         if (upd.rows.length === 0) {
           reply.code(404);
           return { error: 'user not found' };
         }
-        // Re-hydrate player info from the join so the UI row stays
-        // accurate after the edit.
-        const withJoin = await pool.query<UserRow>(
-          `SELECT u.id, u.username, u.email::text AS email,
-                  u.created_at, u.last_login_at,
-                  p.id AS player_id, p.display_name
-             FROM users u
-             LEFT JOIN players p ON p.user_id = u.id
-            WHERE u.id = $1`,
-          [req.params.id],
-        );
-        return { user: serializeUser(withJoin.rows[0] ?? upd.rows[0]!) };
+        return { user: serializeUser(upd.rows[0]!) };
       } catch (err) {
         const code = (err as { code?: string }).code;
         const msg = (err as Error).message;
