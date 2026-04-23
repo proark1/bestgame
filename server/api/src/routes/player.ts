@@ -25,6 +25,7 @@ import {
   upgradeCost,
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
+import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import type { Types as HiveTypes } from '@hive/shared';
 
 // Resource columns are BIGINT, so DB values come back as strings. JS
@@ -77,6 +78,13 @@ interface PlayerRow {
   unit_levels: Record<string, number>;
   last_seen_at: Date;
   created_at: Date;
+  // Retention-loop columns (migrations/0011). `shield_expires_at` is
+  // nullable; the rest default on the DB side so existing players
+  // backfill without a data migration.
+  shield_expires_at: Date | null;
+  season_id: string;
+  season_xp: number;
+  season_milestones_claimed: number[];
 }
 
 interface BaseRow {
@@ -176,6 +184,14 @@ export function registerPlayer(app: FastifyInstance): void {
           aphidMilk: safeBigintToNumber(newMilk.toString(), 'aphid_milk', app.log),
           unitLevels: player.unit_levels ?? {},
           createdAt: player.created_at.toISOString(),
+          // Retention-loop surface area on /me so the client can
+          // decorate HomeScene without a second round-trip on boot.
+          shieldExpiresAt: player.shield_expires_at
+            ? player.shield_expires_at.toISOString()
+            : null,
+          seasonId: player.season_id,
+          seasonXp: player.season_xp,
+          seasonMilestonesClaimed: player.season_milestones_claimed ?? [],
         },
         base: base.snapshot,
         offlineTrickle: {
@@ -490,6 +506,28 @@ export function registerPlayer(app: FastifyInstance): void {
           WHERE player_id = $1`,
         [playerId, JSON.stringify(updatedBase)],
       );
+
+      // Daily-quest progress: "place a building" flips to complete on
+      // the first placement of the day. Cheap — read+refresh the
+      // JSONB column, apply the transition, write back. Failure here
+      // shouldn't undo a successful placement, so the query is
+      // best-effort and doesn't gate COMMIT.
+      try {
+        const qRes = await client.query<{ daily_quests: unknown }>(
+          'SELECT daily_quests FROM players WHERE id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (qRes.rows.length > 0) {
+          const fresh = refreshIfStale(qRes.rows[0]!.daily_quests, playerId);
+          const updated = applyPlacementProgress(fresh);
+          await client.query(
+            'UPDATE players SET daily_quests = $2::jsonb WHERE id = $1',
+            [playerId, JSON.stringify(updated)],
+          );
+        }
+      } catch (err) {
+        app.log.warn({ err }, 'placement quest progress update failed (non-fatal)');
+      }
 
       await client.query('COMMIT');
       const debited = debitRes.rows[0]!;

@@ -6,6 +6,13 @@ import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
 import { trophyDelta } from '../game/progression.js';
 import { isUnitUnlocked, queenLevel } from '../game/buildingRules.js';
+import { shieldHoursForStars } from '../game/shield.js';
+import {
+  applyRaidProgress,
+  refreshIfStale,
+  type RaidProgressSignals,
+} from '../game/quests.js';
+import { CURRENT_SEASON_ID, xpForRaid } from '../game/season.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -85,8 +92,12 @@ export function registerRaid(app: FastifyInstance): void {
         unit_levels: Record<string, number>;
         trophies: number;
         attacker_base: Types.Base | null;
+        daily_quests: unknown;
+        season_id: string;
+        season_xp: number;
       }>(
-        `SELECT p.unit_levels, p.trophies, b.snapshot AS attacker_base
+        `SELECT p.unit_levels, p.trophies, b.snapshot AS attacker_base,
+                p.daily_quests, p.season_id, p.season_xp
            FROM players p
            LEFT JOIN bases b ON b.player_id = p.id
           WHERE p.id = $1`,
@@ -139,20 +150,66 @@ export function registerRaid(app: FastifyInstance): void {
       const sugarLooted = Math.max(0, result.sugarLooted);
       const leafLooted = Math.max(0, result.leafBitsLooted);
 
+      // Retention-loop book-keeping computed from the raid result +
+      // input timeline. The sim is single-source-of-truth; we only
+      // _read_ from it here.
+      const seasonXpGain =
+        lv.rows[0]?.season_id === CURRENT_SEASON_ID ? xpForRaid(stars) : xpForRaid(stars);
+      // When the season rolls over (`season_id` mismatch), the UPDATE
+      // below resets the count and stamps the new id. `seasonXpGain`
+      // is applied on top of that reset value.
+      let unitsDeployed = 0;
+      const deployedKinds = new Set<Types.UnitKind>();
+      for (const inp of body.inputs) {
+        if (inp.type !== 'deployPath') continue;
+        unitsDeployed += inp.path?.count ?? 0;
+        if (inp.path?.unitKind) deployedKinds.add(inp.path.unitKind);
+      }
+      const signals: RaidProgressSignals = {
+        stars,
+        sugarLooted,
+        leafLooted,
+        turretsDestroyed: result.turretsDestroyed,
+        queenKilled: result.queenKilled,
+        unitsDeployed,
+        deployedKinds: Array.from(deployedKinds),
+      };
+      const freshDaily = refreshIfStale(lv.rows[0]?.daily_quests, attackerId);
+      const updatedDaily = applyRaidProgress(freshDaily, signals);
+
       const attUpdate = await client.query<{
         trophies: number;
         sugar: string;
         leaf_bits: string;
         aphid_milk: string;
+        season_xp: number;
       }>(
         `UPDATE players
-            SET trophies  = GREATEST(0, trophies + $2),
-                sugar     = sugar + $3,
-                leaf_bits = leaf_bits + $4,
-                last_seen_at = NOW()
+            SET trophies       = GREATEST(0, trophies + $2),
+                sugar          = sugar + $3,
+                leaf_bits      = leaf_bits + $4,
+                last_seen_at   = NOW(),
+                daily_quests   = $5::jsonb,
+                season_id      = $6,
+                season_xp      = CASE
+                                   WHEN season_id = $6 THEN season_xp + $7
+                                   ELSE $7
+                                 END,
+                season_milestones_claimed = CASE
+                                   WHEN season_id = $6 THEN season_milestones_claimed
+                                   ELSE '{}'::int[]
+                                 END
           WHERE id = $1
-      RETURNING trophies, sugar, leaf_bits, aphid_milk`,
-        [attackerId, delta.att, sugarLooted, leafLooted],
+      RETURNING trophies, sugar, leaf_bits, aphid_milk, season_xp`,
+        [
+          attackerId,
+          delta.att,
+          sugarLooted,
+          leafLooted,
+          JSON.stringify(updatedDaily),
+          CURRENT_SEASON_ID,
+          seasonXpGain,
+        ],
       );
       if (attUpdate.rows.length === 0) {
         await client.query('ROLLBACK');
@@ -161,13 +218,25 @@ export function registerRaid(app: FastifyInstance): void {
       }
 
       if (defenderId) {
+        // Defender update with shield grant (if loss was 2+ stars).
+        // shieldHours is NULL for 0/1-star raids; the CASE avoids
+        // overwriting an existing longer shield with a shorter one
+        // — always take the max of current + new shield end times.
+        const shieldHours = shieldHoursForStars(stars);
         await client.query(
           `UPDATE players
               SET trophies  = GREATEST(0, trophies + $2),
                   sugar     = GREATEST(0, sugar - $3),
-                  leaf_bits = GREATEST(0, leaf_bits - $4)
+                  leaf_bits = GREATEST(0, leaf_bits - $4),
+                  shield_expires_at = CASE
+                    WHEN $5::int IS NULL THEN shield_expires_at
+                    ELSE GREATEST(
+                      COALESCE(shield_expires_at, NOW()),
+                      NOW() + ($5 || ' hours')::INTERVAL
+                    )
+                  END
             WHERE id = $1`,
-          [defenderId, delta.def, sugarLooted, leafLooted],
+          [defenderId, delta.def, sugarLooted, leafLooted, shieldHours],
         );
       }
 
@@ -213,7 +282,10 @@ export function registerRaid(app: FastifyInstance): void {
           sugar: Number(att.sugar),
           leafBits: Number(att.leaf_bits),
           aphidMilk: Number(att.aphid_milk),
+          seasonXp: att.season_xp,
+          seasonXpGained: seasonXpGain,
         },
+        dailyQuests: updatedDaily,
       };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);

@@ -93,6 +93,9 @@ export function registerMatchmaking(app: FastifyInstance): void {
 
     // Real-player query: 3-day active window + fully random pick so we
     // don't dogpile onto the most-recent last_seen_at. Excludes self.
+    // Also excludes defenders under an active raid shield — shields
+    // are granted on losing 2+ stars defensively, see
+    // server/api/src/routes/raid.ts / game/shield.ts.
     const match = await pool.query<{
       id: string;
       display_name: string;
@@ -105,6 +108,7 @@ export function registerMatchmaking(app: FastifyInstance): void {
         WHERE p.id <> $1
           AND p.trophies BETWEEN $2 AND $3
           AND p.last_seen_at > NOW() - ($4 || ' days')::INTERVAL
+          AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
         ORDER BY random()
         LIMIT 1`,
       [

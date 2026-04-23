@@ -16,6 +16,15 @@ export interface ReplayValidation {
     sugarLooted: number;
     leafBitsLooted: number;
     tickEnded: number;
+    // Retention-loop signals: quest progress reads these instead of
+    // re-walking the sim state. Kept thin — only what today's quest
+    // pool needs. Counts are across the full raid, not per-tick.
+    queenKilled: boolean;
+    // Buildings of interest destroyed by kind for turret-count quests.
+    // "Turret-style" kinds share a damage role — MushroomTurret,
+    // DungeonTrap, AcidSpitter, SporeTower, HiddenStinger. Extend as
+    // quests diversify.
+    turretsDestroyed: number;
   };
 }
 
@@ -46,11 +55,20 @@ export function validateReplay(args: {
   let destroyed = 0;
   let total = 0;
   let queenDead = false;
+  let turretsDestroyed = 0;
+  const TURRET_LIKE: ReadonlySet<string> = new Set([
+    'MushroomTurret',
+    'DungeonTrap',
+    'AcidSpitter',
+    'SporeTower',
+    'HiddenStinger',
+  ]);
   for (const b of final.buildings) {
     total++;
     if (b.hp <= 0) {
       destroyed++;
       if (b.kind === 'QueenChamber') queenDead = true;
+      if (TURRET_LIKE.has(b.kind)) turretsDestroyed++;
     }
   }
   const pct = total === 0 ? 0 : destroyed / total;
@@ -66,6 +84,8 @@ export function validateReplay(args: {
       sugarLooted: final.attackerSugarLooted,
       leafBitsLooted: final.attackerLeafBitsLooted,
       tickEnded: final.tick,
+      queenKilled: queenDead,
+      turretsDestroyed,
     },
   };
 }

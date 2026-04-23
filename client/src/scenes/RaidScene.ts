@@ -164,6 +164,11 @@ export class RaidScene extends Phaser.Scene {
   private boardContainer!: Phaser.GameObjects.Container;
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
   private buildingHpBars = new Map<number, Phaser.GameObjects.Graphics>();
+  // Side-maps for the hit-flash and death-burst juice. Kept separate
+  // from SimState so the sim stays pure and replayable.
+  private buildingLastHp = new Map<number, number>();
+  private buildingKillPlayed = new Set<number>();
+  private unitLastHp = new Map<number, number>();
   // Sprites can be either a static Image or an animated Sprite (walk
   // cycle) depending on the kind + admin toggle. Both share the same
   // x/y/alpha/setDisplaySize surface we touch each tick, so the Map
@@ -224,7 +229,10 @@ export class RaidScene extends Phaser.Scene {
     this.deckLabels = [];
     this.buildingSprites.clear();
     this.buildingHpBars.clear();
+    this.buildingLastHp.clear();
+    this.buildingKillPlayed.clear();
     this.unitSprites.clear();
+    this.unitLastHp.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
     // first unit spawns (usually a couple of ticks in), the settings
@@ -670,12 +678,62 @@ export class RaidScene extends Phaser.Scene {
       if (b.hp <= 0) {
         if (spr.alpha > 0.2) {
           this.tweens.add({ targets: spr, alpha: 0.18, duration: 200 });
-          // quick impact flash
-          this.cameras.main.shake(80, 0.002);
+          // Juice: Queen death is the hero moment — camera-punch zoom
+          // out + long shake + a wide particle burst. Every other
+          // building gets a smaller thud + debris puff. `destroyed`
+          // tracks whether we've already played the kill effect on
+          // this building so the tween doesn't re-fire every tick of
+          // the 200ms fade.
+          if (!this.buildingKillPlayed.has(b.id)) {
+            this.buildingKillPlayed.add(b.id);
+            const centerX = b.anchorX * TILE + (b.w * TILE) / 2;
+            const centerY = b.anchorY * TILE + (b.h * TILE) / 2;
+            this.spawnDebrisBurst(centerX, centerY, b.kind === 'QueenChamber' ? 24 : 10);
+            if (b.kind === 'QueenChamber') {
+              this.cameras.main.shake(340, 0.012);
+              this.cameras.main.flash(180, 255, 230, 160);
+              // Brief zoom punch: scale up the board container then
+              // ease back. Uses the existing boardContainer transform
+              // (layout() reads .x/.y/.scaleX) so no layout math breaks.
+              const baseScale = this.boardContainer.scaleX || 1;
+              this.tweens.add({
+                targets: this.boardContainer,
+                scaleX: baseScale * 1.08,
+                scaleY: baseScale * 1.08,
+                duration: 160,
+                yoyo: true,
+                ease: 'Sine.easeOut',
+              });
+            } else {
+              this.cameras.main.shake(120, 0.004);
+            }
+            // Floating loot text for buildings that drop resources on
+            // kill. Pulled from BUILDING_STATS via the sim-side loot
+            // accumulators — we read the delta since the last frame.
+            const bstats = Sim.BUILDING_STATS[b.kind];
+            if (bstats.dropsSugarOnDestroy > 0 || bstats.dropsLeafBitsOnDestroy > 0) {
+              this.spawnLootPopup(
+                centerX,
+                centerY - 16,
+                bstats.dropsSugarOnDestroy,
+                bstats.dropsLeafBitsOnDestroy,
+              );
+            }
+          }
         }
         bar.clear();
         continue;
       }
+      // Hit flash: tint the sprite briefly white-hot the frame a
+      // building's hp drops. Compare to the previous tick to catch
+      // the transition; store hp in a side Map so we don't leak fields
+      // onto sim state.
+      const prevHp = this.buildingLastHp.get(b.id) ?? b.hp;
+      if (b.hp < prevHp) {
+        spr.setTint(0xffe799);
+        this.time.delayedCall(70, () => spr.clearTint());
+      }
+      this.buildingLastHp.set(b.id, b.hp);
       const hpFrac = Math.max(0, Math.min(1, b.hp / b.hpMax));
       const barX = b.anchorX * TILE + (b.w * TILE) / 2 - 22;
       const barY = b.anchorY * TILE - 10;
@@ -702,6 +760,19 @@ export class RaidScene extends Phaser.Scene {
       }
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
       spr.setAlpha(0.35 + 0.65 * hpFrac);
+      // Hit flash for units — same logic as buildings, keyed on a
+      // side Map of last-seen hp. Cheap: one Map lookup + one
+      // comparison per live unit per frame.
+      const prevHp = this.unitLastHp.get(u.id) ?? u.hp;
+      if (u.hp < prevHp && u.hp > 0) {
+        spr.setTint(0xffe0c0);
+        this.time.delayedCall(60, () => {
+          // The sprite might be gone by the time the delayed call fires
+          // if the unit died within 60ms of the hit; guard before touch.
+          if (this.unitSprites.get(u.id) === spr) spr.clearTint();
+        });
+      }
+      this.unitLastHp.set(u.id, u.hp);
       // Emit one tiny pheromone puff at the unit's feet every ~5 frames.
       // Rate-limited implicitly by the alternating (id % 5 === tick % 5)
       // check so we don't drown in particles with a full swarm.
@@ -711,10 +782,48 @@ export class RaidScene extends Phaser.Scene {
     }
     for (const [id, spr] of this.unitSprites) {
       if (!alive.has(id)) {
+        // Unit death burst: small puff at last-known sprite position.
+        this.spawnDebrisBurst(spr.x, spr.y, 6);
         spr.destroy();
         this.unitSprites.delete(id);
+        this.unitLastHp.delete(id);
       }
     }
+  }
+
+  // Small debris / hit-burst emitter. Reuses the trail-dot texture so
+  // we don't pay for a second atlas key. Called on kills (unit or
+  // building) to give a satisfying pop at the kill site.
+  private spawnDebrisBurst(x: number, y: number, quantity: number): void {
+    this.trailEmitter.emitParticle(quantity, x, y);
+  }
+
+  // Floating "+N sugar / +M leaf" popup at a kill location. Rises,
+  // fades, and auto-destroys so repeated kills don't leak DOM/objects.
+  private spawnLootPopup(x: number, y: number, sugar: number, leaf: number): void {
+    const parts: string[] = [];
+    if (sugar > 0) parts.push(`+${sugar}🍬`);
+    if (leaf > 0) parts.push(`+${leaf}🍃`);
+    if (parts.length === 0) return;
+    const text = this.add
+      .text(x, y, parts.join(' '), {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '14px',
+        color: '#ffd98a',
+        stroke: '#1a1208',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5)
+      .setDepth(40);
+    this.boardContainer.add(text);
+    this.tweens.add({
+      targets: text,
+      y: y - 36,
+      alpha: { from: 1, to: 0 },
+      duration: 900,
+      ease: 'Sine.easeOut',
+      onComplete: () => text.destroy(),
+    });
   }
 
   private currentStars(): 0 | 1 | 2 | 3 {
@@ -773,6 +882,9 @@ export class RaidScene extends Phaser.Scene {
       this.buildingSprites.clear();
       for (const bar of this.buildingHpBars.values()) bar.destroy();
       this.buildingHpBars.clear();
+      // Juice-pass side maps share the same per-raid lifecycle.
+      this.buildingLastHp.clear();
+      this.buildingKillPlayed.clear();
       this.drawBuildingsFromState();
       this.add
         .text(this.scale.width / 2, 4, `vs ${match.opponent.displayName}`, {
