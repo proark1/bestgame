@@ -4,6 +4,7 @@ import {
   levelStatPercent,
   upgradeCostMult,
 } from './progression.js';
+import { unlockQueenLevelFor } from './buildingRules.js';
 
 // Per-unit upgrade cost. Per-kind base prices live here; the shape of
 // the cost curve (how price scales with level) lives in progression.ts
@@ -36,6 +37,15 @@ const BASE_SUGAR: Partial<Record<Types.UnitKind, number>> = {
   Jumper: 450,
   WebSetter: 500,
   Ambusher: 650,
+  // Expanded attacker roster. Base costs roughly track unlock tier:
+  // L2 unlocks cost ~450, L3 ~600, L4 ~850, L5 ~1000. MiniScarab /
+  // NestSpider are intentionally absent — they're spawned by
+  // behaviors and never in the upgrade catalog.
+  FireAnt: 450,
+  Termite: 600,
+  Dragonfly: 650,
+  Mantis: 850,
+  Scarab: 1000,
 };
 
 const BASE_LEAF: Partial<Record<Types.UnitKind, number>> = {
@@ -51,6 +61,11 @@ const BASE_LEAF: Partial<Record<Types.UnitKind, number>> = {
   Jumper: 130,
   WebSetter: 160,
   Ambusher: 200,
+  FireAnt: 140,
+  Termite: 190,
+  Dragonfly: 200,
+  Mantis: 280,
+  Scarab: 330,
 };
 
 export function isUpgradeableUnit(kind: Types.UnitKind): boolean {
@@ -75,14 +90,20 @@ export function upgradeCost(kind: Types.UnitKind, currentLevel: number): Upgrade
 // the table. Server stays the source of truth for cost scaling.
 export function upgradeCatalog(): Record<
   string,
-  { baseSugar: number; baseLeafBits: number; maxLevel: number }
+  { baseSugar: number; baseLeafBits: number; maxLevel: number; unlockQueenLevel: number }
 > {
-  const out: Record<string, { baseSugar: number; baseLeafBits: number; maxLevel: number }> = {};
+  const out: Record<
+    string,
+    { baseSugar: number; baseLeafBits: number; maxLevel: number; unlockQueenLevel: number }
+  > = {};
   for (const k of Object.keys(BASE_SUGAR) as Types.UnitKind[]) {
     out[k] = {
       baseSugar: BASE_SUGAR[k]!,
       baseLeafBits: BASE_LEAF[k]!,
       maxLevel: MAX_UNIT_LEVEL,
+      // Queen level required to deploy this kind. UI uses it to grey
+      // out upgrade cards and deck slots before the gate opens.
+      unlockQueenLevel: unlockQueenLevelFor(k),
     };
   }
   return out;

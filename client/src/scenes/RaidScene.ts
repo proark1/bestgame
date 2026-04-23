@@ -33,12 +33,42 @@ interface DeckEntry {
   label: string;
 }
 
-const DECK: DeckEntry[] = [
-  { kind: 'SoldierAnt', count: 10, icon: 'unit-SoldierAnt', label: 'Soldier' },
-  { kind: 'WorkerAnt', count: 8, icon: 'unit-WorkerAnt', label: 'Worker' },
-  { kind: 'DirtDigger', count: 4, icon: 'unit-DirtDigger', label: 'Digger' },
-  { kind: 'Wasp', count: 4, icon: 'unit-Wasp', label: 'Wasp' },
+// Full attacker roster with default deck counts. The scene filters
+// this down to the kinds the player has unlocked at their current
+// Queen Chamber level — unlock thresholds live on the server in
+// server/api/src/game/buildingRules.ts::UNIT_UNLOCK_QUEEN_LEVEL and
+// are mirrored here for fast client-side gating (the server still
+// rejects locked deploys in routes/raid.ts so this is UX, not trust).
+const ALL_DECK: Array<DeckEntry & { unlockQueenLevel: number }> = [
+  { kind: 'SoldierAnt', count: 10, icon: 'unit-SoldierAnt', label: 'Soldier', unlockQueenLevel: 1 },
+  { kind: 'WorkerAnt',  count: 8,  icon: 'unit-WorkerAnt',  label: 'Worker',   unlockQueenLevel: 1 },
+  { kind: 'DirtDigger', count: 4,  icon: 'unit-DirtDigger', label: 'Digger',   unlockQueenLevel: 1 },
+  { kind: 'Wasp',       count: 4,  icon: 'unit-Wasp',       label: 'Wasp',     unlockQueenLevel: 1 },
+  { kind: 'FireAnt',    count: 6,  icon: 'unit-FireAnt',    label: 'FireAnt',  unlockQueenLevel: 2 },
+  { kind: 'Termite',    count: 5,  icon: 'unit-Termite',    label: 'Termite',  unlockQueenLevel: 3 },
+  { kind: 'Dragonfly',  count: 4,  icon: 'unit-Dragonfly',  label: 'Dragon',   unlockQueenLevel: 3 },
+  { kind: 'Mantis',     count: 3,  icon: 'unit-Mantis',     label: 'Mantis',   unlockQueenLevel: 4 },
+  { kind: 'Scarab',     count: 2,  icon: 'unit-Scarab',     label: 'Scarab',   unlockQueenLevel: 5 },
 ];
+
+function queenLevelFromBase(base: Types.Base | undefined): number {
+  if (!base) return 1;
+  const queen = base.buildings.find((b) => b.kind === 'QueenChamber');
+  const lvl = queen?.level ?? 1;
+  return Math.max(1, Math.min(5, Math.floor(lvl)));
+}
+
+function buildDeck(attackerQueenLevel: number): DeckEntry[] {
+  return ALL_DECK
+    .filter((d) => d.unlockQueenLevel <= attackerQueenLevel)
+    .map((d) => {
+      // Strip the gate field from the runtime deck entry — RaidScene
+      // logic keys off of {kind, count, icon, label} only.
+      const { unlockQueenLevel: _unlock, ...rest } = d;
+      void _unlock;
+      return rest;
+    });
+}
 
 const BOT_BASE: Types.Base = {
   baseId: 'bot-0',
@@ -184,7 +214,12 @@ export class RaidScene extends Phaser.Scene {
     installSceneClickDebug(this);
     // Reset all per-run state. Scene instances are reused across raids,
     // so previous-run state must be cleared here or it'll leak.
-    this.deckEntries = DECK.map((d) => ({ ...d }));
+    // Deck is filtered by the attacker's own Queen level — locked
+    // kinds aren't shown at all. Matches CoC's barracks-gated card
+    // roster and keeps raid UI uncluttered at low tiers.
+    const initRuntime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const attackerQueenLevel = queenLevelFromBase(initRuntime?.player?.base);
+    this.deckEntries = buildDeck(attackerQueenLevel);
     this.deckContainers = [];
     this.deckLabels = [];
     this.buildingSprites.clear();

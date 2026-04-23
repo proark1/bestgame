@@ -5,6 +5,7 @@ import { validateReplay } from '../replay/validator.js';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
 import { trophyDelta } from '../game/progression.js';
+import { isUnitUnlocked, queenLevel } from '../game/buildingRules.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -74,18 +75,43 @@ export function registerRaid(app: FastifyInstance): void {
       const seed = Number(row.seed);
       const baseSnapshot = row.base_snapshot;
 
-      // Fetch the attacker's current unit levels + trophies — never
-      // trust the client to self-report. unit_levels feeds the sim's
-      // stat-scaling; trophies feeds the ELO math below.
+      // Fetch the attacker's unit levels + trophies + base snapshot in
+      // one round-trip. unit_levels feeds the sim's stat-scaling;
+      // trophies feeds the ELO math below; the base snapshot's queen
+      // level feeds the unit-unlock gate. LEFT JOIN so a player with
+      // no row in `bases` (edge case: account created but base not yet
+      // provisioned) still flows through as queen level 1.
       const lv = await client.query<{
         unit_levels: Record<string, number>;
         trophies: number;
+        attacker_base: Types.Base | null;
       }>(
-        'SELECT unit_levels, trophies FROM players WHERE id = $1',
+        `SELECT p.unit_levels, p.trophies, b.snapshot AS attacker_base
+           FROM players p
+           LEFT JOIN bases b ON b.player_id = p.id
+          WHERE p.id = $1`,
         [attackerId],
       );
       const attackerUnitLevels = lv.rows[0]?.unit_levels ?? {};
       const attackerTrophies = lv.rows[0]?.trophies ?? 0;
+
+      // Gate unit kinds against the attacker's own queen level. A
+      // player can't deploy a unit they haven't unlocked — this is the
+      // server half of the progression gate, complementing the
+      // client's deck picker.
+      const attackerBase = lv.rows[0]?.attacker_base ?? null;
+      const attackerQueenLevel = attackerBase ? queenLevel(attackerBase) : 1;
+      for (const inp of body.inputs) {
+        if (inp.type !== 'deployPath') continue;
+        const kind = inp.path?.unitKind;
+        if (!kind || !isUnitUnlocked(kind, attackerQueenLevel)) {
+          await client.query('ROLLBACK');
+          reply.code(403);
+          return {
+            error: `unit ${String(kind)} is locked at queen level ${attackerQueenLevel}`,
+          };
+        }
+      }
 
       // Authoritative replay validation runs against the server-owned
       // snapshot. A malicious client can't spoof defenses away because

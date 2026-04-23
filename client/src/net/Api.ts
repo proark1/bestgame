@@ -400,6 +400,10 @@ export interface UnitUpgradeEntry {
   level: number;
   maxLevel: number;
   nextCost: { sugar: number; leafBits: number } | null;
+  // Queen level required to deploy this kind in a raid. Upgrade UI
+  // uses it to show a lock badge on kinds that aren't yet deployable.
+  // Server returns 1 for kinds that are unlocked from account start.
+  unlockQueenLevel?: number;
 }
 export interface UpgradesResponse {
   units: UnitUpgradeEntry[];

@@ -138,8 +138,18 @@ export class UpgradeScene extends Phaser.Scene {
     const originX = (this.scale.width - maxW) / 2;
     const rowH = 64;
 
+    // Queen level drives unit unlock gating. Pull it from the runtime-
+    // cached base so the badge agrees with the server's gate.
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const queen = runtime?.player?.base.buildings.find(
+      (b) => b.kind === 'QueenChamber',
+    );
+    const attackerQueenLevel = Math.max(1, Math.min(5, queen?.level ?? 1));
+
     let finalY = 0;
     this.units.forEach((u, i) => {
+      const requiredQL = u.unlockQueenLevel ?? 1;
+      const locked = requiredQL > attackerQueenLevel;
       const y = i * (rowH + 4);
       const maxed = u.level >= u.maxLevel || u.nextCost === null;
       const canAfford =
@@ -155,11 +165,28 @@ export class UpgradeScene extends Phaser.Scene {
       bg.strokeRoundedRect(originX, y, maxW, rowH, 8);
       this.rowContainer.add(bg);
 
-      // Unit icon
+      // Unit icon (greyed when locked so the lock read matches the
+      // deck picker in RaidScene).
       const icon = this.add
         .image(originX + 36, y + rowH / 2, `unit-${u.kind}`)
-        .setDisplaySize(48, 48);
+        .setDisplaySize(48, 48)
+        .setAlpha(locked ? 0.45 : 1);
       this.rowContainer.add(icon);
+      if (locked) {
+        // Lock badge: small "L{n}" chip overlaid on the icon. Queen
+        // level gate is the signal; no need to spell out more.
+        this.rowContainer.add(
+          this.text(
+            originX + 36,
+            y + rowH / 2 + 14,
+            `🔒 L${requiredQL}`,
+            '#d98080',
+            10,
+            0.5,
+            0.5,
+          ),
+        );
+      }
 
       // Name + level
       this.rowContainer.add(

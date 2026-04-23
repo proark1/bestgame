@@ -17,6 +17,18 @@ export const UNIT_SPRITE_KEYS = [
   'unit-Jumper',
   'unit-WebSetter',
   'unit-Ambusher',
+  // Expanded attacker roster (queen-level-gated, see
+  // server/api/src/game/buildingRules.ts::UNIT_UNLOCK_QUEEN_LEVEL).
+  'unit-FireAnt',
+  'unit-Termite',
+  'unit-Dragonfly',
+  'unit-Mantis',
+  'unit-Scarab',
+  // Offspring + defender AI. These never render in the deck picker
+  // (filtered by the roster-hidden list on the server) but they DO
+  // spawn on the battlefield, so they need sprite keys.
+  'unit-MiniScarab',
+  'unit-NestSpider',
 ] as const;
 
 export const BUILDING_SPRITE_KEYS = [
@@ -29,6 +41,13 @@ export const BUILDING_SPRITE_KEYS = [
   'building-SugarVault',
   'building-TunnelJunction',
   'building-DungeonTrap',
+  // Expanded defensive roster.
+  'building-AcidSpitter',
+  'building-SporeTower',
+  'building-RootSnare',
+  'building-HiddenStinger',
+  'building-SpiderNest',
+  'building-ThornHedge',
 ] as const;
 
 export const UI_SPRITE_KEYS = [

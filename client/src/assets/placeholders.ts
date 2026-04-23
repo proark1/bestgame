@@ -227,6 +227,81 @@ function drawUnit(scene: Phaser.Scene, key: string): void {
           g.strokePath();
         });
         break;
+      case 'unit-FireAnt':
+        drawBug(g, PALETTE.turret, () => {
+          // flame crest on the head
+          g.fillStyle(0xffb347, 1);
+          g.lineStyle(3, OUTLINE, 1);
+          g.fillTriangle(cx - 10, cy - 56, cx + 10, cy - 56, cx, cy - 78);
+          g.strokeTriangle(cx - 10, cy - 56, cx + 10, cy - 56, cx, cy - 78);
+          g.fillStyle(0xffe799, 1);
+          g.fillTriangle(cx - 4, cy - 58, cx + 4, cy - 58, cx, cy - 70);
+        });
+        break;
+      case 'unit-Termite':
+        drawBug(g, PALETTE.sugar, () => {
+          // pale body + oversized mandibles (gnaws buildings)
+          g.fillStyle(OUTLINE, 1);
+          g.fillTriangle(cx - 22, cy - 48, cx - 2, cy - 60, cx - 6, cy - 42);
+          g.fillTriangle(cx + 22, cy - 48, cx + 2, cy - 60, cx + 6, cy - 42);
+        });
+        break;
+      case 'unit-Dragonfly':
+        drawBug(g, PALETTE.dew, () => {
+          drawWings(g);
+          // elongated tail
+          g.fillStyle(PALETTE.dew.body, 1);
+          g.lineStyle(3, OUTLINE, 1);
+          g.fillRoundedRect(cx - 6, cy + 20, 12, 36, 4);
+          g.strokeRoundedRect(cx - 6, cy + 20, 12, 36, 4);
+        });
+        break;
+      case 'unit-Mantis':
+        drawBug(g, PALETTE.leaf, () => {
+          // raptorial forelegs
+          g.lineStyle(6, PALETTE.leaf.accent, 1);
+          g.lineBetween(cx - 30, cy + 4, cx - 54, cy - 28);
+          g.lineBetween(cx + 30, cy + 4, cx + 54, cy - 28);
+          g.lineStyle(4, OUTLINE, 1);
+          g.lineBetween(cx - 54, cy - 28, cx - 44, cy - 42);
+          g.lineBetween(cx + 54, cy - 28, cx + 44, cy - 42);
+        });
+        break;
+      case 'unit-Scarab':
+        drawBug(g, PALETTE.beetle, () => {
+          // metallic shell stripe + a hieroglyphic dot
+          g.fillStyle(PALETTE.queen.accent, 1);
+          g.lineStyle(3, OUTLINE, 1);
+          g.fillCircle(cx, cy + 2, 10);
+          g.strokeCircle(cx, cy + 2, 10);
+          g.fillStyle(OUTLINE, 1);
+          g.fillRect(cx - 1, cy - 20, 2, 44);
+        });
+        break;
+      case 'unit-MiniScarab':
+        drawBug(g, PALETTE.beetle, () => {
+          // smaller shell dot — draw on top of the default shell
+          g.fillStyle(PALETTE.queen.body, 1);
+          g.fillCircle(cx, cy + 2, 6);
+        });
+        break;
+      case 'unit-NestSpider':
+        drawBug(g, PALETTE.spider, () => {
+          // extra spidery legs — two more pairs
+          g.lineStyle(OUTLINE_W, OUTLINE, 1);
+          for (let i = 0; i < 2; i++) {
+            const y = cy - 20 + i * 10;
+            g.beginPath();
+            g.moveTo(cx - 38, y);
+            g.lineTo(cx - 58, y - 10);
+            g.strokePath();
+            g.beginPath();
+            g.moveTo(cx + 38, y);
+            g.lineTo(cx + 58, y - 10);
+            g.strokePath();
+          }
+        });
+        break;
       default:
         drawBug(g, PALETTE.neutral, () => {});
     }
@@ -398,6 +473,105 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.fillEllipse(cx - 30, s - 56, 42, 22);
     g.lineStyle(3, OUTLINE, 1);
     g.strokeEllipse(cx - 30, s - 56, 42, 22);
+  },
+  'building-AcidSpitter': (g, s) => {
+    const cx = s / 2;
+    // pitcher-plant mortar
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillRoundedRect(cx - 60, s - 130, 120, 90, 18);
+    g.strokeRoundedRect(cx - 60, s - 130, 120, 90, 18);
+    // acid pool inside
+    g.fillStyle(0x9bd957, 1);
+    g.fillEllipse(cx, s - 110, 80, 28);
+    g.strokeEllipse(cx, s - 110, 80, 28);
+    // highlight drip
+    g.fillStyle(0xffffff, 0.55);
+    g.fillCircle(cx - 22, s - 112, 5);
+  },
+  'building-SporeTower': (g, s) => {
+    const cx = s / 2;
+    // tall stem
+    g.fillStyle(PALETTE.wood.body, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillRoundedRect(cx - 14, s - 120, 28, 90, 8);
+    g.strokeRoundedRect(cx - 14, s - 120, 28, 90, 8);
+    // puffball top
+    g.fillStyle(PALETTE.turret.belly, 1);
+    g.fillCircle(cx, s - 128, 36);
+    g.strokeCircle(cx, s - 128, 36);
+    // puff dots
+    g.fillStyle(0xffffff, 0.9);
+    g.fillCircle(cx - 18, s - 134, 5);
+    g.fillCircle(cx + 10, s - 120, 4);
+    g.fillCircle(cx - 4, s - 146, 3);
+  },
+  'building-RootSnare': (g, s) => {
+    const cx = s / 2;
+    // tangled roots/vine loop
+    g.lineStyle(6, PALETTE.earth.body, 1);
+    g.strokeCircle(cx, s - 60, 38);
+    g.lineStyle(4, PALETTE.leaf.accent, 1);
+    g.strokeCircle(cx, s - 60, 30);
+    // cross twigs
+    g.lineStyle(5, PALETTE.wood.accent, 1);
+    g.lineBetween(cx - 28, s - 88, cx + 28, s - 30);
+    g.lineBetween(cx + 28, s - 88, cx - 28, s - 30);
+  },
+  'building-HiddenStinger': (g, s) => {
+    const cx = s / 2;
+    // mostly-buried mound with a faint stinger peeking out
+    g.fillStyle(PALETTE.earth.body, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillEllipse(cx, s - 50, 140, 60);
+    g.strokeEllipse(cx, s - 50, 140, 60);
+    // stinger tip
+    g.fillStyle(PALETTE.bee.body, 1);
+    g.fillTriangle(cx - 8, s - 80, cx + 8, s - 80, cx, s - 110);
+    g.strokeTriangle(cx - 8, s - 80, cx + 8, s - 80, cx, s - 110);
+    // question-mark ??? no; drop a few leaves for disguise
+    g.fillStyle(PALETTE.leaf.body, 1);
+    g.fillEllipse(cx - 40, s - 50, 34, 14);
+    g.fillEllipse(cx + 40, s - 50, 34, 14);
+  },
+  'building-SpiderNest': (g, s) => {
+    const cx = s / 2;
+    // wrapped silk cocoon
+    g.fillStyle(0xe2e8ec, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillEllipse(cx, s - 80, 120, 100);
+    g.strokeEllipse(cx, s - 80, 120, 100);
+    // web strands
+    g.lineStyle(2, 0xf5f5f5, 0.9);
+    for (let a = 0; a < 6; a++) {
+      const r = Phaser.Math.DegToRad(30 + a * 30);
+      g.lineBetween(cx, s - 80, cx + Math.cos(r) * 66, s - 80 + Math.sin(r) * 54);
+    }
+    // little spider peeking out
+    g.fillStyle(PALETTE.spider.body, 1);
+    g.fillCircle(cx, s - 80, 16);
+    g.lineStyle(2, OUTLINE, 1);
+    g.strokeCircle(cx, s - 80, 16);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(cx - 5, s - 82, 2);
+    g.fillCircle(cx + 5, s - 82, 2);
+  },
+  'building-ThornHedge': (g, s) => {
+    const cx = s / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    // denser, darker than LeafWall; thorns jut out
+    for (let i = 0; i < 3; i++) {
+      const y = s - 30 - i * 38;
+      g.fillTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
+      g.strokeTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
+    }
+    // thorns
+    g.lineStyle(4, OUTLINE, 1);
+    g.lineBetween(cx - 58, s - 40, cx - 74, s - 54);
+    g.lineBetween(cx + 58, s - 40, cx + 74, s - 54);
+    g.lineBetween(cx - 40, s - 78, cx - 60, s - 92);
+    g.lineBetween(cx + 40, s - 78, cx + 60, s - 92);
   },
   default: (g, s) => {
     const cx = s / 2;

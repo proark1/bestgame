@@ -1,6 +1,6 @@
 import { add, sub, mul, div, sqrt, dist2, fromInt } from '../fixed.js';
 import type { Fixed } from '../fixed.js';
-import { UNIT_STATS } from '../stats.js';
+import { BUILDING_BEHAVIOR, UNIT_STATS } from '../stats.js';
 import type { SimState } from '../state.js';
 
 // Pheromone follow — advances each unit along its assigned polyline by its
@@ -19,6 +19,9 @@ export function pheromoneFollowSystem(state: SimState): void {
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
     if (u.hp <= 0) continue;
+    // Rooted units (RootSnare trigger) skip movement until the root
+    // expires. Combat.ts decrements rootedTicks each tick.
+    if (u.rootedTicks && u.rootedTicks > 0) continue;
     if (u.pathId < 0) continue;
     if (u.targetBuildingId !== 0) continue; // combat owns it now
 
@@ -81,12 +84,19 @@ export function pheromoneFollowSystem(state: SimState): void {
     }
 
     // Once the unit finishes its path, acquire nearest enemy building.
-    if (u.pathId < 0) {
+    // Only attackers (owner=0) target buildings — defender AI units run
+    // in combat.ts and target attacker units instead.
+    if (u.pathId < 0 && u.owner === 0) {
       let bestId = 0;
       let bestDist2: Fixed = fromInt(9999);
       for (let j = 0; j < state.buildings.length; j++) {
         const b = state.buildings[j]!;
         if (b.hp <= 0) continue;
+        // Hidden stealth buildings (HiddenStinger pre-reveal) are
+        // invisible to target acquisition. Reveal happens inside combat
+        // when the building first fires.
+        const beh = BUILDING_BEHAVIOR[b.kind];
+        if (beh?.stealth && !b.revealed) continue;
         // Unit and building must share a layer OR one of them spans both.
         const canReach =
           b.layer === u.layer || (b.spans && b.spans.includes(u.layer));
