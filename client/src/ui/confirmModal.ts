@@ -16,6 +16,10 @@ export interface ConfirmOptions {
   // When true, the confirm button paints red — for destructive
   // actions the user shouldn't accidentally trigger.
   danger?: boolean;
+  // Single-button mode — used by openAlert. The cancel button is
+  // removed from the DOM (not just hidden) so layout collapses to a
+  // single OK affordance; Escape / backdrop-click still dismiss.
+  hideCancel?: boolean;
 }
 
 const STYLE_ID = 'hive-confirm-modal-style';
@@ -122,15 +126,19 @@ export function openConfirm(opts: ConfirmOptions): Promise<boolean> {
     if (!opts.body) bodyEl.style.display = 'none';
     confirmBtn.textContent = opts.confirmLabel ?? 'Confirm';
     cancelBtn.textContent = opts.cancelLabel ?? 'Cancel';
+    if (opts.hideCancel) cancelBtn.remove();
 
     const close = (value: boolean): void => {
       overlay.remove();
       document.removeEventListener('keydown', onKey);
       resolve(value);
     };
+    // Escape dismisses (Enter is intentionally NOT handled here —
+    // browsers already fire a click on the focused button for Enter,
+    // so forcing `close(true)` here would override the danger-mode
+    // "focus cancel" safety and silently confirm a leave-clan).
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') close(false);
-      else if (e.key === 'Enter') close(true);
     };
     document.addEventListener('keydown', onKey);
     confirmBtn.addEventListener('click', () => close(true));
@@ -140,9 +148,10 @@ export function openConfirm(opts: ConfirmOptions): Promise<boolean> {
     });
 
     document.body.append(overlay);
-    // Default focus on the non-destructive option so a user mashing
-    // Enter on a leave-clan confirm doesn't accidentally leave.
-    (opts.danger ? cancelBtn : confirmBtn).focus();
+    // Default focus: confirm for ordinary + alert dialogs, cancel for
+    // destructive ones so a user mashing Enter on a leave-clan confirm
+    // doesn't accidentally leave.
+    (opts.danger && !opts.hideCancel ? cancelBtn : confirmBtn).focus();
   });
 }
 
@@ -153,7 +162,7 @@ export function openAlert(title: string, body?: string): Promise<void> {
   const opts: ConfirmOptions = {
     title,
     confirmLabel: 'OK',
-    cancelLabel: 'OK',
+    hideCancel: true,
   };
   if (body !== undefined) opts.body = body;
   return openConfirm(opts).then(() => undefined);
