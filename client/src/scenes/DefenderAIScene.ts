@@ -3,6 +3,10 @@ import type { Types } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import type { HiveRuntime } from '../main.js';
+import { crispText } from '../ui/text.js';
+import { makeHiveButton } from '../ui/button.js';
+import { drawPanel, drawPill } from '../ui/panel.js';
+import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import type {
   AIRuleCatalogResponse,
   AIRuleCatalogEffect,
@@ -89,48 +93,82 @@ export class DefenderAIScene extends Phaser.Scene {
     fadeInScene(this);
     installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
+    this.drawAmbient();
     this.drawHud();
-    this.quotaText = this.add
-      .text(this.scale.width / 2, HUD_H + 22, '', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '12px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0.5);
+    this.quotaText = crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H + 22,
+      '',
+      bodyTextStyle(12, COLOR.textDim),
+    ).setOrigin(0.5);
     this.rowContainer = this.add.container(0, this.viewportTop);
-    this.loadingText = this.add
-      .text(this.scale.width / 2, HUD_H + 100, 'Loading defender brain…', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0.5);
+    this.loadingText = crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H + 100,
+      'Loading defender brain...',
+      bodyTextStyle(14, COLOR.textDim),
+    ).setOrigin(0.5);
     this.wireScroll();
     void this.fetchAll();
   }
 
+  private drawAmbient(): void {
+    const g = this.add.graphics().setDepth(-100);
+    const top = 0x203224;
+    const bot = 0x070d08;
+    const bands = 18;
+    for (let i = 0; i < bands; i++) {
+      const t = i / (bands - 1);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const gc = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
+      g.fillStyle((r << 16) | (gc << 8) | b, 1);
+      g.fillRect(
+        0,
+        Math.floor((i * this.scale.height) / bands),
+        this.scale.width,
+        Math.ceil(this.scale.height / bands) + 1,
+      );
+    }
+    const glow = this.add.graphics().setDepth(-99);
+    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillEllipse(this.scale.width / 2, HUD_H + 160, Math.min(860, this.scale.width * 0.9), 220);
+  }
+
   private drawHud(): void {
-    const bg = this.add.graphics();
-    bg.fillStyle(0x1a2b1a, 1);
-    bg.fillRect(0, 0, this.scale.width, HUD_H);
-    bg.lineStyle(2, 0x2c5a23, 1);
-    bg.lineBetween(0, HUD_H, this.scale.width, HUD_H);
-    this.add
-      .text(this.scale.width / 2, HUD_H / 2, 'Defender AI', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '18px',
-        color: '#ffd98a',
-      })
-      .setOrigin(0.5);
-    const back = this.add
-      .text(16, HUD_H / 2, '← Back', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '14px',
-        color: '#c3e8b0',
-      })
-      .setOrigin(0, 0.5)
-      .setInteractive({ useHandCursor: true });
-    back.on('pointerdown', () => fadeToScene(this, 'HomeScene'));
+    const w = this.scale.width;
+    const hud = this.add.graphics();
+    drawPanel(hud, 0, 0, w, HUD_H, {
+      topColor: COLOR.bgPanelHi,
+      botColor: COLOR.bgPanelLo,
+      strokeWidth: 0,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.12,
+      radius: 0,
+      shadowOffset: 0,
+      shadowAlpha: 0,
+    });
+    hud.fillStyle(0x000000, 0.4);
+    hud.fillRect(0, HUD_H, w, 3);
+    crispText(
+      this,
+      this.scale.width / 2,
+      HUD_H / 2,
+      'Defender AI',
+      displayTextStyle(20, COLOR.textGold, 4),
+    ).setOrigin(0.5);
+    makeHiveButton(this, {
+      x: 72,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: 'Home',
+      variant: 'ghost',
+      fontSize: 13,
+      onPress: () => fadeToScene(this, 'HomeScene'),
+    });
   }
 
   private wireScroll(): void {
@@ -238,12 +276,19 @@ export class DefenderAIScene extends Phaser.Scene {
     maxW: number,
     y: number,
   ): number {
-    const rowH = 70;
+    const rowH = 88;
     const bg = this.add.graphics();
-    bg.fillStyle(0x1a2b1a, 1);
-    bg.lineStyle(1, 0x2c5a23, 1);
-    bg.fillRoundedRect(originX, y, maxW, rowH, 8);
-    bg.strokeRoundedRect(originX, y, maxW, rowH, 8);
+    drawPanel(bg, originX, y, maxW, rowH, {
+      topColor: COLOR.bgCard,
+      botColor: COLOR.bgInset,
+      stroke: COLOR.outline,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 12,
+      shadowOffset: 3,
+      shadowAlpha: 0.2,
+    });
     this.rowContainer.add(bg);
 
     const icon = this.add
@@ -252,7 +297,7 @@ export class DefenderAIScene extends Phaser.Scene {
     this.rowContainer.add(icon);
 
     this.rowContainer.add(
-      this.text(originX + 72, y + 10, b.kind, '#e6f5d2', 14, 0, 0),
+      crispText(this, originX + 72, y + 12, b.kind, bodyTextStyle(14, COLOR.textPrimary)).setOrigin(0, 0),
     );
     const rules = b.aiRules ?? [];
     const desc =
@@ -267,28 +312,22 @@ export class DefenderAIScene extends Phaser.Scene {
             )
             .join(', ');
     this.rowContainer.add(
-      this.text(originX + 72, y + 34, desc, '#c3e8b0', 11, 0, 0),
+      crispText(this, originX + 72, y + 38, desc, bodyTextStyle(11, COLOR.textDim))
+        .setOrigin(0, 0)
+        .setWordWrapWidth(maxW - 176, true),
     );
 
-    const btnW = 80;
-    const btnH = 28;
-    const bx = originX + maxW - 14 - btnW;
-    const by = y + (rowH - btnH) / 2;
-    const btn = this.add.graphics();
-    btn.fillStyle(0x3a7f3a, 1);
-    btn.lineStyle(2, 0xffd98a, 1);
-    btn.fillRoundedRect(bx, by, btnW, btnH, 6);
-    btn.strokeRoundedRect(bx, by, btnW, btnH, 6);
-    this.rowContainer.add(btn);
-    this.rowContainer.add(
-      this.text(bx + btnW / 2, by + btnH / 2, 'Edit', '#ffffff', 12, 0.5, 0.5),
-    );
-    const hit = this.add
-      .zone(bx + btnW / 2, by + btnH / 2, btnW, btnH)
-      .setOrigin(0.5)
-      .setInteractive({ useHandCursor: true });
-    hit.on('pointerdown', () => this.openEditor(b));
-    this.rowContainer.add(hit);
+    const btn = makeHiveButton(this, {
+      x: originX + maxW - 56,
+      y: y + rowH / 2,
+      width: 84,
+      height: 34,
+      label: 'Edit',
+      variant: 'secondary',
+      fontSize: 12,
+      onPress: () => this.openEditor(b),
+    });
+    this.rowContainer.add(btn.container);
 
     return y + rowH + 8;
   }
