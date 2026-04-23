@@ -1210,9 +1210,6 @@ export class RaidScene extends Phaser.Scene {
     void this.submitToServer();
 
     const stars = this.currentStars();
-    const overlay = this.add.graphics().setDepth(DEPTHS.resultBackdrop);
-    overlay.fillStyle(0x000000, 0.7);
-    overlay.fillRect(0, 0, this.scale.width, this.scale.height);
 
     // Card is a bit taller on wins to accommodate the Share button.
     // Width clamps to the viewport (minus a 16 px margin each side) so
@@ -1225,8 +1222,11 @@ export class RaidScene extends Phaser.Scene {
     const cx = (this.scale.width - cardW) / 2;
     const cy = (this.scale.height - cardH) / 2;
     // Dim backdrop behind the card so the outcome commands the eye.
+    // Single fill at 0.865 alpha matches the double-overlay dim the
+    // old code produced (1 - (1-0.7)(1-0.55) ≈ 0.865) without the
+    // extra Graphics object.
     const backdrop = this.add.graphics().setDepth(DEPTHS.resultBackdrop);
-    backdrop.fillStyle(0x000000, 0.55);
+    backdrop.fillStyle(0x000000, 0.865);
     backdrop.fillRect(0, 0, this.scale.width, this.scale.height);
     // CoC-style card: gradient fill, thick brass stroke, drop shadow.
     card.fillStyle(0x000000, 0.5);
@@ -1274,8 +1274,6 @@ export class RaidScene extends Phaser.Scene {
       )
       .setOrigin(0.5)
       .setDepth(DEPTHS.resultContent);
-
-    void backdrop;
 
     const actionsY = isWin ? cy + 220 : cy + 170;
 

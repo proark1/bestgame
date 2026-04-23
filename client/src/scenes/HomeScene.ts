@@ -311,8 +311,16 @@ export class HomeScene extends Phaser.Scene {
     // small viewports (e.g. iPhone 375 — "HIVE WAR" visibly clipped
     // INTO the first pill in the user's screenshot). These tiers keep
     // everything visible at any viewport.
-    const tier: 'wide' | 'narrow' | 'phone' =
-      w >= BREAKPOINTS.desktop
+    // On mobile layouts (portrait phone or short-height landscape)
+    // the burger drawer owns nav and sits at the top-left where the
+    // title would normally render. Forcing the HUD tier to 'phone'
+    // in those cases keeps the title + chip hidden so the burger
+    // doesn't overlap them. A landscape phone at 812×375 would
+    // otherwise pick the 'wide' tier and draw the title underneath
+    // the burger button.
+    const tier: 'wide' | 'narrow' | 'phone' = this.isMobileLayout()
+      ? 'phone'
+      : w >= BREAKPOINTS.desktop
         ? 'wide'
         : w >= BREAKPOINTS.phone
           ? 'narrow'
