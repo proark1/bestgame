@@ -26,6 +26,14 @@ import {
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
+import {
+  MAX_RULES_PER_BUILDING,
+  RULES_UNLOCK_QUEEN_LEVEL,
+  aiRuleCatalog,
+  baseRuleQuota,
+  countRulesInBase,
+  validateRule,
+} from '../game/aiRules.js';
 import type { Types as HiveTypes } from '@hive/shared';
 
 // Resource columns are BIGINT, so DB values come back as strings. JS
@@ -620,6 +628,141 @@ export function registerPlayer(app: FastifyInstance): void {
       }
     },
   );
+
+  // PUT /api/player/building/:id/ai — replace the full rule list on a
+  // single building. Keeping it as a REPLACE (not append) makes the
+  // client editor trivial: build the new list locally, send it, done.
+  //
+  // Validates each rule against the shape + per-kind + per-combo
+  // whitelist. Also enforces the per-base rule quota that scales with
+  // Queen level (rules are a mid-game unlock at queen L3).
+  interface SetRulesBody {
+    rules: Types.BuildingAIRule[];
+  }
+  app.put<{ Params: { id: string }; Body: SetRulesBody }>(
+    '/player/building/:id/ai',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (!body || !Array.isArray(body.rules)) {
+        reply.code(400);
+        return { error: 'rules array required' };
+      }
+      if (body.rules.length > MAX_RULES_PER_BUILDING) {
+        reply.code(400);
+        return { error: `too many rules (max ${MAX_RULES_PER_BUILDING} per building)` };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const qLevel = queenLevel(base);
+        if (qLevel < RULES_UNLOCK_QUEEN_LEVEL) {
+          await client.query('ROLLBACK');
+          reply.code(403);
+          return {
+            error: `Defender AI unlocks at Queen level ${RULES_UNLOCK_QUEEN_LEVEL}`,
+          };
+        }
+        const building = base.buildings.find((b) => b.id === req.params.id);
+        if (!building) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+
+        // Per-rule validation.
+        for (const r of body.rules) {
+          const err = validateRule(r, building.kind);
+          if (err) {
+            await client.query('ROLLBACK');
+            reply.code(400);
+            return { error: err.message, code: err.code };
+          }
+        }
+
+        // Base-wide quota: cap on total rules across all buildings,
+        // scales with Queen level.
+        const quota = baseRuleQuota(qLevel);
+        const priorOnThisBuilding = building.aiRules?.length ?? 0;
+        const totalNow = countRulesInBase(base);
+        const totalAfter = totalNow - priorOnThisBuilding + body.rules.length;
+        if (totalAfter > quota) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return {
+            error: `Base rule quota reached (${totalAfter}/${quota}) — upgrade Queen for more`,
+            quota,
+          };
+        }
+
+        // Assign stable ids to any rule the client sent without one,
+        // matching the ID pattern the rest of the codebase uses.
+        const assigned = body.rules.map((r, i) => ({
+          ...r,
+          id: r.id && typeof r.id === 'string' && r.id.length > 0
+            ? r.id
+            : `${req.params.id}-r${Date.now()}-${i}`,
+        }));
+
+        const updated: Types.Base = {
+          ...base,
+          buildings: base.buildings.map((b) =>
+            b.id === req.params.id
+              ? { ...b, aiRules: assigned }
+              : b,
+          ),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          base: updated,
+          building: updated.buildings.find((b) => b.id === req.params.id),
+          quota,
+          rulesUsed: totalAfter,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'building/ai PUT failed');
+        reply.code(500);
+        return { error: 'update failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // GET /api/player/ai-rules/catalog — enumerates every legal trigger,
+  // effect, their params, and the allowed (trigger, effect) combos.
+  // The client rule editor renders dropdowns off this so balance
+  // changes don't need a client redeploy.
+  app.get('/player/ai-rules/catalog', async () => {
+    return aiRuleCatalog();
+  });
 
   // Costs + catalog for the client picker. Keeps the source of truth
   // on the server — clients never compute cost or quotas locally.

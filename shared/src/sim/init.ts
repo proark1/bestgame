@@ -1,8 +1,23 @@
 import { fromInt } from './fixed.js';
 import { Rng } from './rng.js';
 import { BUILDING_STATS } from './stats.js';
-import type { Base } from '../types/base.js';
-import type { SimBuilding, SimConfig, SimState } from './state.js';
+import type { Base, BuildingAIRule } from '../types/base.js';
+import type { SimBuilding, SimConfig, SimRuleState, SimState } from './state.js';
+
+// Turn a player-authored rule into its runtime mirror. Keeps the
+// original rule object (read-only — the sim treats it as
+// configuration) and adds the mutable state the evaluator needs.
+function hydrateRule(r: BuildingAIRule): SimRuleState {
+  return {
+    rule: r,
+    remaining: r.remainingUses === undefined || r.remainingUses < 0
+      ? null
+      : r.remainingUses,
+    rearmCooldown: 0,
+    prevConditionTrue: false,
+    tickAccumulator: 0,
+  };
+}
 
 // Build an initial SimState from a Base snapshot + seed.
 // The attacker starts with no units on field; all deploys come from input.
@@ -43,6 +58,9 @@ export function createInitialState(cfg: SimConfig): SimState {
           hpMax: fromInt(stats.hpMax),
           level: b.level,
           attackCooldown: 0,
+          ...(b.aiRules && b.aiRules.length > 0
+          ? { rules: b.aiRules.map(hydrateRule) }
+          : {}),
         });
       }
     } else {
@@ -59,6 +77,9 @@ export function createInitialState(cfg: SimConfig): SimState {
         hpMax: fromInt(stats.hpMax),
         level: b.level,
         attackCooldown: 0,
+        ...(b.aiRules && b.aiRules.length > 0
+          ? { rules: b.aiRules.map(hydrateRule) }
+          : {}),
       });
     }
   }

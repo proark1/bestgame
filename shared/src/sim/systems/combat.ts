@@ -64,6 +64,7 @@ export function combatSystem(
         const bstats = BUILDING_STATS[b.kind];
         state.attackerSugarLooted += bstats.dropsSugarOnDestroy;
         state.attackerLeafBitsLooted += bstats.dropsLeafBitsOnDestroy;
+        state.buildingsDestroyedThisTick = (state.buildingsDestroyedThisTick ?? 0) + 1;
       }
     }
   }
@@ -190,6 +191,7 @@ export function combatSystem(
         const bstats = BUILDING_STATS[b.kind];
         state.attackerSugarLooted += bstats.dropsSugarOnDestroy;
         state.attackerLeafBitsLooted += bstats.dropsLeafBitsOnDestroy;
+        state.buildingsDestroyedThisTick = (state.buildingsDestroyedThisTick ?? 0) + 1;
       }
     }
   }
@@ -261,7 +263,14 @@ export function combatSystem(
     }
     const bx = buildingCenterX(b);
     const by = buildingCenterY(b);
-    const rangeSq = mul(bstats.attackRange, bstats.attackRange);
+    // Player-authored AI boost: `extendAttackRange` buffs stack onto
+    // the base range while the boost is active. Squaring once per
+    // building keeps the hot-loop inner math identical.
+    const effectiveRange =
+      b.boostRangeAmount && b.boostRangeAmount > 0
+        ? add(bstats.attackRange, b.boostRangeAmount)
+        : bstats.attackRange;
+    const rangeSq = mul(effectiveRange, effectiveRange);
 
     // Acquire nearest living attacker within range. Respect antiAirOnly
     // and layer reachability. For stealth buildings we use the same
@@ -292,8 +301,17 @@ export function combatSystem(
 
     const primary = state.units[bestIdx]!;
 
+    // Player-authored AI `boostAttackDamage` multiplies the base
+    // damage value. Stored as integer percent (150 = 1.5×); applied
+    // through the same scaleFixedByPercent helper unit-side uses so
+    // the rounding is identical.
+    const effectiveDamage =
+      b.boostDamagePercent && b.boostDamagePercent > 0
+        ? scaleFixedByPercent(bstats.attackDamage, b.boostDamagePercent)
+        : bstats.attackDamage;
+
     // Single-target damage (or splash center).
-    primary.hp = sub(primary.hp, bstats.attackDamage);
+    primary.hp = sub(primary.hp, effectiveDamage);
     if (primary.hp < 0) primary.hp = 0;
 
     // Splash: additional units inside splashRadius of the primary.
@@ -309,7 +327,7 @@ export function combatSystem(
         if (beh.antiAirOnly && !UNIT_STATS[u.kind].canFly) continue;
         const d2 = dist2(u.x, u.y, primary.x, primary.y);
         if (d2 <= splashSq) {
-          u.hp = sub(u.hp, bstats.attackDamage);
+          u.hp = sub(u.hp, effectiveDamage);
           if (u.hp < 0) u.hp = 0;
         }
       }
@@ -325,7 +343,14 @@ export function combatSystem(
       // Don't credit loot drop — traps are a defender asset, not loot.
     }
 
-    b.attackCooldown = bstats.attackCooldownTicks;
+    // Player-authored AI `boostAttackRate` divides the base cooldown
+    // for the duration of the boost — faster reload. Clamp to 1 so a
+    // divisor of e.g. 2 on a cooldown of 1 doesn't pin at 0 and fire
+    // every tick forever.
+    const cdDivisor = b.boostRateDivisor && b.boostRateDivisor > 1
+      ? b.boostRateDivisor
+      : 1;
+    b.attackCooldown = Math.max(1, (bstats.attackCooldownTicks / cdDivisor) | 0);
   }
 
   // -------------------------------------------------------------------
@@ -420,12 +445,22 @@ export function combatSystem(
         continue;
       }
 
+      // Player-authored AI `extraSpawn` effect: if this nest has
+      // banked bonus spawns, allow alive-count to temporarily exceed
+      // maxAlive by consuming one. This is what makes "on low hp,
+      // spit out one more defender" rules actually matter in the
+      // fight. bonus spawns do NOT re-arm the spawn cooldown — they
+      // fire immediately and exit.
       const maxAlive = beh.spawnMaxAlive ?? 999;
       const aliveCount = defenderAliveByKind[beh.spawnKind] ?? 0;
-      if (aliveCount >= maxAlive) {
+      const bonus = b.bonusSpawnsRemaining ?? 0;
+      if (aliveCount >= maxAlive && bonus <= 0) {
         // Don't reset cooldown — we'll retry every tick until a defender
         // dies, which matches CoC-style clan castle urgency.
         continue;
+      }
+      if (bonus > 0) {
+        b.bonusSpawnsRemaining = bonus - 1;
       }
 
       // Stagger successive spawns on x so multiple defenders from the

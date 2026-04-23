@@ -1,5 +1,5 @@
 import type { Fixed } from './fixed.js';
-import type { Base, BuildingKind, Layer } from '../types/base.js';
+import type { Base, BuildingAIRule, BuildingKind, Layer } from '../types/base.js';
 import type { Unit } from '../types/units.js';
 import type { PheromonePath } from '../types/pheromone.js';
 
@@ -34,6 +34,47 @@ export interface SimBuilding {
   // Fixed HP; ticks count down in combat.ts.
   burnTicks?: number;
   burnDamagePerTick?: Fixed;
+  // Player-authored defender AI: rules and per-rule runtime state.
+  // `rules` is a frozen copy of Building.aiRules (transformed to
+  // SimRuleState by init.ts). Evaluated by ai_rules.ts each tick;
+  // boost* fields feed the combat system when computing damage /
+  // range / cooldown. Kept here (not in a side-table) so the sim
+  // stays a single mutable structure for hashing.
+  rules?: SimRuleState[];
+  // Active effect buffers — all counted in sim ticks. Decremented in
+  // the ai_rules pre-pass; consumed in combat.ts.
+  boostDamagePercent?: number;   // e.g. 150 = +50% damage
+  boostDamageTicks?: number;
+  boostRateDivisor?: number;     // attackCooldown /= divisor while > 0
+  boostRateTicks?: number;
+  boostRangeAmount?: Fixed;      // added to attackRange while > 0
+  boostRangeTicks?: number;
+  // extraSpawn effect: remaining bonus spawns this rule can grant
+  // (decremented per fire, not per tick). Pooled across all rules
+  // on this building.
+  bonusSpawnsRemaining?: number;
+  // aoeRoot effect: buffered root-radius / root-ticks request. Read
+  // by combat.ts the same tick it's set, then cleared.
+  aoeRootRadius?: Fixed;
+  aoeRootTicks?: number;
+}
+
+// Runtime mirror of a BuildingAIRule. Keeps the original params by
+// reference (read-only); mutable state (`remaining`, `rearmCooldown`)
+// lives here so replays can be re-hydrated from the canonical Base
+// snapshot + tick stream without stale state leaking across raids.
+export interface SimRuleState {
+  rule: BuildingAIRule;
+  // How many fires remain this raid. null = unlimited.
+  remaining: number | null;
+  // Ticks of trigger-internal cooldown still active. 0 = armed.
+  rearmCooldown: number;
+  // Was the trigger condition true on the previous tick? Edge-
+  // triggered rules (onEnemyInRange) fire on the false→true edge
+  // rather than every tick the condition holds.
+  prevConditionTrue: boolean;
+  // For onTick: ticks since last fire.
+  tickAccumulator: number;
 }
 
 export interface SimState {
@@ -57,6 +98,11 @@ export interface SimState {
   deployCapRemaining: [number, number];
   // Match outcome is latched the tick it occurs.
   outcome: 'ongoing' | 'attackerWin' | 'defenderWin' | 'draw';
+  // Rolling counter of ally buildings that transitioned to hp <= 0 on
+  // the current tick. Cleared at the start of each step, written by
+  // combat.ts the moment a building dies, read by the `onAllyDestroyed`
+  // AI trigger. Kept on state (not side-table) so the hash includes it.
+  buildingsDestroyedThisTick?: number;
 }
 
 export interface SimConfig {
