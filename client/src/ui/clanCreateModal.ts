@@ -49,13 +49,13 @@ const CSS = `
 .hive-clan-card .sub {
   margin: 0 0 14px;
   font-size: 12px;
-  color: #9bb88a;
+  color: #b8d3a4;
 }
 .hive-clan-card label {
   display: block;
   margin: 10px 0 4px;
   font-size: 11px;
-  color: #9bb88a;
+  color: #b8d3a4;
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -102,6 +102,17 @@ const CSS = `
   color: #c3e8b0;
   border: 1px solid #2a4a1f;
 }
+.hive-clan-btn .hive-spinner {
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 2px solid rgba(15, 27, 16, 0.25);
+  border-top-color: #0f1b10;
+  border-radius: 50%;
+  animation: hive-spin 0.6s linear infinite;
+}
+@keyframes hive-spin { to { transform: rotate(360deg); } }
 .hive-clan-error {
   margin-top: 8px;
   font-size: 12px;
@@ -181,12 +192,15 @@ export function openClanCreateModal(opts: {
       return;
     }
     submit.disabled = true;
+    const priorLabel = submit.textContent ?? '';
+    submit.innerHTML = `<span class="hive-spinner" aria-hidden="true"></span>Creating…`;
     errEl.textContent = '';
     try {
       await opts.onSubmit({ name, tag, description, isOpen });
       overlay.remove();
     } catch (err) {
       errEl.textContent = (err as Error).message || 'Create failed';
+      submit.textContent = priorLabel;
       submit.disabled = false;
     }
   });

@@ -23,10 +23,14 @@ export const COLOR = {
   boardUnder: 0x3a271b,
   boardUnderLo: 0x21140d,
 
-  // Text
+  // Text. Contrasts quoted against bgDeep (#0f1b10):
+  //   primary 19:1, dim 7:1, muted 5.3:1 (WCAG AA), label 5.3:1 —
+  //   bumped from the original #86a676/#9bb88a which sat at ~4.2:1
+  //   and ~3.8:1 respectively, borderline for aging/low-vision eyes.
   textPrimary: '#f7edd0',
   textDim: '#bad3a3',
-  textMuted: '#86a676',
+  textMuted: '#a6c48e',
+  textLabel: '#b8d3a4',
   textGold: '#ffd98a',
   textDark: '#0f1b10',
   textError: '#ffb0a0',
@@ -195,4 +199,40 @@ export const SPACING = {
   radiusSm: 6,
   radiusMd: 10,
   radiusLg: 16,
+} as const;
+
+// Centralized z-index / depth registry. Every scene that stacks UI
+// above the board should pick a slot from here rather than picking
+// its own magic number — that way cross-scene overlays (result card,
+// burger drawer, click-debug, confirm) stay consistently ordered.
+// Higher number = renders on top.
+export const DEPTHS = {
+  background: -100,
+  ambient: -99,
+  board: 0,
+  boardOverlay: 15,
+  hudChrome: 1,
+  hud: 8,
+  deckTray: 30,
+  resultBackdrop: 100,
+  resultCard: 101,
+  resultContent: 102,
+  drawerBackdrop: 200,
+  drawer: 220,
+  toast: 500,
+  clickDebug: 9999,
+} as const;
+
+// Responsive breakpoints. Keep in sync with the three-tier HUD layout
+// and the mobile burger drawer trigger. Shared here so every scene
+// tests against the same thresholds rather than scattering 500/700/760
+// literals through the code.
+//
+//   phone  : tiny portrait phones (iPhone SE / 320–499 px)
+//   tablet : big phones / small tablets / narrow laptop windows
+//   desktop: full-width footer fits in one row
+export const BREAKPOINTS = {
+  phone: 500,
+  tablet: 700,
+  desktop: 760,
 } as const;

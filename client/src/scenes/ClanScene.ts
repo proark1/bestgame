@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
+import { openAlert, openConfirm } from '../ui/confirmModal.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
@@ -484,7 +485,14 @@ export class ClanScene extends Phaser.Scene {
   }
 
   private async confirmLeave(): Promise<void> {
-    if (!confirm('Leave this clan?')) return;
+    const ok = await openConfirm({
+      title: 'Leave this clan?',
+      body: "You'll lose your place on the chat and the clan perks. You can join another at any time.",
+      confirmLabel: 'Leave clan',
+      cancelLabel: 'Stay',
+      danger: true,
+    });
+    if (!ok) return;
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
     try {
@@ -496,7 +504,7 @@ export class ClanScene extends Phaser.Scene {
       this.chatContainer.removeAll(true);
       void this.refreshMy();
     } catch (err) {
-      alert(`Leave failed: ${(err as Error).message}`);
+      await openAlert('Leave failed', (err as Error).message);
     }
   }
 

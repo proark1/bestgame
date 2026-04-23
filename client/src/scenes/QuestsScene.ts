@@ -160,10 +160,24 @@ export class QuestsScene extends Phaser.Scene {
     y = this.renderOverviewCard(originX, maxW, y);
     y += 16;
     y = this.renderSectionHeader('Daily Quests', 'Finish tasks, claim loot, and push your season track.', originX, maxW, y);
-    for (const q of this.quests.dailyQuests.quests) {
-      const def = this.quests.questDefs.find((d) => d.id === q.id);
-      if (!def) continue;
-      y = this.renderQuestRow(originX, maxW, y, q, def);
+    const dailies = this.quests.dailyQuests.quests;
+    const renderable = dailies.filter((q) => this.quests!.questDefs.some((d) => d.id === q.id));
+    if (renderable.length === 0) {
+      // Empty state — the daily roll can legitimately come back empty
+      // (seasonal off-days, or a fresh account before the first roll
+      // lands). Show a hint instead of a header-only screen.
+      y = this.renderEmptyHint(
+        originX,
+        maxW,
+        y,
+        'No quests today',
+        'New objectives roll every 24 hours. Check back tomorrow, or chase milestone XP below.',
+      );
+    } else {
+      for (const q of renderable) {
+        const def = this.quests.questDefs.find((d) => d.id === q.id)!;
+        y = this.renderQuestRow(originX, maxW, y, q, def);
+      }
     }
 
     y += 20;
@@ -237,6 +251,41 @@ export class QuestsScene extends Phaser.Scene {
       crispText(this, originX + 166, y + 3, sublabel, bodyTextStyle(12, COLOR.textDim)).setOrigin(0, 0),
     );
     return y + 34;
+  }
+
+  // Shared empty-state card. Used for "no daily quests today" so a
+  // legitimately-empty day still reads as intentional design, not a
+  // broken layout.
+  private renderEmptyHint(
+    originX: number,
+    maxW: number,
+    y: number,
+    title: string,
+    body: string,
+  ): number {
+    const h = 74;
+    const card = this.add.graphics();
+    drawPanel(card, originX, y, maxW, h, {
+      topColor: COLOR.bgCard,
+      botColor: COLOR.bgInset,
+      stroke: COLOR.outline,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.08,
+      radius: 12,
+      shadowOffset: 3,
+      shadowAlpha: 0.2,
+    });
+    this.rowContainer.add(card);
+    this.rowContainer.add(
+      crispText(this, originX + 18, y + 14, title, displayTextStyle(15, COLOR.textGold, 3)).setOrigin(0, 0),
+    );
+    this.rowContainer.add(
+      crispText(this, originX + 18, y + 40, body, bodyTextStyle(12, COLOR.textDim))
+        .setOrigin(0, 0)
+        .setWordWrapWidth(maxW - 36),
+    );
+    return y + h + 8;
   }
 
   private renderSeasonProgress(originX: number, maxW: number, y: number): number {
