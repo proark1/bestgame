@@ -25,7 +25,7 @@ import {
   upgradeCost,
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
-import { upgradeCostMult, levelStatPercent } from '../game/progression.js';
+import { upgradeCostMult, levelStatPercent, LEVEL_COST_MULT } from '../game/progression.js';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
@@ -868,6 +868,17 @@ export function registerPlayer(app: FastifyInstance): void {
       ),
       rules: buildingRulesPayload(),
       maxQueenLevel: MAX_QUEEN_LEVEL,
+      // Full upgrade cost-curve table (base-cost multipliers per
+      // pre-upgrade level, L1→L2 first) + per-kind income/sec so the
+      // client-side building info modal can render accurate preview
+      // costs and production stats without duplicating the tables.
+      levelCostMult: LEVEL_COST_MULT,
+      // ALL upgradeable building kinds, not just player-placeable,
+      // because the Queen Chamber + pre-placed starter buildings also
+      // need upgrade previews. Server still ignores a request to
+      // upgrade a non-upgradeable kind.
+      baseCost: BUILDING_PLACEMENT_COSTS,
+      incomePerSecond: INCOME_PER_SECOND,
     };
   });
 

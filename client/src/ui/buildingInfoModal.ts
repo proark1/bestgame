@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Types, Sim } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
+import type { BuildingCatalog } from '../net/Api.js';
 import { crispText } from './text.js';
 import { drawPanel, drawPill } from './panel.js';
 import { makeHiveButton } from './button.js';
@@ -47,16 +48,16 @@ const KIND_LABELS: Partial<Record<Types.BuildingKind, string>> = {
   ThornHedge: 'Thorn Hedge',
 };
 
-// Per-second production for economy buildings. Mirrors the server
-// (server/api/src/routes/player.ts::INCOME_PER_SECOND) so what the
-// player sees matches what they actually earn. Scales linearly with
-// level the same way the server does.
-const INCOME: Partial<
-  Record<Types.BuildingKind, { sugar: number; leafBits: number }>
+// Per-second production table — pulled from the server's catalog
+// response at open time (see openBuildingInfoModal). A fallback table
+// is kept for older servers that predate the catalog fields so the
+// modal still renders something sensible when we can't reach them.
+const INCOME_FALLBACK: Partial<
+  Record<Types.BuildingKind, { sugar: number; leafBits: number; aphidMilk: number }>
 > = {
-  DewCollector: { sugar: 8, leafBits: 0 },
-  LarvaNursery: { sugar: 0, leafBits: 3 },
-  SugarVault: { sugar: 2, leafBits: 0 },
+  DewCollector: { sugar: 8, leafBits: 0, aphidMilk: 0 },
+  LarvaNursery: { sugar: 0, leafBits: 3, aphidMilk: 0 },
+  SugarVault: { sugar: 2, leafBits: 0, aphidMilk: 0 },
 };
 
 // Computed stats at a given level — UI-side mirror of the shared sim's
@@ -77,8 +78,20 @@ export interface OpenBuildingInfoOpts {
 // Opens the modal. Returns a close fn in case the caller wants to
 // close it externally (e.g. scene shutdown). Safe to ignore —
 // backdrop-tap + × button already handle the common case.
+//
+// Balance tables (income per second + upgrade cost curve + per-kind
+// base cost) are fetched from the server's /player/building/catalog
+// endpoint on open, so the modal stays in sync with server-side
+// balance changes without a client redeploy. While the fetch is in
+// flight, a fallback table keeps the opening render usable; we
+// re-render the card once the catalog arrives.
 export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
   const { scene, runtime, building } = opts;
+  // Balance tables (income per second + per-kind costs + level-cost
+  // curve) come from the server catalog. Kicked off async so the modal
+  // opens instantly with the fallback tables and upgrades to the
+  // authoritative numbers when the fetch resolves.
+  let catalog: BuildingCatalog | null = null;
   const W = scene.scale.width;
   const H = scene.scale.height;
 
@@ -181,7 +194,8 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         addStat('Leaf bits stored', String(stats.dropsLeafBitsOnDestroy));
       }
     }
-    const income = INCOME[b.kind];
+    const incomeMap = catalog?.incomePerSecond ?? INCOME_FALLBACK;
+    const income = incomeMap[b.kind];
     if (income) {
       const mult = Math.max(1, level);
       if (income.sugar > 0) addStat('Sugar / sec', `+${income.sugar * mult}`);
@@ -237,7 +251,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     } else {
       const upgradeLabel = atMax
         ? 'Max level'
-        : `Upgrade — ${estimateCost(b).sugar} sugar`;
+        : `Upgrade — ${estimateCost(b, catalog).sugar} sugar`;
       const btn = makeHiveButton(scene, {
         x: MODAL_W / 2 - 84,
         y: actionsY + 4,
@@ -274,7 +288,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
             danger: true,
           }).then((confirmed) => {
             if (!confirmed) return;
-            void doDemolish(runtime, b, (base) => {
+            void doDemolish(scene, runtime, b, (base) => {
               close();
               opts.onDemolish?.(base);
             });
@@ -287,43 +301,44 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
 
   renderBody(building);
 
+  // Upgrade to the authoritative balance tables asap. If the scene
+  // tears down before the fetch resolves (user closed the modal or
+  // left the scene), check that the root container is still in the
+  // display list before touching it.
+  runtime.api
+    .getBuildingCatalog()
+    .then((c) => {
+      catalog = c;
+      if (!root.active) return;
+      const current =
+        runtime.player?.base.buildings.find((x) => x.id === building.id) ??
+        building;
+      renderBody(current);
+    })
+    .catch(() => {
+      // Keep the fallback numbers; nothing actionable on a failed fetch.
+    });
+
   return close;
 }
 
-// Mirrors the server's cost curve: placement-cost × upgradeCostMult(level).
-// We don't have upgradeCostMult in the shared package, so we re-declare
-// the exact same table here. Keep in sync with server/api/src/game/
-// progression.ts::LEVEL_COST_MULT — if the server curve changes the
-// button's previewed cost would desynchronize.
-const LEVEL_COST_MULT: ReadonlyArray<number> = [
-  0.5, 1.0, 1.6, 2.6, 4.2, 6.8, 11.0, 17.8, 28.8,
-];
-// Base costs from server/api/src/game/buildingCosts.ts::BUILDING_PLACEMENT_COSTS.
-// A single source of truth on the server is the authority; this map
-// is purely for the "Upgrade — NNN sugar" button label so the player
-// sees the cost before committing. Server re-verifies on submit.
-const BASE_COST: Partial<Record<Types.BuildingKind, { sugar: number; leafBits: number }>> = {
-  DewCollector:    { sugar: 200,  leafBits: 40 },
-  MushroomTurret:  { sugar: 350,  leafBits: 80 },
-  LeafWall:        { sugar: 100,  leafBits: 60 },
-  PebbleBunker:    { sugar: 500,  leafBits: 150 },
-  LarvaNursery:    { sugar: 400,  leafBits: 120 },
-  SugarVault:      { sugar: 600,  leafBits: 100 },
-  TunnelJunction:  { sugar: 250,  leafBits: 50 },
-  DungeonTrap:     { sugar: 150,  leafBits: 30 },
-  AcidSpitter:     { sugar: 700,  leafBits: 200 },
-  SporeTower:      { sugar: 550,  leafBits: 160 },
-  RootSnare:       { sugar: 180,  leafBits: 40 },
-  HiddenStinger:   { sugar: 900,  leafBits: 260 },
-  SpiderNest:      { sugar: 1200, leafBits: 320 },
-  ThornHedge:      { sugar: 220,  leafBits: 110 },
-};
-
-function estimateCost(b: Types.Building): { sugar: number; leafBits: number } {
-  const base = BASE_COST[b.kind];
-  const level = b.level ?? 1;
-  const mult = LEVEL_COST_MULT[level - 1] ?? 28.8;
+// Cost preview — reads both the cost curve and the per-kind base
+// price from the server catalog so the "Upgrade — NNN sugar" label
+// tracks any balance change on the server side. Returns zeros when
+// the catalog hasn't loaded yet (rare race on slow networks); the
+// server is still authoritative on the actual debit at submit time.
+function estimateCost(
+  b: Types.Building,
+  catalog: BuildingCatalog | null,
+): { sugar: number; leafBits: number } {
+  if (!catalog?.baseCost || !catalog.levelCostMult) return { sugar: 0, leafBits: 0 };
+  const base = catalog.baseCost[b.kind];
   if (!base) return { sugar: 0, leafBits: 0 };
+  const level = b.level ?? 1;
+  const mult =
+    catalog.levelCostMult[level - 1] ??
+    catalog.levelCostMult[catalog.levelCostMult.length - 1] ??
+    1;
   return {
     sugar: Math.floor(base.sugar * mult),
     leafBits: Math.floor(base.leafBits * mult),
@@ -374,6 +389,7 @@ async function doQueenUpgrade(
 }
 
 async function doDemolish(
+  scene: Phaser.Scene,
   runtime: HiveRuntime,
   b: Types.Building,
   onDone: (base: Types.Base) => void,
@@ -385,7 +401,11 @@ async function doDemolish(
     }
     onDone(r.base);
   } catch (err) {
-    console.warn('demolish failed', err);
+    // Surface failures to the player rather than silently swallowing
+    // them — demolition often fails for recoverable reasons (network
+    // blip, 409 on a just-raided base) and the player needs to know
+    // why the building is still there.
+    flashToast(scene, (err as Error).message);
   }
 }
 

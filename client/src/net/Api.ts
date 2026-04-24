@@ -959,6 +959,22 @@ export type BuildingCatalog = {
     { allowedLayers: number[]; quotaByTier: number[] }
   >;
   maxQueenLevel?: number;
+  // Upgrade cost curve + per-kind base costs so the building info
+  // modal can render accurate previews without duplicating these
+  // tables. Absent on older servers; clients fall back to inline
+  // placeholders when missing. `baseCost` includes NON-placeable
+  // kinds (Queen Chamber, pre-placed starters) since those still
+  // get an upgrade preview — the server just rejects placement of
+  // non-placeable kinds.
+  levelCostMult?: number[];
+  baseCost?: Record<
+    string,
+    { sugar: number; leafBits: number; aphidMilk: number }
+  >;
+  incomePerSecond?: Record<
+    string,
+    { sugar: number; leafBits: number; aphidMilk: number }
+  >;
 };
 
 export interface UpgradeQueenResponse {
