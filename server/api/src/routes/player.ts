@@ -26,6 +26,8 @@ import {
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
+import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
+import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
 import {
   MAX_RULES_PER_BUILDING,
   RULES_UNLOCK_QUEEN_LEVEL,
@@ -93,6 +95,20 @@ interface PlayerRow {
   season_id: string;
   season_xp: number;
   season_milestones_claimed: number[];
+  // Stickiness features (migrations/0013).
+  streak_count: number;
+  streak_last_day: string;
+  streak_last_claim: number;
+  comeback_pending: boolean;
+  nemesis_player_id: string | null;
+  nemesis_stars: number | null;
+  nemesis_set_at: Date | null;
+  nemesis_avenged: boolean;
+  queen_skins: string[];
+  queen_skin_id: string;
+  tutorial_stage: number;
+  campaign_chapter: number;
+  campaign_progress: number;
 }
 
 interface BaseRow {
@@ -168,15 +184,56 @@ export function registerPlayer(app: FastifyInstance): void {
       const newLeaf = BigInt(player.leaf_bits) + BigInt(gainedLeaf);
       const newMilk = BigInt(player.aphid_milk) + BigInt(gainedMilk);
 
-      if (gainedSugar + gainedLeaf + gainedMilk > 0 || elapsedSec > 0) {
+      // Login streak resolution. Runs on the /me path so every client
+      // session goes through it once on boot. `resolveStreak` is pure:
+      // decides whether today counts as a fresh credit, a no-op, or a
+      // broken streak (with a comeback flag if the gap was >= 3 days).
+      const resolved = resolveStreak(
+        player.streak_count,
+        player.streak_last_day,
+        player.comeback_pending,
+      );
+      // Auto-unlock queen skins that the player's current state qualifies
+      // for. Additive only — existing owned skins stick. Using a Set
+      // avoids duplicate ids from a re-scan.
+      const ownedSet = new Set<string>(player.queen_skins ?? ['default']);
+      const candidates = scanUnlockedSkins({
+        trophies: player.trophies,
+        streakCount: resolved.streakCount,
+        seasonXp: player.season_xp,
+        campaignChapter: player.campaign_chapter,
+      });
+      for (const id of candidates) ownedSet.add(id);
+      const ownedList = Array.from(ownedSet);
+      const skinsChanged = ownedList.length !== (player.queen_skins?.length ?? 0);
+
+      if (
+        gainedSugar + gainedLeaf + gainedMilk > 0 ||
+        elapsedSec > 0 ||
+        resolved.creditedToday ||
+        skinsChanged
+      ) {
         await client.query(
           `UPDATE players
              SET sugar = $2,
                  leaf_bits = $3,
                  aphid_milk = $4,
-                 last_seen_at = NOW()
+                 last_seen_at = NOW(),
+                 streak_count = $5,
+                 streak_last_day = $6,
+                 comeback_pending = $7,
+                 queen_skins = $8::text[]
            WHERE id = $1`,
-          [playerId, newSugar.toString(), newLeaf.toString(), newMilk.toString()],
+          [
+            playerId,
+            newSugar.toString(),
+            newLeaf.toString(),
+            newMilk.toString(),
+            resolved.streakCount,
+            resolved.lastDay,
+            resolved.comebackPending,
+            ownedList,
+          ],
         );
       }
       await client.query('COMMIT');
@@ -200,6 +257,37 @@ export function registerPlayer(app: FastifyInstance): void {
           seasonId: player.season_id,
           seasonXp: player.season_xp,
           seasonMilestonesClaimed: player.season_milestones_claimed ?? [],
+          // Stickiness features. Additive: client treats any missing
+          // field as a safe default so older servers stay compatible.
+          streak: {
+            count: resolved.streakCount,
+            lastDay: resolved.lastDay,
+            lastClaim: player.streak_last_claim,
+            creditedToday: resolved.creditedToday,
+            comebackPending: resolved.comebackPending,
+            nextReward: rewardForDay(resolved.streakCount),
+            rewards: STREAK_REWARDS,
+            comebackReward: COMEBACK_REWARD,
+          },
+          nemesis: player.nemesis_player_id
+            ? {
+                playerId: player.nemesis_player_id,
+                stars: player.nemesis_stars ?? 0,
+                setAt: player.nemesis_set_at
+                  ? player.nemesis_set_at.toISOString()
+                  : null,
+                avenged: player.nemesis_avenged,
+              }
+            : null,
+          queenSkin: {
+            equipped: player.queen_skin_id,
+            owned: ownedList,
+          },
+          tutorialStage: player.tutorial_stage,
+          campaign: {
+            chapter: player.campaign_chapter,
+            progress: player.campaign_progress,
+          },
         },
         base: base.snapshot,
         offlineTrickle: {
@@ -932,6 +1020,278 @@ export function registerPlayer(app: FastifyInstance): void {
       resources: {
         sugar: safeBigintToNumber(row.sugar, 'sugar', app.log),
         leafBits: safeBigintToNumber(row.leaf_bits, 'leaf_bits', app.log),
+      },
+    };
+  });
+
+  // --- Streak claim ---------------------------------------------------------
+  //
+  // Pay out the reward for the player's CURRENT streak day. Idempotent:
+  // if streak_last_claim already matches streak_count, the endpoint
+  // 409s. Comeback pack is claimed separately (and clears the flag).
+  app.post('/player/streak/claim', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const lock = await client.query<{
+        streak_count: number;
+        streak_last_claim: number;
+      }>(
+        'SELECT streak_count, streak_last_claim FROM players WHERE id = $1 FOR UPDATE',
+        [playerId],
+      );
+      if (lock.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const row = lock.rows[0]!;
+      if (row.streak_last_claim >= row.streak_count) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'streak reward already claimed for today' };
+      }
+      const reward = rewardForDay(row.streak_count);
+      const upd = await client.query<{
+        sugar: string;
+        leaf_bits: string;
+        aphid_milk: string;
+      }>(
+        `UPDATE players
+            SET sugar        = sugar + $2,
+                leaf_bits    = leaf_bits + $3,
+                aphid_milk   = aphid_milk + $4,
+                streak_last_claim = $5
+          WHERE id = $1
+      RETURNING sugar, leaf_bits, aphid_milk`,
+        [playerId, reward.sugar, reward.leafBits, reward.aphidMilk, row.streak_count],
+      );
+      await client.query('COMMIT');
+      const r = upd.rows[0]!;
+      return {
+        ok: true,
+        streakDay: row.streak_count,
+        reward,
+        resources: {
+          sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+          leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
+          aphidMilk: safeBigintToNumber(r.aphid_milk, 'aphid_milk', app.log),
+        },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'streak/claim failed');
+      reply.code(500);
+      return { error: 'streak claim failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post('/player/comeback/claim', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const upd = await pool.query<{
+      sugar: string;
+      leaf_bits: string;
+      aphid_milk: string;
+      was_pending: boolean;
+    }>(
+      `UPDATE players
+          SET sugar      = sugar + $2,
+              leaf_bits  = leaf_bits + $3,
+              aphid_milk = aphid_milk + $4,
+              comeback_pending = FALSE
+        WHERE id = $1
+          AND comeback_pending = TRUE
+    RETURNING sugar, leaf_bits, aphid_milk, TRUE AS was_pending`,
+      [playerId, COMEBACK_REWARD.sugar, COMEBACK_REWARD.leafBits, COMEBACK_REWARD.aphidMilk],
+    );
+    if (upd.rows.length === 0) {
+      reply.code(409);
+      return { error: 'no comeback bonus pending' };
+    }
+    const r = upd.rows[0]!;
+    return {
+      ok: true,
+      reward: COMEBACK_REWARD,
+      resources: {
+        sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+        leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
+        aphidMilk: safeBigintToNumber(r.aphid_milk, 'aphid_milk', app.log),
+      },
+    };
+  });
+
+  // --- Queen skins ----------------------------------------------------------
+  app.get('/player/queen-skins', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const res = await pool.query<{
+      queen_skins: string[];
+      queen_skin_id: string;
+    }>(
+      'SELECT queen_skins, queen_skin_id FROM players WHERE id = $1',
+      [playerId],
+    );
+    if (res.rows.length === 0) {
+      reply.code(404);
+      return { error: 'player not found' };
+    }
+    return {
+      catalog: QUEEN_SKINS,
+      owned: res.rows[0]!.queen_skins,
+      equipped: res.rows[0]!.queen_skin_id,
+    };
+  });
+
+  interface EquipQueenBody { skinId: string }
+  app.post<{ Body: EquipQueenBody }>(
+    '/player/queen-skins/equip',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (!body || typeof body.skinId !== 'string') {
+        reply.code(400);
+        return { error: 'skinId required' };
+      }
+      if (!skinById(body.skinId)) {
+        reply.code(400);
+        return { error: 'unknown skinId' };
+      }
+      const res = await pool.query<{
+        queen_skins: string[];
+        queen_skin_id: string;
+      }>(
+        `UPDATE players
+            SET queen_skin_id = $2
+          WHERE id = $1
+            AND $2 = ANY(queen_skins)
+      RETURNING queen_skins, queen_skin_id`,
+        [playerId, body.skinId],
+      );
+      if (res.rows.length === 0) {
+        reply.code(403);
+        return { error: 'skin not owned' };
+      }
+      return {
+        ok: true,
+        equipped: res.rows[0]!.queen_skin_id,
+        owned: res.rows[0]!.queen_skins,
+      };
+    },
+  );
+
+  // --- Tutorial / prologue stage --------------------------------------------
+  interface TutorialBody { stage: number }
+  app.post<{ Body: TutorialBody }>('/player/tutorial', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const body = req.body;
+    if (!body || !Number.isInteger(body.stage)) {
+      reply.code(400);
+      return { error: 'stage required' };
+    }
+    const stage = Math.max(0, Math.min(100, body.stage));
+    await pool.query(
+      `UPDATE players
+          SET tutorial_stage = GREATEST(tutorial_stage, $2)
+        WHERE id = $1`,
+      [playerId, stage],
+    );
+    return { ok: true, stage };
+  });
+
+  // --- Nemesis snapshot -----------------------------------------------------
+  //
+  // Returns a hydrated view of the player's current nemesis — the rival
+  // who most recently hurt us. Computed from the raid log + the stamped
+  // nemesis_player_id column. Includes a cheap "online-ish" heuristic
+  // based on `last_seen_at` so HomeScene can pulse the revenge badge
+  // when the nemesis is plausibly available to raid back.
+  app.get('/player/nemesis', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const me = await pool.query<{
+      nemesis_player_id: string | null;
+      nemesis_stars: number | null;
+      nemesis_set_at: Date | null;
+      nemesis_avenged: boolean;
+    }>(
+      `SELECT nemesis_player_id, nemesis_stars, nemesis_set_at, nemesis_avenged
+         FROM players WHERE id = $1`,
+      [playerId],
+    );
+    if (me.rows.length === 0 || !me.rows[0]!.nemesis_player_id) {
+      return { nemesis: null };
+    }
+    const n = me.rows[0]!;
+    const who = await pool.query<{
+      id: string;
+      display_name: string;
+      trophies: number;
+      faction: string;
+      queen_skin_id: string;
+      last_seen_at: Date;
+    }>(
+      `SELECT id, display_name, trophies, faction, queen_skin_id, last_seen_at
+         FROM players WHERE id = $1`,
+      [n.nemesis_player_id],
+    );
+    if (who.rows.length === 0) {
+      // Nemesis account disappeared; clear the stamp.
+      await pool.query(
+        'UPDATE players SET nemesis_player_id = NULL WHERE id = $1',
+        [playerId],
+      );
+      return { nemesis: null };
+    }
+    const w = who.rows[0]!;
+    const onlineRecent = Date.now() - w.last_seen_at.getTime() < 15 * 60 * 1000;
+    return {
+      nemesis: {
+        playerId: w.id,
+        displayName: w.display_name,
+        trophies: w.trophies,
+        faction: w.faction,
+        queenSkinId: w.queen_skin_id,
+        stars: n.nemesis_stars ?? 0,
+        setAt: n.nemesis_set_at ? n.nemesis_set_at.toISOString() : null,
+        avenged: n.nemesis_avenged,
+        onlineRecent,
       },
     };
   });

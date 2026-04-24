@@ -19,6 +19,9 @@ import { registerArena } from './routes/arena.js';
 import { registerSettings } from './routes/settings.js';
 import { registerSpritesManifest } from './routes/sprites.js';
 import { registerQuests } from './routes/quests.js';
+import { registerCampaign } from './routes/campaign.js';
+import { registerBuilder } from './routes/builder.js';
+import { registerReplayFeed } from './routes/replayFeed.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -124,6 +127,9 @@ async function start(): Promise<void> {
       registerSettings(scope);
       registerSpritesManifest(scope);
       registerQuests(scope);
+      registerCampaign(scope);
+      registerBuilder(scope);
+      registerReplayFeed(scope);
     },
     { prefix: '/api' },
   );

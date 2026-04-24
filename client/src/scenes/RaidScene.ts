@@ -226,6 +226,22 @@ export class RaidScene extends Phaser.Scene {
   private matchContext: MatchResponse | null = null;
   private raidInputs: Types.SimInput[] = [];
   private submitted = false;
+  private replayName: string | null = null;
+  private replayNameText: Phaser.GameObjects.Text | null = null;
+
+  // Stickiness contexts (consumed from registry once per raid).
+  private warContext: { warId: string; defenderId: string } | null = null;
+  private campaignContext: { missionId: number; chapterId: number; title: string } | null = null;
+  private replayContext: {
+    id: string;
+    seed: number;
+    baseSnapshot: Types.Base;
+    inputs: Types.SimInput[];
+    replayName: string;
+    attackerName: string;
+    defenderName: string;
+  } | null = null;
+  private revengeContext: { defenderId: string } | null = null;
 
   constructor() {
     super('RaidScene');
@@ -280,15 +296,59 @@ export class RaidScene extends Phaser.Scene {
     const attackerUnitLevels = (runtime?.player?.player.unitLevels ?? undefined) as
       | Record<string, number>
       | undefined;
+    // Stickiness hooks: scenes can stamp a match/replay context on
+    // the registry before transitioning here. When present, we honor
+    // it instead of running matchmaking. Contexts are consumed once.
+    const prefilledMatch = this.registry.get('prefilledMatch') as MatchResponse | null;
+    const warCtx = this.registry.get('warContext') as {
+      warId: string; defenderId: string;
+    } | null;
+    const campaignCtx = this.registry.get('campaignMission') as {
+      missionId: number; chapterId: number; title: string;
+    } | null;
+    const replayCtx = this.registry.get('replayContext') as {
+      id: string; seed: number; baseSnapshot: Types.Base;
+      inputs: Types.SimInput[]; replayName: string;
+      attackerName: string; defenderName: string;
+    } | null;
+    const revengeCtx = this.registry.get('revengeContext') as {
+      defenderId: string;
+    } | null;
+    // One-shot consumption so a back-and-forth doesn't re-fire.
+    this.registry.set('prefilledMatch', null);
+    this.registry.set('warContext', null);
+    this.registry.set('campaignMission', null);
+    this.registry.set('replayContext', null);
+    this.registry.set('revengeContext', null);
+    this.warContext = warCtx;
+    this.campaignContext = campaignCtx;
+    this.replayContext = replayCtx;
+    this.revengeContext = revengeCtx;
+
+    const seed = prefilledMatch?.seed
+      ?? replayCtx?.seed
+      ?? 0xc0ffee;
+    const snapshot = prefilledMatch?.baseSnapshot
+      ?? replayCtx?.baseSnapshot
+      ?? BOT_BASE;
     this.cfg = {
       tickRate: 30,
       maxTicks: TICK_HZ * RAID_SECONDS,
-      initialSnapshot: BOT_BASE,
-      seed: 0xc0ffee,
+      initialSnapshot: snapshot,
+      seed,
       ...(attackerUnitLevels ? { attackerUnitLevels } : {}),
     };
     this.state = Sim.createInitialState(this.cfg);
-    void this.fetchMatchFromServer();
+    if (prefilledMatch) {
+      this.matchContext = prefilledMatch;
+    } else if (replayCtx) {
+      // Replay mode: we'll auto-play the stored inputs after create()
+      // finishes and skip match fetching + submission. Scheduled on a
+      // tick so the scene is fully wired before the first deploy.
+      this.time.delayedCall(50, () => this.bootReplayPlayback());
+    } else {
+      void this.fetchMatchFromServer();
+    }
 
     this.drawHud();
     this.boardContainer = this.add.container(0, HUD_H);
@@ -1180,6 +1240,9 @@ export class RaidScene extends Phaser.Scene {
   private async submitToServer(): Promise<void> {
     if (this.submitted) return;
     this.submitted = true;
+    // Replay-mode raids skip submission entirely — the sim already ran
+    // with canned inputs and no real raid is being performed.
+    if (this.replayContext) return;
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime || !this.matchContext) return;
     try {
@@ -1194,11 +1257,50 @@ export class RaidScene extends Phaser.Scene {
         runtime.player.player.leafBits = res.player.leafBits;
         runtime.player.player.aphidMilk = res.player.aphidMilk;
       }
+      this.replayName = res.replayName ?? null;
+      if (this.replayNameText && this.replayName) {
+        this.replayNameText.setText(`"${this.replayName}"`);
+      }
+
+      // Secondary submits: war attack, campaign mission. Best-effort —
+      // a failure here doesn't invalidate the primary raid result.
+      const stars = this.currentStars();
+      if (this.warContext && stars >= 0) {
+        runtime.api
+          .warSubmitAttack({
+            defenderPlayerId: this.warContext.defenderId,
+            stars,
+          })
+          .catch((err) => console.warn('war attack submit failed:', err));
+      }
+      if (this.campaignContext && this.state.outcome === 'attackerWin' && stars >= 1) {
+        runtime.api
+          .completeMission(this.campaignContext.missionId)
+          .catch((err) => console.warn('campaign submit failed:', err));
+      }
     } catch (err) {
       // Showing an error would steal focus from the result screen;
       // log and move on — the local result is already displayed.
       console.warn('raid submit failed:', err);
     }
+  }
+
+  // Replay playback: queue every stored input into the pending queue
+  // so the normal run loop consumes them at the right ticks. The
+  // standard sim step will do the rest.
+  private bootReplayPlayback(): void {
+    if (!this.replayContext) return;
+    this.pendingInputs = [...this.replayContext.inputs];
+    this.started = true;
+    // Tag the scene with a "watching replay" banner.
+    this.add
+      .text(this.scale.width / 2, 4, `Replay: ${this.replayContext.replayName}`, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '12px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(DEPTHS.raidHudValue);
   }
 
   private showResult(): void {
@@ -1254,6 +1356,21 @@ export class RaidScene extends Phaser.Scene {
       )
       .setOrigin(0.5)
       .setDepth(DEPTHS.resultContent);
+
+    // Poetic replay name (server stamps it at /raid/submit). The
+    // request is fire-and-forget on the result card, so we render an
+    // empty placeholder and patch it in once the name arrives.
+    if (isWin) {
+      this.replayNameText = this.add
+        .text(
+          this.scale.width / 2,
+          cy + 62,
+          this.replayName ? `"${this.replayName}"` : '',
+          displayTextStyle(13, COLOR.textDim, 2),
+        )
+        .setOrigin(0.5)
+        .setDepth(DEPTHS.resultContent);
+    }
 
     this.add
       .text(
@@ -1320,8 +1437,11 @@ export class RaidScene extends Phaser.Scene {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
     const opponent = this.matchContext?.opponent.displayName ?? 'a rival hive';
+    // Pull the poetic name the server stamped on the replay. Falls
+    // back to plain-text when the response hasn't settled yet.
+    const namePrefix = this.replayName ? `"${this.replayName}" — ` : '';
     const text =
-      `${'★'.repeat(stars)} Raided ${opponent} in Hive Wars! ` +
+      `${namePrefix}${'★'.repeat(stars)} Raided ${opponent} in Hive Wars! ` +
       `${this.state.attackerSugarLooted} sugar + ${this.state.attackerLeafBitsLooted} leaf looted.`;
     try {
       const mode = await runtime.fb.shareRaidResult({ text });

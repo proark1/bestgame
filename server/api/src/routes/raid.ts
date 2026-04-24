@@ -13,6 +13,7 @@ import {
   type RaidProgressSignals,
 } from '../game/quests.js';
 import { CURRENT_SEASON_ID, xpForRaid } from '../game/season.js';
+import { computeReplayName } from '../game/replayName.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -222,7 +223,12 @@ export function registerRaid(app: FastifyInstance): void {
         // shieldHours is NULL for 0/1-star raids; the CASE avoids
         // overwriting an existing longer shield with a shorter one
         // — always take the max of current + new shield end times.
+        //
+        // Nemesis stamp: on a 2+ star loss, the attacker becomes the
+        // defender's nemesis. Stars < 2 don't reset an existing stamp
+        // — a single 1-star raid shouldn't displace a genuine rivalry.
         const shieldHours = shieldHoursForStars(stars);
+        const stampNemesis = stars >= 2;
         await client.query(
           `UPDATE players
               SET trophies  = GREATEST(0, trophies + $2),
@@ -234,22 +240,45 @@ export function registerRaid(app: FastifyInstance): void {
                       COALESCE(shield_expires_at, NOW()),
                       NOW() + ($5 || ' hours')::INTERVAL
                     )
-                  END
+                  END,
+                  nemesis_player_id = CASE WHEN $6 THEN $7::uuid ELSE nemesis_player_id END,
+                  nemesis_stars     = CASE WHEN $6 THEN $8::int  ELSE nemesis_stars END,
+                  nemesis_set_at    = CASE WHEN $6 THEN NOW()    ELSE nemesis_set_at END,
+                  nemesis_avenged   = CASE WHEN $6 THEN FALSE    ELSE nemesis_avenged END
             WHERE id = $1`,
-          [defenderId, delta.def, sugarLooted, leafLooted, shieldHours],
+          [defenderId, delta.def, sugarLooted, leafLooted, shieldHours, stampNemesis, attackerId, stars],
+        );
+      }
+
+      // If the attacker's current nemesis is the DEFENDER, mark them
+      // avenged on any stars >= 2 win. The nemesis pointer itself
+      // stays so the UI can render a "you avenged [name]" ribbon until
+      // the player next opens the game.
+      if (defenderId && stars >= 2) {
+        await client.query(
+          `UPDATE players
+              SET nemesis_avenged = TRUE
+            WHERE id = $1
+              AND nemesis_player_id = $2::uuid`,
+          [attackerId, defenderId],
         );
       }
 
       // Stringify array-typed JSONB params (inputs, result). pg-node
       // auto-JSONs objects but serializes arrays as Postgres arrays,
       // which the ::jsonb cast rejects.
+      //
+      // Replay feed eligibility: 3-star wins are auto-featured. Players
+      // can scroll the "Top Raids" feed to watch famous replays. The
+      // feed is paginated by (featured, created_at DESC).
+      const featured = stars >= 3;
       const raidInsert = await client.query<{ id: string }>(
         `INSERT INTO raids
           (attacker_id, defender_id, seed, base_snapshot, inputs, result,
            stars, sugar_looted, leaf_looted,
-           attacker_trophies_delta, defender_trophies_delta)
+           attacker_trophies_delta, defender_trophies_delta, featured)
          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb,
-                 $7, $8, $9, $10, $11)
+                 $7, $8, $9, $10, $11, $12)
          RETURNING id`,
         [
           attackerId,
@@ -263,7 +292,23 @@ export function registerRaid(app: FastifyInstance): void {
           leafLooted,
           delta.att,
           defenderId ? delta.def : 0,
+          featured,
         ],
+      );
+      const raidId = raidInsert.rows[0]!.id;
+
+      // Compute + persist the shareable replay name. Runs after insert
+      // so the raw raid id feeds the deterministic name-picker.
+      const replayName = computeReplayName({
+        raidId,
+        stars,
+        sugarLooted,
+        inputs: body.inputs,
+        queenKilled: result.queenKilled,
+      });
+      await client.query(
+        'UPDATE raids SET replay_name = $2 WHERE id = $1',
+        [raidId, replayName],
       );
 
       await client.query('COMMIT');
@@ -271,7 +316,8 @@ export function registerRaid(app: FastifyInstance): void {
       const att = attUpdate.rows[0]!;
       return {
         ok: true,
-        replayId: raidInsert.rows[0]!.id,
+        replayId: raidId,
+        replayName,
         result,
         player: {
           trophies: att.trophies,
