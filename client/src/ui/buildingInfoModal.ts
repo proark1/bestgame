@@ -289,7 +289,12 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       } else if (!queenCost) {
         costLine = 'Loading upgrade cost…';
       } else if (queenAffordable) {
-        costLine = `Next level: ${queenCost.sugar} sugar · ${queenCost.leafBits} leaf`;
+        // Include aphid milk when it's part of the cost so the player
+        // sees the full price, not just sugar + leaf.
+        const milkPart = queenCost.aphidMilk > 0
+          ? ` · ${queenCost.aphidMilk} milk`
+          : '';
+        costLine = `Next level: ${queenCost.sugar} sugar · ${queenCost.leafBits} leaf${milkPart}`;
       } else {
         const needs: string[] = [];
         if (queenCost.sugar > haveSugar) needs.push(`${queenCost.sugar - haveSugar} more sugar`);
@@ -304,11 +309,16 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       );
 
       const queenEnabled = !queenAtMax && queenAffordable;
+      // Three disabled sub-states: maxed, still-loading, or can't
+      // afford. Each gets a distinct label + toast so "why can't I
+      // click this?" is always answered by the UI itself.
       const queenLabel = queenAtMax
         ? 'Max level'
-        : queenAffordable
-          ? 'Upgrade Queen'
-          : 'Upgrade Queen (need more)';
+        : !queenCost
+          ? 'Loading…'
+          : queenAffordable
+            ? 'Upgrade Queen'
+            : 'Upgrade Queen (need more)';
       const btn = makeHiveButton(scene, {
         x: MODAL_W / 2,
         y: actionsStartY,
@@ -321,6 +331,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         onPress: () => {
           if (!queenEnabled) {
             if (queenAtMax) flashToast(scene, 'The Queen is already at her highest tier.');
+            else if (!queenCost) flashToast(scene, 'Still loading upgrade costs…');
             else flashToast(scene, 'Not enough resources for the next Queen tier.');
             return;
           }
