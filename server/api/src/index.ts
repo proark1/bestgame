@@ -51,18 +51,24 @@ async function start(): Promise<void> {
     // Trust the platform's proxy so rate-limit + logs see the real
     // client IP (Railway, Fly, Render all set X-Forwarded-For).
     trustProxy: true,
+    // Treat /play and /play/ (and every other clean URL) as the same
+    // route so we don't have to register a pair of handlers each time.
+    ignoreTrailingSlash: true,
   });
 
   await app.register(cors, {
-    // Relaxed in dev; set ALLOWED_ORIGINS (comma-separated) in prod to
-    // restrict the surface to the real game origin. CORS_ALLOW_ALL=1
-    // forces permissive mode (useful for local tunneling during QA).
+    // In dev (NODE_ENV !== 'production') we stay permissive so
+    // local IPs and tunneling services "just work". In prod we
+    // require ALLOWED_ORIGINS — if it's missing we fail closed
+    // (origin: false) so a misconfigured deploy can't silently
+    // expose the API to every origin on the internet.
+    // CORS_ALLOW_ALL=1 forces permissive mode for QA tunneling.
     origin:
-      process.env.CORS_ALLOW_ALL === '1'
+      process.env.NODE_ENV !== 'production' || process.env.CORS_ALLOW_ALL === '1'
         ? true
         : process.env.ALLOWED_ORIGINS
           ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
-          : true,
+          : false,
     methods: ['GET', 'POST', 'OPTIONS'],
   });
 
@@ -184,21 +190,14 @@ async function start(): Promise<void> {
     });
     app.log.info(`serving client from ${CLIENT_DIST}`);
 
-    // Clean /admin URL -> admin.html. Must be registered after static so
-    // that /admin.html itself still resolves to the static file.
+    // Clean URLs for game, legal, and admin pages. Landing (index.html)
+    // is served by the static fallback at '/'; these aliases map the
+    // no-extension paths to the right static file. `ignoreTrailingSlash`
+    // on the Fastify instance means each of these also matches /path/.
     app.get('/admin', (_req, reply) => {
       reply.sendFile('admin.html');
     });
-    app.get('/admin/', (_req, reply) => {
-      reply.sendFile('admin.html');
-    });
-    // Clean URLs for game + legal pages. Landing (index.html) is served
-    // by the static fallback at '/'; these aliases map the no-extension
-    // paths to the right static file.
     app.get('/play', (_req, reply) => {
-      reply.sendFile('play.html');
-    });
-    app.get('/play/', (_req, reply) => {
       reply.sendFile('play.html');
     });
     app.get('/privacy', (_req, reply) => {
