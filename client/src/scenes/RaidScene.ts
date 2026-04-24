@@ -9,6 +9,7 @@ import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
 
@@ -170,6 +171,7 @@ export class RaidScene extends Phaser.Scene {
   private boardContainer!: Phaser.GameObjects.Container;
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
   private buildingHpBars = new Map<number, Phaser.GameObjects.Graphics>();
+  private buildingRoleLabels = new Map<number, Phaser.GameObjects.Text>();
   // Side-maps for the hit-flash and death-burst juice. Kept separate
   // from SimState so the sim stays pure and replayable.
   private buildingLastHp = new Map<number, number>();
@@ -271,6 +273,7 @@ export class RaidScene extends Phaser.Scene {
     this.deckLabels = [];
     this.buildingSprites.clear();
     this.buildingHpBars.clear();
+    this.buildingRoleLabels.clear();
     this.buildingLastHp.clear();
     this.buildingKillPlayed.clear();
     this.unitSprites.clear();
@@ -569,6 +572,23 @@ export class RaidScene extends Phaser.Scene {
       const bar = this.add.graphics();
       this.boardContainer.add(bar);
       this.buildingHpBars.set(b.id, bar);
+
+      const codex = BUILDING_CODEX[b.kind];
+      if (codex) {
+        const labelY = b.anchorY * TILE - 6;
+        const roleLabel = this.add
+          .text(x, labelY, codex.role, {
+            fontSize: '10px',
+            fontFamily: 'ui-monospace, monospace',
+            color: COLOR.textGold,
+            backgroundColor: '#09100acc',
+            padding: { x: 4, y: 2 },
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(6);
+        this.boardContainer.add(roleLabel);
+        this.buildingRoleLabels.set(b.id, roleLabel);
+      }
     }
   }
 
@@ -578,16 +598,27 @@ export class RaidScene extends Phaser.Scene {
       const container = this.add.container(0, 0).setDepth(31);
 
       const bg = this.add.graphics();
-      const icon = this.add.image(0, -12, e.icon).setDisplaySize(48, 48);
+      const icon = this.add.image(0, -14, e.icon).setDisplaySize(46, 46);
       const label = this.add
-        .text(0, 18, `${e.label} ×${e.count}`, {
+        .text(0, 15, `${e.label} ×${e.count}`, {
           fontFamily: 'ui-monospace, monospace',
-          fontSize: '13px',
+          fontSize: '12px',
           color: '#e6f5d2',
         })
         .setOrigin(0.5);
+      const unitRole = UNIT_CODEX[e.kind]?.role ?? '';
 
       container.add([bg, icon, label]);
+      if (unitRole) {
+        const roleText = this.add
+          .text(0, 29, unitRole, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '9px',
+            color: '#9fc79a',
+          })
+          .setOrigin(0.5);
+        container.add(roleText);
+      }
       container.setSize(DECK_CARD_W, DECK_CARD_H);
       container
         .setInteractive(
@@ -855,13 +886,17 @@ export class RaidScene extends Phaser.Scene {
     this.deckSelectedIcon.setAlpha(entry.count > 0 ? 1 : 0.5);
     const status = entry.count > 0 ? `${entry.count} ready` : 'depleted';
     const burst = Math.min(entry.count, 5);
+    const unitCodex = UNIT_CODEX[entry.kind];
+    const roleStr = unitCodex ? ` — ${unitCodex.role}` : '';
     this.deckSelectedText.setText(
-      `Selected: ${entry.label} (${status})${entry.count > 0 ? ` • deploys ${burst} per drag` : ''}`,
+      `${entry.label}${roleStr} (${status})${entry.count > 0 ? ` • deploys ${burst}` : ''}`,
     );
     this.deckHintText.setText(
       entry.count > 0
-        ? 'Tap a card, then drag across the battlefield to draw its attack path.'
-        : 'Selected unit is depleted. Pick another card to keep attacking.',
+        ? (unitCodex?.power
+            ? `${unitCodex.power.slice(0, 90)}${unitCodex.power.length > 90 ? '…' : ''}`
+            : 'Drag across the battlefield to draw its attack path.')
+        : 'This unit is depleted. Pick another card to keep attacking.',
     );
     const upcoming = ALL_DECK.filter((d) => d.unlockQueenLevel > this.attackerQueenLevel)
       .slice(0, 2)
@@ -1300,6 +1335,8 @@ export class RaidScene extends Phaser.Scene {
       this.buildingSprites.clear();
       for (const bar of this.buildingHpBars.values()) bar.destroy();
       this.buildingHpBars.clear();
+      for (const lbl of this.buildingRoleLabels.values()) lbl.destroy();
+      this.buildingRoleLabels.clear();
       // Juice-pass side maps share the same per-raid lifecycle.
       this.buildingLastHp.clear();
       this.buildingKillPlayed.clear();
