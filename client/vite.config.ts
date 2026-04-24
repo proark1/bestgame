@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
-// Facebook Instant Games caps first load at 5 MB. Target: ≤ 2.5 MB.
-// Aggressive code-split so arena, clan, and replay viewer lazy-load.
+// Target a lean first load on mobile. Aggressive code-split so arena,
+// clan, and replay viewer lazy-load; the landing page ships zero JS
+// besides the tiny inline localStorage sniff.
 export default defineConfig({
   root: '.',
   publicDir: 'public',
@@ -13,13 +14,18 @@ export default defineConfig({
     cssCodeSplit: true,
     reportCompressedSize: true,
     rollupOptions: {
-      // Multi-page build: the game entrypoint (index.html → src/main.ts)
-      // and the admin panel (admin.html → src/admin/main.ts) share
-      // the same dist but load independently. The admin bundle stays
-      // small (no Phaser) so it opens fast even over a slow connection.
+      // Multi-page build. index.html is the marketing landing (no
+      // Phaser — ~2 KB of inline CSS + a single CTA link). play.html
+      // is the game shell and loads src/main.ts. admin.html is the
+      // separate admin panel. Each entrypoint produces its own
+      // dedicated main bundle but shares chunks via the manualChunks
+      // split below.
       input: {
         main: resolve(__dirname, 'index.html'),
+        play: resolve(__dirname, 'play.html'),
         admin: resolve(__dirname, 'admin.html'),
+        privacy: resolve(__dirname, 'privacy.html'),
+        terms: resolve(__dirname, 'terms.html'),
       },
       output: {
         manualChunks(id) {

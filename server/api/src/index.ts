@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
+import rateLimit from '@fastify/rate-limit';
+import { initServerSentry } from './obs/sentry.js';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,17 +39,49 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = join(__dirname, '..', '..', '..', 'client', 'dist');
 
 async function start(): Promise<void> {
+  // Wire Sentry up before Fastify so its request hooks can wrap every
+  // handler. No-op unless SENTRY_DSN_SERVER is set.
+  initServerSentry();
+
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     // 3.5 MB — comfortably fits a 256 px WebP sprite (base64-encoded) plus
     // envelope. /admin/api/save is the only route that needs this much.
     bodyLimit: 3_500_000,
+    // Trust the platform's proxy so rate-limit + logs see the real
+    // client IP (Railway, Fly, Render all set X-Forwarded-For).
+    trustProxy: true,
   });
 
   await app.register(cors, {
-    // Dev origins + FB Instant wrapper. Tighten in production.
-    origin: true,
+    // Relaxed in dev; set ALLOWED_ORIGINS (comma-separated) in prod to
+    // restrict the surface to the real game origin. CORS_ALLOW_ALL=1
+    // forces permissive mode (useful for local tunneling during QA).
+    origin:
+      process.env.CORS_ALLOW_ALL === '1'
+        ? true
+        : process.env.ALLOWED_ORIGINS
+          ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
+          : true,
     methods: ['GET', 'POST', 'OPTIONS'],
+  });
+
+  // Global rate limit. Most routes are generous (cheap) but auth +
+  // raid submission get tighter caps applied at the route level.
+  await app.register(rateLimit, {
+    global: true,
+    max: 300,
+    timeWindow: '1 minute',
+    // When the platform proxy populates X-Forwarded-For, fastify's
+    // req.ip already resolves to the real client IP thanks to
+    // trustProxy above. Key by that so one cloud NAT doesn't share
+    // a bucket across thousands of distinct players.
+    keyGenerator: (req) => req.ip,
+    errorResponseBuilder: (_req, ctx) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit hit. Try again in ${Math.ceil(ctx.ttl / 1000)}s.`,
+    }),
   });
 
   // Healthcheck stays at /health (Railway's ready probe points here).
@@ -157,6 +191,21 @@ async function start(): Promise<void> {
     });
     app.get('/admin/', (_req, reply) => {
       reply.sendFile('admin.html');
+    });
+    // Clean URLs for game + legal pages. Landing (index.html) is served
+    // by the static fallback at '/'; these aliases map the no-extension
+    // paths to the right static file.
+    app.get('/play', (_req, reply) => {
+      reply.sendFile('play.html');
+    });
+    app.get('/play/', (_req, reply) => {
+      reply.sendFile('play.html');
+    });
+    app.get('/privacy', (_req, reply) => {
+      reply.sendFile('privacy.html');
+    });
+    app.get('/terms', (_req, reply) => {
+      reply.sendFile('terms.html');
     });
   } else {
     app.log.warn(

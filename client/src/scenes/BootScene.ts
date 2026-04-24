@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import type { FBInstantBridge } from '../fbinstant/FBInstantBridge.js';
 import type { HiveRuntime } from '../main.js';
 import {
   ALL_SPRITE_KEYS,
@@ -110,7 +109,7 @@ export class BootScene extends Phaser.Scene {
   private progressFill!: Phaser.GameObjects.Graphics;
   private progressTrack = { x: 0, y: 0, w: 0, h: 0 };
 
-  constructor(private readonly fb: FBInstantBridge) {
+  constructor() {
     super('BootScene');
   }
 
@@ -122,7 +121,6 @@ export class BootScene extends Phaser.Scene {
     this.setLoadingStatus('Checking colony manifest...');
     this.updateLoadingProgress(0);
     this.load.on('progress', (p: number) => {
-      this.fb.setLoadingProgress(p);
       this.updateLoadingProgress(p);
     });
     this.load.once('complete', () => {

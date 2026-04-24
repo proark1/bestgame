@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f1b10" />
+    <meta name="description" content="Hive Wars — raise your ant colony and raid rival hives. Free in-browser strategy game, plays on any phone or desktop, no install needed." />
+    <meta property="og:title" content="Hive Wars — ant-colony strategy" />
+    <meta property="og:description" content="Raise, raid, rise. A free browser strategy game. No install." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og/cover.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og/cover.png" />
+    <title>Hive Wars — playing</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0f1b10;
+        color: #fff;
+        overflow: hidden;
+        height: 100%;
+        /* On iOS Safari `100vh` includes the area behind the
+         * top/bottom browser chrome - content underneath is hidden
+         * when the toolbars are visible. `100dvh` (dynamic
+         * viewport height) excludes the chrome, and Phaser's
+         * Scale.RESIZE picks up the size change automatically. */
+        height: 100dvh;
+        font-family: system-ui, -apple-system, sans-serif;
+        touch-action: none;
+        /* Don't let the user accidentally pull-to-refresh while
+         * dragging a pheromone trail near the top of the screen. */
+        overscroll-behavior: none;
+      }
+      #game {
+        /* Inset by env(safe-area-inset-*) so the canvas avoids the
+         * iOS notch / Dynamic Island at the top, the home-indicator
+         * bar at the bottom, and any landscape side rail. With the
+         * inset positioning the canvas is exactly the visible
+         * playable area, and Phaser's Scale.RESIZE sizes the
+         * backing buffer to match - pointer-to-game is identity. */
+        position: fixed;
+        top: env(safe-area-inset-top, 0);
+        right: env(safe-area-inset-right, 0);
+        bottom: env(safe-area-inset-bottom, 0);
+        left: env(safe-area-inset-left, 0);
+        overflow: hidden;
+      }
+      #game canvas {
+        /* Kill inherited transforms. main.ts pairs each resize with a
+         * backing-buffer override: the canvas element's .width /
+         * .height attributes are logical x devicePixelRatio, while
+         * the CSS .style.width / .style.height stay at logical size.
+         * That renders every pixel at the display's physical
+         * resolution without the browser bitmap-upscaling the
+         * canvas, and without changing any pointer math. */
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        transform: none !important;
+        margin: 0 !important;
+        display: block;
+        touch-action: none;
+        /* Quality scaling on the browser side (belt-and-braces - the
+         * backing-buffer already matches DPR so there should be no
+         * upscale). Explicit `auto` blocks Chrome's occasional
+         * "pixelated" default on canvas inside transformed ancestors. */
+        image-rendering: auto;
+      }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at 50% 28%, rgba(255, 217, 138, 0.12), transparent 28%),
+          linear-gradient(180deg, #203224 0%, #142117 58%, #060b07 100%);
+        color: #f7edd0;
+        z-index: 10;
+        font-family: "Trebuchet MS", Verdana, sans-serif;
+      }
+      .boot-splash__card {
+        min-width: min(460px, calc(100vw - 32px));
+        padding: 26px 28px;
+        border-radius: 18px;
+        border: 3px solid #5c4020;
+        background: linear-gradient(180deg, rgba(42, 63, 45, 0.96), rgba(9, 16, 10, 0.96));
+        box-shadow:
+          0 12px 30px rgba(0, 0, 0, 0.38),
+          inset 0 2px 0 rgba(255, 217, 138, 0.18);
+        text-align: center;
+      }
+      .boot-splash__pill {
+        display: inline-block;
+        margin-bottom: 14px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, #ffd98a, #d8a848);
+        color: #2a1d08;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .boot-splash__title {
+        font-family: "Arial Black", "Trebuchet MS", sans-serif;
+        font-size: clamp(28px, 5vw, 34px);
+        color: #ffd98a;
+        text-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+      }
+      .boot-splash__subtitle {
+        margin-top: 10px;
+        color: #bad3a3;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="boot-splash">
+      <div class="boot-splash__card">
+        <div class="boot-splash__pill">Live build</div>
+        <div class="boot-splash__title">Hive Wars</div>
+        <div class="boot-splash__subtitle">Raising the colony...</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

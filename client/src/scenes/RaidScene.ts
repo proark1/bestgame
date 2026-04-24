@@ -5,6 +5,7 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
 import { sfxVictory, sfxDefeat } from '../ui/audio.js';
+import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
@@ -1621,13 +1622,10 @@ export class RaidScene extends Phaser.Scene {
     }
   }
 
-  // Fire-and-forget share. Uses the bridge's cascading fallback:
-  // FB Instant → Web Share API → clipboard. On clipboard copy we flash
-  // a tiny toast so the user knows something happened (vs the share
-  // sheet, which is its own confirmation).
+  // Fire-and-forget share. Web Share API → clipboard. On clipboard copy
+  // we flash a toast so the user knows something happened (the OS share
+  // sheet provides its own confirmation).
   private async shareOutcome(stars: 0 | 1 | 2 | 3): Promise<void> {
-    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
-    if (!runtime) return;
     const opponent = this.matchContext?.opponent.displayName ?? 'a rival hive';
     // Pull the poetic name the server stamped on the replay. Falls
     // back to plain-text when the response hasn't settled yet.
@@ -1636,7 +1634,7 @@ export class RaidScene extends Phaser.Scene {
       `${namePrefix}${'★'.repeat(stars)} Raided ${opponent} in Hive Wars! ` +
       `${this.state.attackerSugarLooted} sugar + ${this.state.attackerLeafBitsLooted} leaf looted.`;
     try {
-      const mode = await runtime.fb.shareRaidResult({ text });
+      const mode = await shareOutcomeTransport({ text });
       // User may have tapped Back-to-home while the share sheet was up;
       // touching a torn-down scene would throw.
       if (!this.scene.isActive()) return;

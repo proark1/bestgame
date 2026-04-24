@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
-import { FBInstantBridge } from './fbinstant/FBInstantBridge.js';
 import { applyGlobalSettings } from './ui/settingsModal.js';
+import { registerServiceWorker } from './pwa/register.js';
+import { initSentryIfConfigured } from './obs/sentry.js';
+import { initAnalyticsIfConfigured, track } from './obs/analytics.js';
+import { enforceBetaGate } from './pwa/betaGate.js';
 import { BootScene } from './scenes/BootScene.js';
 import { HomeScene } from './scenes/HomeScene.js';
 import { RaidScene } from './scenes/RaidScene.js';
@@ -26,14 +29,13 @@ import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
 // registry via scene.registry.get('runtime'). Keeps the Phaser Game
 // constructor free of dependency injection plumbing.
 export interface HiveRuntime {
-  fb: FBInstantBridge;
   auth: AuthClient;
   api: Api;
   player: PlayerMeResponse | null;
 }
 
-// Remove the HTML splash shown during initial JS load. Called from two
-// places (after FB init, and from BootScene) so the splash never sticks
+// Remove the HTML splash shown during initial JS load. Called twice
+// (from main() and from BootScene.create()) so the splash never sticks
 // if one path hangs — whichever runs first wins. Also clears the safety
 // timer so it can't fire redundantly after a successful boot.
 let splashTimer: ReturnType<typeof setTimeout> | undefined;
@@ -55,17 +57,22 @@ async function main(): Promise<void> {
   // localStorage before scenes start laying out so they honor the
   // user's settings on first paint (not after a resize).
   applyGlobalSettings();
-  const fb = new FBInstantBridge();
-  try {
-    await fb.initialize(() => {});
-  } catch (err) {
-    // FBInstantBridge already catches internally; this is defensive.
-    console.warn('boot: FB init threw', err);
-  }
+  // Gate on beta cohort if the build turned it on. `enforceBetaGate`
+  // halts boot and paints a full-page "closed beta" screen when the
+  // gate is active and the visitor lacks the cohort token.
+  if (!enforceBetaGate()) return;
+  // Register the service worker for offline cache + install-to-home-screen
+  // support. Non-blocking; boot proceeds whether or not this succeeds.
+  registerServiceWorker();
+  // Observability. Both are no-ops unless their env-var DSN/key is
+  // stamped into the bundle at build time.
+  void initSentryIfConfigured();
+  void initAnalyticsIfConfigured();
+  track('session_start');
 
   const auth = new AuthClient();
   const api = new Api(auth);
-  const runtime: HiveRuntime = { fb, auth, api, player: null };
+  const runtime: HiveRuntime = { auth, api, player: null };
 
   // Try to resume a cached session first; on any failure or first load,
   // mint a fresh guest session. If auth fails entirely (backend
@@ -150,7 +157,7 @@ async function main(): Promise<void> {
     // No `physics` block — the shared deterministic sim is our physics;
     // Phaser's built-in physics would add weight and engine-dependent math.
     scene: [
-      new BootScene(fb),
+      new BootScene(),
       new HomeScene(),
       new RaidScene(),
       new LeaderboardScene(),
