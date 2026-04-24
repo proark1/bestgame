@@ -329,15 +329,38 @@ export class HomeScene extends Phaser.Scene {
           : 'phone';
     const cy = HUD_H / 2;
 
-    // Title — hidden on phone so nothing collides with pills.
+    // Title — hidden on phone so nothing collides with pills. When
+    // the admin has generated + toggled the `ui-logo` override on we
+    // render the brass wordmark image at the top-left instead of the
+    // plain text title. Everything else on the HUD stays put; the
+    // logo reserves the same horizontal slot the text occupied.
     if (tier !== 'phone') {
-      crispText(
-        this,
-        tier === 'wide' ? 24 : 16,
-        cy,
-        'HIVE WARS',
-        displayTextStyle(tier === 'wide' ? 20 : 16, '#ffe7b0', 4),
-      ).setOrigin(0, 0.5);
+      const useLogoImage = isUiOverrideActive(this, 'ui-logo');
+      if (useLogoImage) {
+        const logo = this.add.image(tier === 'wide' ? 24 : 16, cy, 'ui-logo')
+          .setOrigin(0, 0.5);
+        const source = logo.texture.getSourceImage();
+        const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
+        const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
+        // Height targets the HUD minus a little breathing room; width
+        // follows the source aspect ratio so the image never stretches.
+        const targetH = HUD_H - 16;
+        const scale = targetH / Math.max(1, srcH);
+        logo.setDisplaySize(srcW * scale, targetH);
+        // Make the logo clickable → opens the tutorial, a common
+        // pattern for "tap the logo to get back to hints". Cheap
+        // hit-area adjust, no separate zone.
+        logo.setInteractive({ useHandCursor: true });
+        logo.on('pointerdown', () => openTutorial({ force: true }));
+      } else {
+        crispText(
+          this,
+          tier === 'wide' ? 24 : 16,
+          cy,
+          'HIVE WARS',
+          displayTextStyle(tier === 'wide' ? 20 : 16, '#ffe7b0', 4),
+        ).setOrigin(0, 0.5);
+      }
     }
 
     // Account chip — in wide it's a full pill; on phone it's a

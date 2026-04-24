@@ -101,6 +101,11 @@ function parseManifest(raw: unknown): ManifestResponse | null {
 
 export class BootScene extends Phaser.Scene {
   private statusText!: Phaser.GameObjects.Text;
+  // Title text rendered in drawLoadingScreen. Stashed on the instance
+  // so create() can hide it and paint the generated `ui-logo` image
+  // in its place once the texture is loaded.
+  private titleText!: Phaser.GameObjects.Text;
+  private titleCenter: { x: number; y: number } = { x: 0, y: 0 };
   private progressText!: Phaser.GameObjects.Text;
   private progressFill!: Phaser.GameObjects.Graphics;
   private progressTrack = { x: 0, y: 0, w: 0, h: 0 };
@@ -223,13 +228,14 @@ export class BootScene extends Phaser.Scene {
       0.5,
     );
 
-    const title = crispText(
+    this.titleText = crispText(
       this,
       w / 2,
       cardY + 54,
       'Hive Wars',
       displayTextStyle(32, COLOR.textGold, 5),
     ).setOrigin(0.5, 0.5);
+    this.titleCenter = { x: w / 2, y: cardY + 54 };
     crispText(
       this,
       w / 2,
@@ -277,7 +283,7 @@ export class BootScene extends Phaser.Scene {
     ).setOrigin(0.5, 0.5);
 
     this.tweens.add({
-      targets: title,
+      targets: this.titleText,
       scale: { from: 1, to: 1.02 },
       duration: 1500,
       yoyo: true,
@@ -443,6 +449,33 @@ export class BootScene extends Phaser.Scene {
           gl.LINEAR_MIPMAP_LINEAR,
         );
       }
+    }
+
+    // Swap the splash title text for the generated logo image when it
+    // loaded. We don't gate this on the ui-logo override flag because
+    // the presence of the generated texture is itself proof the admin
+    // wants the logo. The override flag only governs HomeScene's
+    // top-left chrome, where the fallback text reads fine on its own.
+    if (this.textures.exists('ui-logo')) {
+      this.titleText.setVisible(false);
+      const logo = this.add
+        .image(this.titleCenter.x, this.titleCenter.y, 'ui-logo')
+        .setOrigin(0.5, 0.5);
+      // Fit width to the card's inner region + preserve aspect ratio.
+      const source = logo.texture.getSourceImage();
+      const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
+      const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
+      const targetW = Math.min(380, this.scale.width - 80);
+      const scale = targetW / Math.max(1, srcW);
+      logo.setDisplaySize(targetW, srcH * scale);
+      this.tweens.add({
+        targets: logo,
+        scale: { from: logo.scale, to: logo.scale * 1.02 },
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
     }
 
     // Fetch admin UI-override flags before transitioning so HomeScene's
