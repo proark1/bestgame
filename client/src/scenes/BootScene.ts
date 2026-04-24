@@ -223,7 +223,7 @@ export class BootScene extends Phaser.Scene {
 
     const pill = this.add.graphics();
     drawPill(pill, cardX + 18, cardY + 18, 92, 22, { brass: true });
-    crispText(this, cardX + 64, cardY + 29, 'Live build', labelTextStyle(10, '#2a1d08')).setOrigin(
+    crispText(this, cardX + 64, cardY + 29, 'Live build', labelTextStyle(10, COLOR.textGold)).setOrigin(
       0.5,
       0.5,
     );

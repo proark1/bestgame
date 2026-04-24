@@ -137,7 +137,7 @@ export class CodexScene extends Phaser.Scene {
 
     const pill = this.add.graphics();
     drawPill(pill, w / 2 - 194, 18, 94, 20, { brass: true });
-    crispText(this, w / 2 - 147, 28, 'Lore deck', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
+    crispText(this, w / 2 - 147, 28, 'Lore deck', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5);
 
     makeHiveButton(this, {
       x: 72,

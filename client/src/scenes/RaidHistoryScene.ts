@@ -172,7 +172,7 @@ export class RaidHistoryScene extends Phaser.Scene {
     this.rowContainer.add(card);
     this.rowContainer.add(pill);
     this.rowContainer.add(
-      crispText(this, x + 58, y + 24, 'History', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, x + 58, y + 24, 'History', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
     this.rowContainer.add(
       crispText(this, this.scale.width / 2, y + 48, 'No raids yet - launch your first attack from the home screen.', bodyTextStyle(14, COLOR.textPrimary))
@@ -216,7 +216,7 @@ export class RaidHistoryScene extends Phaser.Scene {
     drawPill(pill, originX + 16, y + 14, 92, 20, { brass: true });
     this.rowContainer.add(pill);
     this.rowContainer.add(
-      crispText(this, originX + 62, y + 24, 'Battle log', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, originX + 62, y + 24, 'Battle log', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
     this.rowContainer.add(
       crispText(this, originX + 18, y + 42, 'Track your wins, losses, and loot swings.', displayTextStyle(15, COLOR.textGold, 3))
@@ -264,7 +264,7 @@ export class RaidHistoryScene extends Phaser.Scene {
         originX + 57,
         y + 25,
         isWin ? 'Success' : 'Setback',
-        isWin ? labelTextStyle(11, '#2a1d08') : labelTextStyle(11, COLOR.textPrimary),
+        isWin ? labelTextStyle(11, COLOR.textGold) : labelTextStyle(11, COLOR.textPrimary),
       ).setOrigin(0.5, 0.5),
     );
 

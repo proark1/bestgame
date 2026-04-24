@@ -124,7 +124,7 @@ export class ReplayFeedScene extends Phaser.Scene {
       crispText(
         this, originX + 44, y + 26,
         `${'★'.repeat(e.stars)}${'☆'.repeat(3 - e.stars)}`,
-        labelTextStyle(11, '#2a1d08'),
+        labelTextStyle(11, COLOR.textGold),
       ).setOrigin(0.5, 0.5),
     );
 

@@ -32,9 +32,12 @@ const MODAL_W = 380;
 // for non-walls but the reserved slot keeps the layout stable).
 const MODAL_H = 640;
 const MAX_BUILDING_LEVEL = 10;
+// Only the straight-section walls rotate — their painted asset has a
+// long axis so spinning the sprite 90° produces a visibly different
+// vertical section. Bunkers / towers are rounded and don't read as
+// "oriented" so rotating them looks broken; we keep them off the list.
 const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.BuildingKind>([
   'LeafWall',
-  'PebbleBunker',
   'ThornHedge',
 ]);
 
@@ -113,7 +116,14 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
 
   const root = scene.add.container(0, 0).setDepth(DEPTHS.resultCard);
 
-  // Dim backdrop — tap anywhere outside the card to close.
+  // Dim backdrop — tap anywhere OUTSIDE the card closes. Previously
+  // the backdrop covered the whole screen and any click on empty
+  // card chrome (title text, stat rows, gaps between buttons) fell
+  // through to the backdrop's pointerdown and closed the modal —
+  // not what the user expects. Check coordinates against the card
+  // rect so only true "outside" clicks dismiss.
+  const cx = (W - MODAL_W) / 2;
+  const cy = (H - MODAL_H) / 2;
   const backdrop = scene.add
     .rectangle(0, 0, W, H, 0x000000, 0.62)
     .setOrigin(0, 0)
@@ -122,8 +132,6 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
 
   // Modal card. Reuses the result-card palette for visual coherence
   // with the rest of the game.
-  const cx = (W - MODAL_W) / 2;
-  const cy = (H - MODAL_H) / 2;
   const card = scene.add.graphics();
   drawPanel(card, cx, cy, MODAL_W, MODAL_H, {
     topColor: COLOR.bgPanelHi,
@@ -138,10 +146,41 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
   });
   root.add(card);
 
+  // A transparent interactive zone covering the card rect. Phaser
+  // fires pointer events on the topmost interactive object at the
+  // click point; adding this zone means clicks on card chrome
+  // (title, stat rows, gaps) land here instead of on the backdrop,
+  // so the modal stays open unless the click is genuinely outside.
+  // Also prevents the board-tap handler in HomeScene from reacting
+  // to the same click (the scene-level pointer handler only runs
+  // when no interactive object consumed the event).
+  const cardHit = scene.add
+    .zone(cx, cy, MODAL_W, MODAL_H)
+    .setOrigin(0, 0)
+    .setInteractive();
+  root.add(cardHit);
+  cardHit.on('pointerdown', (
+    _p: Phaser.Input.Pointer,
+    _lx: number,
+    _ly: number,
+    e: Phaser.Types.Input.EventData,
+  ) => {
+    e?.stopPropagation?.();
+  });
+
   const close = (): void => {
     root.destroy(true);
   };
-  backdrop.on('pointerdown', close);
+  // Only close if the click actually fell through to the backdrop
+  // (i.e. the card-hit zone above didn't consume it). Coordinate
+  // check is belt-and-braces for any Phaser edge case where both
+  // receive the event.
+  backdrop.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    const insideCard =
+      pointer.x >= cx && pointer.x <= cx + MODAL_W &&
+      pointer.y >= cy && pointer.y <= cy + MODAL_H;
+    if (!insideCard) close();
+  });
 
   // Header: kind label + level pill. Re-rendered on upgrade so we
   // wrap everything after the backdrop inside a `body` container we
@@ -171,7 +210,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     drawPill(pill, MODAL_W / 2 - 50, 64, 100, 22, { brass: true });
     bodyContainer.add(pill);
     bodyContainer.add(
-      crispText(scene, MODAL_W / 2, 75, `Level ${level}`, labelTextStyle(11, '#2a1d08'))
+      crispText(scene, MODAL_W / 2, 75, `Level ${level}`, labelTextStyle(11, COLOR.textGold))
         .setOrigin(0.5, 0.5),
     );
     const closeX = crispText(scene, MODAL_W - 16, 14, '×',

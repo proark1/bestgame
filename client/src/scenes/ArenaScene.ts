@@ -216,7 +216,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const pill = this.add.graphics();
     drawPill(pill, w / 2 - 184, 18, 74, 20, { brass: true });
-    crispText(this, w / 2 - 147, 28, 'PvP', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
+    crispText(this, w / 2 - 147, 28, 'PvP', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5);
 
     makeHiveButton(this, {
       x: 72,
@@ -274,7 +274,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const pill = this.add.graphics();
     drawPill(pill, 14, 14, 112, 20, { brass: true });
-    const label = crispText(this, 70, 24, 'Arena flow', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5);
+    const label = crispText(this, 70, 24, 'Arena flow', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5);
     this.statusText = crispText(this, width / 2, 40, '', displayTextStyle(15, COLOR.textPrimary, 3)).setOrigin(
       0.5,
       0.5,
