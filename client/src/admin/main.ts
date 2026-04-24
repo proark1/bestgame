@@ -27,6 +27,7 @@ import {
 } from './api.js';
 import { SpriteCard } from './SpriteCard.js';
 import { compressBase64Image, humanBytes } from './compress.js';
+import { renderPreviewPanel } from './PreviewPanel.js';
 import {
   BUILDING_SPRITE_KEYS,
   UNIT_SPRITE_KEYS,
@@ -150,6 +151,22 @@ async function bootstrap(): Promise<void> {
   render();
 }
 
+// Active admin tab — persisted across reloads so an admin who pops
+// over to the game and back keeps their place. Kept in localStorage
+// (not the URL hash) because the admin is a single-page tool and we
+// don't have routing; localStorage matches the existing token-stash
+// pattern on this page.
+type AdminTab = 'sprites' | 'users' | 'preview';
+const TAB_STORAGE_KEY = 'hive.adminTab';
+function readActiveTab(): AdminTab {
+  const v = localStorage.getItem(TAB_STORAGE_KEY);
+  if (v === 'users' || v === 'preview' || v === 'sprites') return v;
+  return 'sprites';
+}
+function writeActiveTab(tab: AdminTab): void {
+  localStorage.setItem(TAB_STORAGE_KEY, tab);
+}
+
 function render(): void {
   root.innerHTML = '';
 
@@ -184,14 +201,33 @@ function render(): void {
   header.append(actions);
   root.append(header);
 
-  root.append(renderGuide());
-  // The animation panel is compact and useful in both states: whether
-  // the admin toggles the feature, or just wants to confirm that
-  // three walk-cycle strips are on disk. Rendered unconditionally;
-  // it gracefully handles the "no walk sheet yet" case inline.
-  root.append(renderAnimationPanel());
-  root.append(renderUiOverridesPanel());
-  root.append(renderUsersPanel());
+  // -- Tabs -----------------------------------------------------------------
+  // Sprites / Users / Preview. Sprites is the original admin surface
+  // (sprite grid + animation + UI override flags); Users owns the
+  // login-account CRUD; Preview groups the UI overrides by the scene
+  // they affect so admins can see + toggle + regenerate everything
+  // tied to, say, HomeScene in one place.
+  const activeTab = readActiveTab();
+  const tabBar = document.createElement('nav');
+  tabBar.className = 'admin-tabs';
+  const tabDefs: ReadonlyArray<{ id: AdminTab; label: string }> = [
+    { id: 'sprites', label: 'Sprites' },
+    { id: 'users',   label: 'Users' },
+    { id: 'preview', label: 'Preview' },
+  ];
+  for (const def of tabDefs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'admin-tab' + (def.id === activeTab ? ' is-active' : '');
+    btn.textContent = def.label;
+    btn.addEventListener('click', () => {
+      if (def.id === activeTab) return;
+      writeActiveTab(def.id);
+      render();
+    });
+    tabBar.append(btn);
+  }
+  root.append(tabBar);
 
   // Slim progress bar tucked under the header — hidden until a batch is
   // running. Lives in the DOM permanently so state.progressEl is always
@@ -202,6 +238,31 @@ function render(): void {
   progress.innerHTML = '<div class="progress-bar"></div><span class="progress-label"></span>';
   root.append(progress);
   state.progressEl = progress;
+
+  // Render just the active tab's content.
+  if (activeTab === 'users') {
+    root.append(renderUsersPanel());
+    return;
+  }
+  if (activeTab === 'preview') {
+    // Pass the admin's cached state in so the Preview tab doesn't
+    // re-fetch prompts / UI-override settings on every tab switch.
+    // getCompression is a getter rather than a snapshot so the admin
+    // can tweak the format/quality/maxDim sliders up top and the
+    // very next Regenerate inside Preview picks up the new values.
+    root.append(
+      renderPreviewPanel({
+        initialPrompts: state.prompts,
+        getCompression: () => ({ ...state.compression }),
+      }),
+    );
+    return;
+  }
+
+  // Sprites tab (default).
+  root.append(renderGuide());
+  root.append(renderAnimationPanel());
+  root.append(renderUiOverridesPanel());
 
   // -- Toolbar --------------------------------------------------------------
   const toolbar = document.createElement('div');
@@ -458,6 +519,9 @@ const MENU_UI_KEYS = [
   'ui-tooltip-bg',
   'ui-close-button',
   'ui-card-frame',
+  // Logo wordmark. Shown on boot splash + HomeScene top-left when
+  // generated AND the `ui-logo` override flag is flipped on.
+  'ui-logo',
 ];
 
 function composePrompt(

@@ -92,27 +92,25 @@ export function drawPill(
   h: number,
   style: { brass?: boolean } = {},
 ): void {
+  // Flat pill: dark body + optional brass outline, with only a soft
+  // drop shadow below. The earlier "glass / mirror" highlights (a
+  // white gloss strip and a brass rim along the top) were removed
+  // because they read as the button "leaking" upward in the HUD —
+  // the user specifically asked for no gloss/mirror on top.
   const brass = style.brass ?? true;
   const radius = h / 2;
+  // Soft drop shadow — stays BELOW the pill so the eye reads it as
+  // depth, never as top-bleed.
   g.fillStyle(0x000000, 0.55);
   g.fillRoundedRect(x + 1, y + 3, w, h + 1, radius);
-  g.fillStyle(COLOR.brassDeep, 0.12);
-  g.fillRoundedRect(x, y + 1, w, h, radius);
+  // Main body: vertical gradient with no lighten strip on top.
   g.fillGradientStyle(COLOR.bgPanelHi, COLOR.bgPanelHi, COLOR.bgPanelLo, COLOR.bgPanelLo, 1);
   g.fillRoundedRect(x, y, w, h, radius);
-  g.fillStyle(0xffffff, brass ? 0.09 : 0.05);
-  g.fillRoundedRect(x + 2, y + 2, w - 4, Math.max(3, Math.min(7, h * 0.22)), radius - 2);
   if (brass) {
-    g.fillStyle(COLOR.brass, 0.35);
-    g.fillRoundedRect(x + 2, y + 2, w - 4, 2, radius - 1);
     g.lineStyle(1.5, COLOR.brassDeep, 0.9);
     g.strokeRoundedRect(x, y, w, h, radius);
-    g.lineStyle(1, COLOR.strokeLight, 0.18);
-    g.strokeRoundedRect(x + 2, y + 2, w - 4, h - 4, radius - 2);
   } else {
     g.lineStyle(1, 0x000000, 0.35);
     g.strokeRoundedRect(x, y, w, h, radius);
-    g.lineStyle(1, 0xffffff, 0.08);
-    g.strokeRoundedRect(x + 1, y + 1, w - 2, h - 2, radius - 1);
   }
 }

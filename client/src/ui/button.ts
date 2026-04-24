@@ -54,6 +54,13 @@ export function makeHiveButton(
   let enabled = opts.enabled ?? true;
   let state: State = enabled ? 'idle' : 'disabled';
 
+  // Button visuals are a flat gradient body + stroke. A previous
+  // iteration painted a lighter "highlight" strip and a whiter
+  // "gloss" band at the top to fake a 3D bevel, but the strips read
+  // as the button leaking/mirroring above itself on the HUD. The
+  // two graphics slots are left here (unused after paint()) to keep
+  // the original add-order stable — callers that relied on the
+  // container's child layout would otherwise need to be audited.
   const shadow = scene.add.graphics();
   const bg = scene.add.graphics();
   const highlight = scene.add.graphics();
@@ -131,31 +138,14 @@ export function makeHiveButton(
       );
     }
 
+    // Previously painted top highlight + gloss strips here to fake a
+    // 3D bevel; they were removed because the bright bands over the
+    // top half of the button read as the button "bleeding / mirroring"
+    // above itself, especially against the HUD chrome. We keep the
+    // clears so lingering paint from a prior state (before a re-
+    // paint) doesn't remain visible.
     highlight.clear();
     gloss.clear();
-    // Inner top highlight — 2px of lighter color just inside the
-    // stroke. Sells the "3D bevel" look. Hidden in press state, and
-    // when the image override is active (the image carries its own
-    // lighting).
-    if (!useImage && state !== 'press' && state !== 'disabled') {
-      const lighter = lightenColor(BUTTON_VARIANT[curVariant]!.fillTop, 0.35);
-      highlight.fillStyle(lighter, 0.6);
-      highlight.fillRoundedRect(
-        -w / 2 + palette.strokeWidth,
-        -h / 2 + palette.strokeWidth,
-        w - palette.strokeWidth * 2,
-        Math.max(4, Math.min(h * 0.35, 10)),
-        r - palette.strokeWidth / 2,
-      );
-      gloss.fillStyle(0xffffff, state === 'hover' ? 0.16 : 0.09);
-      gloss.fillRoundedRect(
-        -w / 2 + palette.strokeWidth + 8,
-        -h / 2 + palette.strokeWidth + 4,
-        Math.max(20, w * 0.3),
-        Math.max(3, Math.min(h * 0.14, 6)),
-        6,
-      );
-    }
 
     // Image path: create / resize the NineSlice, tint for state
     // feedback (darken on press, desaturate on disabled), and hide

@@ -94,6 +94,11 @@ export const UI_OVERRIDE_KEYS = [
   // Override flag off → CodexScene paints the brass-border Graphics
   // fallback, same as before.
   'ui-card-frame',
+  // Game logo. 512x256 brass wordmark. Shown on the boot splash and
+  // in the top-left of HomeScene when the admin has both generated
+  // the asset and toggled the flag on. Graphics fallback = the text
+  // "HIVE WARS" in display font.
+  'ui-logo',
 ] as const;
 export type UiOverrideKey = (typeof UI_OVERRIDE_KEYS)[number];
 
