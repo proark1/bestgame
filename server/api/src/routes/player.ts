@@ -718,6 +718,177 @@ export function registerPlayer(app: FastifyInstance): void {
     },
   );
 
+  // POST /api/player/building/:id/move — relocate a building to a new
+  // anchor on the same base. Free of charge (matches the standard
+  // town-builder UX where moving is always free; only placement and
+  // upgrades cost resources). Runs the same bounds + collision + layer
+  // checks the placement route uses, minus the cost debit and the
+  // per-kind quota check (the building is already counted toward its
+  // quota — we're just changing coordinates).
+  interface MoveBuildingBody {
+    anchor: { x: number; y: number; layer: Types.Layer };
+  }
+  app.post<{ Params: { id: string }; Body: MoveBuildingBody }>(
+    '/player/building/:id/move',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (
+        !body || !body.anchor ||
+        typeof body.anchor.x !== 'number' ||
+        typeof body.anchor.y !== 'number' ||
+        (body.anchor.layer !== 0 && body.anchor.layer !== 1)
+      ) {
+        reply.code(400);
+        return { error: 'anchor{x,y,layer} required' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === req.params.id);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        // Multi-layer buildings (the Queen Chamber spans both) can't
+        // change their anchor layer — the sim relies on the Queen
+        // living on both layers simultaneously. Allow x/y moves but
+        // reject a layer swap that would break the multi-layer model.
+        if (
+          target.spans &&
+          target.spans.length > 1 &&
+          !target.spans.includes(body.anchor.layer)
+        ) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'this building cannot change layer' };
+        }
+        if (!isLayerAllowed(target.kind, body.anchor.layer)) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return {
+            error: `${target.kind} can't be placed on the ${body.anchor.layer === 0 ? 'surface' : 'underground'} layer`,
+          };
+        }
+
+        // Bounds check against the grid.
+        if (
+          body.anchor.x < 0 ||
+          body.anchor.y < 0 ||
+          body.anchor.x + target.footprint.w > base.gridSize.w ||
+          body.anchor.y + target.footprint.h > base.gridSize.h
+        ) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'new location extends outside the grid' };
+        }
+
+        // Collision check. The candidate rectangle is the target's
+        // existing footprint moved to the new anchor. Skip the target
+        // itself — the new location may legitimately overlap the
+        // building's current tile if it's a 1-tile shift.
+        const candidateLayers = new Set<Types.Layer>(
+          target.spans ?? [body.anchor.layer],
+        );
+        // If the building doesn't span and we're changing its anchor
+        // layer, the candidate only occupies the new layer.
+        if (!target.spans || target.spans.length <= 1) {
+          candidateLayers.clear();
+          candidateLayers.add(body.anchor.layer);
+        }
+        for (const existing of base.buildings) {
+          if (existing.id === target.id) continue;
+          const existingLayers = new Set<Types.Layer>(
+            existing.spans ?? [existing.anchor.layer],
+          );
+          let intersect = false;
+          for (const layer of candidateLayers) {
+            if (existingLayers.has(layer)) {
+              intersect = true;
+              break;
+            }
+          }
+          if (!intersect) continue;
+          const ex = existing.anchor.x;
+          const ey = existing.anchor.y;
+          const ew = existing.footprint.w;
+          const eh = existing.footprint.h;
+          const overlaps =
+            body.anchor.x < ex + ew &&
+            body.anchor.x + target.footprint.w > ex &&
+            body.anchor.y < ey + eh &&
+            body.anchor.y + target.footprint.h > ey;
+          if (overlaps) {
+            await client.query('ROLLBACK');
+            reply.code(409);
+            return { error: 'tile occupied' };
+          }
+        }
+
+        const updated: Types.Base = {
+          ...base,
+          buildings: base.buildings.map((b) =>
+            b.id === target.id
+              ? {
+                  ...b,
+                  anchor: {
+                    x: body.anchor.x,
+                    y: body.anchor.y,
+                    // Preserve the spans anchor layer on multi-layer
+                    // buildings so we never flip a spans[0] = 0 into a
+                    // spans[0] = 1 state. Single-layer buildings adopt
+                    // the requested layer.
+                    layer: b.spans && b.spans.length > 1
+                      ? b.anchor.layer
+                      : body.anchor.layer,
+                  },
+                }
+              : b,
+          ),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          base: updated,
+          building: updated.buildings.find((b) => b.id === target.id),
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'player/building move failed');
+        reply.code(500);
+        return { error: 'move failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
   // PUT /api/player/building/:id/ai — replace the full rule list on a
   // single building. Keeping it as a REPLACE (not append) makes the
   // client editor trivial: build the new list locally, send it, done.

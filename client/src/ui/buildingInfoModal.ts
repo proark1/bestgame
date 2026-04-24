@@ -24,7 +24,12 @@ import {
 // the game board in the same scene. Closes on backdrop tap.
 
 const MODAL_W = 360;
-const MODAL_H = 440;
+// Modal is tall enough to fit three stacked action buttons at the
+// bottom (Upgrade / Move / Demolish) plus the stats column above. If
+// the "at next level" preview gets longer, bump this, not the button
+// heights — the buttons' size matches the player's expectation from
+// the rest of the game.
+const MODAL_H = 540;
 const MAX_BUILDING_LEVEL = 10;
 
 // Friendly human-readable labels for each building kind. Keeps the
@@ -73,6 +78,11 @@ export interface OpenBuildingInfoOpts {
   building: Types.Building;
   onUpdated: (base: Types.Base) => void;
   onDemolish?: (base: Types.Base) => void;
+  // Fired when the player taps "Move". The modal closes itself first;
+  // the caller is responsible for kicking off the in-scene placement-
+  // preview flow and issuing the /building/:id/move API call on a
+  // valid tile tap.
+  onMoveRequest?: (building: Types.Building) => void;
 }
 
 // Opens the modal. Returns a close fn in case the caller wants to
@@ -222,25 +232,35 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     }
 
     // Actions. Queen Chamber routes to the dedicated queen-upgrade
-    // endpoint; every other kind uses /upgrade-building.
+    // endpoint; every other kind gets a symmetric 3-button stack:
+    // Upgrade (green) / Move (ghost) / Demolish (red). Same width +
+    // height across the three so the player reads them as equally
+    // reachable alternatives — matches the Clash-style "primary
+    // action stack" the rest of the UI uses.
     const isQueen = b.kind === 'QueenChamber';
     const atMax = level >= MAX_BUILDING_LEVEL;
-    const actionsY = MODAL_H - 80;
+    const actionBtnW = MODAL_W - 44;
+    const actionBtnH = 44;
+    const actionGap = 8;
+    const actionsBottomY = MODAL_H - 24;
+    const actionsStartY = isQueen
+      ? actionsBottomY - actionBtnH / 2
+      : actionsBottomY - actionBtnH * 3 - actionGap * 2 + actionBtnH / 2;
 
     if (isQueen) {
       bodyContainer.add(
-        crispText(scene, 22, actionsY - 28,
+        crispText(scene, 22, actionsStartY - actionBtnH / 2 - 28,
           'Queen upgrades unlock new building slots and tiers.',
           bodyTextStyle(11, COLOR.textDim),
         ).setWordWrapWidth(MODAL_W - 44, true),
       );
       const btn = makeHiveButton(scene, {
         x: MODAL_W / 2,
-        y: actionsY + 4,
-        width: MODAL_W - 44,
-        height: 44,
+        y: actionsStartY,
+        width: actionBtnW,
+        height: actionBtnH,
         label: atMax ? 'Max level' : 'Upgrade Queen',
-        variant: atMax ? 'ghost' : 'primary',
+        variant: atMax ? 'ghost' : 'secondary',
         fontSize: 14,
         onPress: () => {
           if (atMax) return;
@@ -249,37 +269,82 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       });
       bodyContainer.add(btn.container);
     } else {
-      const upgradeLabel = atMax
-        ? 'Max level'
-        : `Upgrade — ${estimateCost(b, catalog).sugar} sugar`;
-      const btn = makeHiveButton(scene, {
-        x: MODAL_W / 2 - 84,
-        y: actionsY + 4,
-        width: 180,
-        height: 44,
-        label: upgradeLabel,
-        variant: atMax ? 'ghost' : 'primary',
-        fontSize: 13,
+      // Cost line sits just above the action stack so the Upgrade
+      // button label stays short ("Upgrade") and visually matches
+      // the Demolish button rather than being twice as wide.
+      const costLineY = actionsStartY - actionBtnH / 2 - 18;
+      if (!atMax) {
+        const cost = estimateCost(b, catalog);
+        bodyContainer.add(
+          crispText(
+            scene,
+            MODAL_W / 2,
+            costLineY,
+            `Next level: ${cost.sugar} sugar · ${cost.leafBits} leaf`,
+            bodyTextStyle(12, COLOR.textDim),
+          ).setOrigin(0.5, 0.5),
+        );
+      } else {
+        bodyContainer.add(
+          crispText(
+            scene,
+            MODAL_W / 2,
+            costLineY,
+            'This building is at max level.',
+            bodyTextStyle(12, COLOR.textDim),
+          ).setOrigin(0.5, 0.5),
+        );
+      }
+
+      // Upgrade — same shape as Demolish, green instead of red.
+      const upgradeBtn = makeHiveButton(scene, {
+        x: MODAL_W / 2,
+        y: actionsStartY,
+        width: actionBtnW,
+        height: actionBtnH,
+        label: atMax ? 'Max level' : 'Upgrade',
+        variant: atMax ? 'ghost' : 'secondary',
+        fontSize: 14,
         onPress: () => {
           if (atMax) return;
-          void doUpgrade(scene, runtime, b, (base, upd) => {
+          void doUpgrade(scene, runtime, b, (base) => {
             const fresh = base.buildings.find((x) => x.id === b.id);
             if (fresh) renderBody(fresh);
             opts.onUpdated(base);
-            void upd;
           });
         },
       });
-      bodyContainer.add(btn.container);
+      bodyContainer.add(upgradeBtn.container);
 
+      // Move — closes the modal and hands control back to the caller
+      // so it can enter placement-preview mode on the board. The
+      // scene is responsible for actually calling /building/:id/move;
+      // the modal only delivers the "user wants to move this" intent.
+      const moveBtn = makeHiveButton(scene, {
+        x: MODAL_W / 2,
+        y: actionsStartY + actionBtnH + actionGap,
+        width: actionBtnW,
+        height: actionBtnH,
+        label: 'Move',
+        variant: 'ghost',
+        fontSize: 14,
+        onPress: () => {
+          close();
+          opts.onMoveRequest?.(b);
+        },
+      });
+      bodyContainer.add(moveBtn.container);
+
+      // Demolish — red, confirm-gated. Same size as Upgrade / Move
+      // above so all three read as siblings of equal weight.
       const demBtn = makeHiveButton(scene, {
-        x: MODAL_W / 2 + 96,
-        y: actionsY + 4,
-        width: 140,
-        height: 44,
+        x: MODAL_W / 2,
+        y: actionsStartY + (actionBtnH + actionGap) * 2,
+        width: actionBtnW,
+        height: actionBtnH,
         label: 'Demolish',
         variant: 'danger',
-        fontSize: 13,
+        fontSize: 14,
         onPress: () => {
           void openConfirm({
             title: 'Demolish this building?',
