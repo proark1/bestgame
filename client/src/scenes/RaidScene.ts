@@ -273,6 +273,7 @@ export class RaidScene extends Phaser.Scene {
     this.deckLabels = [];
     this.buildingSprites.clear();
     this.buildingHpBars.clear();
+    this.buildingRoleLabels.clear();
     this.buildingLastHp.clear();
     this.buildingKillPlayed.clear();
     this.unitSprites.clear();
@@ -579,8 +580,8 @@ export class RaidScene extends Phaser.Scene {
           .text(x, labelY, codex.role, {
             fontSize: '10px',
             fontFamily: 'ui-monospace, monospace',
-            color: '#ffd98a',
-            backgroundColor: '#0a120bcc',
+            color: COLOR.textGold,
+            backgroundColor: '#09100acc',
             padding: { x: 4, y: 2 },
           })
           .setOrigin(0.5, 1)
@@ -606,15 +607,18 @@ export class RaidScene extends Phaser.Scene {
         })
         .setOrigin(0.5);
       const unitRole = UNIT_CODEX[e.kind]?.role ?? '';
-      const roleText = this.add
-        .text(0, 29, unitRole, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '9px',
-          color: '#9fc79a',
-        })
-        .setOrigin(0.5);
 
-      container.add([bg, icon, label, roleText]);
+      container.add([bg, icon, label]);
+      if (unitRole) {
+        const roleText = this.add
+          .text(0, 29, unitRole, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '9px',
+            color: '#9fc79a',
+          })
+          .setOrigin(0.5);
+        container.add(roleText);
+      }
       container.setSize(DECK_CARD_W, DECK_CARD_H);
       container
         .setInteractive(
@@ -1331,6 +1335,8 @@ export class RaidScene extends Phaser.Scene {
       this.buildingSprites.clear();
       for (const bar of this.buildingHpBars.values()) bar.destroy();
       this.buildingHpBars.clear();
+      for (const lbl of this.buildingRoleLabels.values()) lbl.destroy();
+      this.buildingRoleLabels.clear();
       // Juice-pass side maps share the same per-raid lifecycle.
       this.buildingLastHp.clear();
       this.buildingKillPlayed.clear();

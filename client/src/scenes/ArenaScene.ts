@@ -109,6 +109,7 @@ export class ArenaScene extends Phaser.Scene {
     this.started = false;
     this.hasError = false;
     this.buildingSprites.clear();
+    this.buildingRoleLabels.clear();
     this.unitSprites.clear();
     this.unitLastPos.clear();
     this.animationEnabled = {};
@@ -347,8 +348,8 @@ export class ArenaScene extends Phaser.Scene {
           .text(x, labelY, codex.role, {
             fontSize: '10px',
             fontFamily: 'ui-monospace, monospace',
-            color: '#ffd98a',
-            backgroundColor: '#0a120bcc',
+            color: COLOR.textGold,
+            backgroundColor: '#09100acc',
             padding: { x: 4, y: 2 },
           })
           .setOrigin(0.5, 1)
