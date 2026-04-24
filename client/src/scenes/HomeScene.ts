@@ -1229,6 +1229,20 @@ export class HomeScene extends Phaser.Scene {
     const top = Math.min(this.scale.height - bodyH - 12, anchorY + 4);
     const container = this.add.container(0, 0).setDepth(DEPTHS.drawer);
 
+    // Backdrop tap closes — lightweight since a resource popover is
+    // transient chrome, not a modal. Added FIRST so it sits underneath
+    // the panel + text in the container's draw order (Phaser containers
+    // honor insertion order for children, not per-child setDepth).
+    const backdrop = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0)
+      .setOrigin(0, 0)
+      .setInteractive();
+    backdrop.on('pointerdown', () => {
+      container.destroy(true);
+      if (this.resourcePopover === container) this.resourcePopover = null;
+    });
+    container.add(backdrop);
+
     const bg = this.add.graphics();
     drawPanel(bg, left, top, W, bodyH, {
       topColor: 0x2a3f2d,
@@ -1253,19 +1267,6 @@ export class HomeScene extends Phaser.Scene {
       );
       ly += lineH;
     }
-    // Backdrop tap closes — lightweight since a resource popover is
-    // transient chrome, not a modal.
-    const backdrop = this.add
-      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0)
-      .setOrigin(0, 0)
-      .setInteractive();
-    backdrop.setDepth(DEPTHS.drawer - 1);
-    backdrop.on('pointerdown', () => {
-      container.destroy(true);
-      backdrop.destroy();
-      if (this.resourcePopover === container) this.resourcePopover = null;
-    });
-    container.add(backdrop);
     this.resourcePopover = container;
   }
 

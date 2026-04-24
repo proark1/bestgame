@@ -92,6 +92,8 @@ export function setSettings(next: Partial<AudioSettings>): AudioSettings {
 }
 
 // A short synthesized blip. Envelope-shaped so clicks don't pop.
+// `startTime` defaults to "now" but sequences pass c.currentTime + offset
+// so multi-note SFX stay sample-accurate even when the main thread jitters.
 function tone(args: {
   freq: number;
   duration: number; // seconds
@@ -100,33 +102,32 @@ function tone(args: {
   sweepTo?: number; // if set, freq sweeps to this value over duration
   attack?: number;
   release?: number;
+  startTime?: number;
 }): void {
   const c = ensureContext();
   if (!c || !master) return;
   const settings = getSettings();
   if (settings.muted) return;
 
+  const when = args.startTime ?? c.currentTime;
   const osc = c.createOscillator();
   osc.type = args.type ?? 'sine';
   osc.frequency.value = args.freq;
   if (args.sweepTo !== undefined) {
-    osc.frequency.linearRampToValueAtTime(
-      args.sweepTo,
-      c.currentTime + args.duration,
-    );
+    osc.frequency.linearRampToValueAtTime(args.sweepTo, when + args.duration);
   }
   const env = c.createGain();
-  const peak = (args.gain ?? 0.5);
+  const peak = args.gain ?? 0.5;
   const attack = Math.max(0.001, args.attack ?? 0.01);
   const release = Math.max(0.01, args.release ?? 0.08);
   env.gain.value = 0;
-  env.gain.linearRampToValueAtTime(peak, c.currentTime + attack);
-  env.gain.linearRampToValueAtTime(0, c.currentTime + args.duration + release);
+  env.gain.linearRampToValueAtTime(peak, when + attack);
+  env.gain.linearRampToValueAtTime(0, when + args.duration + release);
 
   osc.connect(env);
   env.connect(master);
-  osc.start();
-  osc.stop(c.currentTime + args.duration + release + 0.02);
+  osc.start(when);
+  osc.stop(when + args.duration + release + 0.02);
 }
 
 // Public sound vocabulary. Every call is safe from scene code —
@@ -140,24 +141,28 @@ export function sfxHover(): void {
   tone({ freq: 820, duration: 0.03, type: 'sine', gain: 0.08, release: 0.03 });
 }
 export function sfxEarn(): void {
-  // Two-note "chip" that reads as money coming in.
-  tone({ freq: 720, duration: 0.06, type: 'triangle', gain: 0.25, release: 0.06 });
-  setTimeout(
-    () => tone({ freq: 960, duration: 0.07, type: 'triangle', gain: 0.22, release: 0.08 }),
-    40,
-  );
+  // Two-note "chip" that reads as money coming in. Scheduled on the
+  // WebAudio clock so the second note's offset from the first is
+  // immune to main-thread jitter / background-tab setTimeout throttling.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 720, duration: 0.06, type: 'triangle', gain: 0.25, release: 0.06, startTime: now });
+  tone({ freq: 960, duration: 0.07, type: 'triangle', gain: 0.22, release: 0.08, startTime: now + 0.04 });
 }
 export function sfxUpgrade(): void {
   // Upward sweep — generic "level up" feel.
   tone({ freq: 440, sweepTo: 880, duration: 0.22, type: 'triangle', gain: 0.3, release: 0.1 });
 }
 export function sfxVictory(): void {
-  // Three ascending notes.
+  // Three ascending notes scheduled on the WebAudio clock so the fanfare
+  // stays crisp even if the main thread is busy running the win-card
+  // celebration tween at the same moment.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
   [523, 659, 784].forEach((f, i) => {
-    setTimeout(
-      () => tone({ freq: f, duration: 0.14, type: 'triangle', gain: 0.35, release: 0.12 }),
-      i * 90,
-    );
+    tone({ freq: f, duration: 0.14, type: 'triangle', gain: 0.35, release: 0.12, startTime: now + i * 0.09 });
   });
 }
 export function sfxDefeat(): void {
