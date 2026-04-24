@@ -9,6 +9,7 @@ import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { crispText } from '../ui/text.js';
 import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { BUILDING_CODEX } from '../codex/codexData.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
 //
@@ -80,6 +81,8 @@ export class ArenaScene extends Phaser.Scene {
 
   // Visuals
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
+  private buildingRoleLabels = new Map<number, Phaser.GameObjects.Text>();
+  private statusCardWidth = 560;
   private unitLastPos = new Map<number, { x: number; y: number }>();
   private unitSprites = new Map<
     number,
@@ -190,12 +193,6 @@ export class ArenaScene extends Phaser.Scene {
       );
     }
 
-    const glow = this.add.graphics().setDepth(-119);
-    glow.fillStyle(COLOR.brass, 0.055);
-    glow.fillEllipse(this.scale.width / 2, HUD_H + 120, Math.min(860, this.scale.width * 0.92), 220);
-    glow.fillStyle(COLOR.greenHi, 0.07);
-    glow.fillEllipse(this.scale.width * 0.3, this.scale.height - 96, 420, 170);
-    glow.fillEllipse(this.scale.width * 0.75, this.scale.height - 54, 360, 120);
   }
 
   private drawHud(): void {
@@ -259,6 +256,7 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawStatusCard(): void {
     const width = Math.min(560, this.scale.width - 28);
+    this.statusCardWidth = width;
     const g = this.add.graphics();
     drawPanel(g, 0, 0, width, 74, {
       topColor: COLOR.bgPanelHi,
@@ -287,7 +285,7 @@ export class ArenaScene extends Phaser.Scene {
   private layoutStatusCard(boardBottom: number): void {
     if (!this.statusCard) return;
     const targetY = Math.min(this.scale.height - 86, boardBottom + 18);
-    const targetX = Math.round((this.scale.width - this.statusCard.width) / 2);
+    const targetX = Math.round((this.scale.width - this.statusCardWidth) / 2);
     this.statusCard.setPosition(targetX, targetY);
   }
 
@@ -311,8 +309,6 @@ export class ArenaScene extends Phaser.Scene {
     }
     bg.fillStyle(0xffffff, 0.035);
     bg.fillRect(0, 0, BOARD_W, 18);
-    bg.fillStyle(COLOR.brass, 0.08);
-    bg.fillEllipse(BOARD_W / 2, 22, BOARD_W * 0.68, 54);
     bg.fillStyle(0x4b2f1c, 0.28);
     bg.fillRect(0, BOARD_H - 18, BOARD_W, 18);
     const grid = this.add.graphics({
@@ -343,6 +339,23 @@ export class ArenaScene extends Phaser.Scene {
       spr.setDisplaySize(TILE * Math.max(b.w, 1.85), TILE * Math.max(b.h, 1.85));
       this.boardContainer.add(spr);
       this.buildingSprites.set(b.id, spr);
+
+      const codex = BUILDING_CODEX[b.kind];
+      if (codex) {
+        const labelY = b.anchorY * TILE - 6;
+        const roleLabel = this.add
+          .text(x, labelY, codex.role, {
+            fontSize: '10px',
+            fontFamily: 'ui-monospace, monospace',
+            color: '#ffd98a',
+            backgroundColor: '#0a120bcc',
+            padding: { x: 4, y: 2 },
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(6);
+        this.boardContainer.add(roleLabel);
+        this.buildingRoleLabels.set(b.id, roleLabel);
+      }
     }
   }
 
@@ -385,6 +398,8 @@ export class ArenaScene extends Phaser.Scene {
   private renderInitialBoard(): void {
     for (const spr of this.buildingSprites.values()) spr.destroy();
     this.buildingSprites.clear();
+    for (const lbl of this.buildingRoleLabels.values()) lbl.destroy();
+    this.buildingRoleLabels.clear();
     this.drawStartingBuildings();
   }
 
@@ -529,7 +544,7 @@ export class ArenaScene extends Phaser.Scene {
         this.setStatus('Waiting for opponent...', 'The match starts automatically once both players are ready.');
         break;
       case 'both-ready':
-        this.setStatus('Fight!', 'Drag from the glowing left edge to send a pheromone trail.');
+        this.setStatus('Fight!', 'Drag from the left edge across the board to send soldiers along a pheromone trail. Destroy the Queen Chamber to win.');
         this.started = true;
         break;
       case 'tick':
@@ -537,7 +552,7 @@ export class ArenaScene extends Phaser.Scene {
         this.applyConfirmedInputs(ev.data);
         if (!this.started) {
           this.started = true;
-          this.setStatus('Fight!', 'Drag from the glowing left edge to send a pheromone trail.');
+          this.setStatus('Fight!', 'Drag from the left edge across the board to send soldiers along a pheromone trail. Destroy the Queen Chamber to win.');
         }
         break;
       case 'opponent-left':
