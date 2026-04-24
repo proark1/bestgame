@@ -25,6 +25,7 @@ import {
   upgradeCost,
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
+import { upgradeCostMult, levelStatPercent } from '../game/progression.js';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
@@ -1394,6 +1395,157 @@ export function registerPlayer(app: FastifyInstance): void {
         app.log.error({ err }, 'upgrade-unit failed');
         reply.code(500);
         return { error: 'upgrade failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/player/upgrade-building — bump a single building by one
+  // level. Reuses the same Fibonacci-ish cost curve as units, scaled
+  // by the building's L1 placement cost. Atomic: debit + bump happen
+  // in one transaction so an error leaves the base + resources in
+  // sync. The QueenChamber upgrade lives on its own route
+  // (/player/upgrade-queen) and is rejected here.
+  interface UpgradeBuildingBody { buildingId: string }
+  app.post<{ Body: UpgradeBuildingBody }>(
+    '/player/upgrade-building',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (!body || typeof body.buildingId !== 'string') {
+        reply.code(400);
+        return { error: 'buildingId required' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === body.buildingId);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        if (target.kind === 'QueenChamber') {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'use /player/upgrade-queen for the Queen' };
+        }
+        const currentLevel = target.level ?? 1;
+        if (currentLevel >= MAX_UNIT_LEVEL) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: `already at max level (${MAX_UNIT_LEVEL})` };
+        }
+        const mult = upgradeCostMult(currentLevel);
+        if (mult === null) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: 'building already at max level' };
+        }
+        const base_cost = BUILDING_PLACEMENT_COSTS[target.kind];
+        if (!base_cost) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: `${target.kind} can't be upgraded` };
+        }
+        const cost = {
+          sugar: Math.floor(base_cost.sugar * mult),
+          leafBits: Math.floor(base_cost.leafBits * mult),
+          aphidMilk: 0,
+        };
+
+        // Debit resources + bump the building level in the snapshot.
+        const debit = await client.query<{
+          sugar: string;
+          leaf_bits: string;
+          aphid_milk: string;
+          trophies: number;
+        }>(
+          `UPDATE players
+              SET sugar     = sugar - $2,
+                  leaf_bits = leaf_bits - $3
+            WHERE id = $1
+              AND sugar >= $2
+              AND leaf_bits >= $3
+        RETURNING sugar, leaf_bits, aphid_milk, trophies`,
+          [playerId, cost.sugar, cost.leafBits],
+        );
+        if (debit.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(402);
+          return { error: 'insufficient resources', cost };
+        }
+
+        // Re-scale the building's hp/hpMax by the old-level → new-level
+        // stat-percent ratio so visible max-HP tracks the upgrade.
+        // Current hp/hpMax fields are mutated in-place; we leave
+        // runtime-stat derivation (damage, range) to the shared sim
+        // which already accounts for level at deploy time.
+        const newLevel = currentLevel + 1;
+        const updatedBuildings = base.buildings.map((b) => {
+          if (b.id !== body.buildingId) return b;
+          const oldPct = levelStatPercent(currentLevel) / 100;
+          const newPct = levelStatPercent(newLevel) / 100;
+          // Preserve any in-flight damage — upgrades shouldn't fully
+          // heal a damaged building; heal by the same proportion the
+          // max HP grew. (A perfect-HP building stays perfect HP.)
+          const oldHpMax = b.hpMax ?? b.hp;
+          const baseMax = oldHpMax / oldPct;
+          const newHpMax = Math.round(baseMax * newPct);
+          const damageTaken = oldHpMax - b.hp;
+          const newHp = Math.max(1, newHpMax - damageTaken);
+          return { ...b, level: newLevel, hp: newHp, hpMax: newHpMax };
+        });
+        const updated: Types.Base = {
+          ...base,
+          buildings: updatedBuildings,
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        const r = debit.rows[0]!;
+        return {
+          ok: true,
+          buildingId: body.buildingId,
+          newLevel,
+          cost,
+          base: updated,
+          player: {
+            trophies: r.trophies,
+            sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
+            aphidMilk: safeBigintToNumber(r.aphid_milk, 'aphid_milk', app.log),
+          },
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'upgrade-building failed');
+        reply.code(500);
+        return { error: 'building upgrade failed' };
       } finally {
         client.release();
       }

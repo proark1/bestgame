@@ -4,6 +4,7 @@ import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
+import { openBuildingInfoModal } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
@@ -1001,6 +1002,21 @@ export class HomeScene extends Phaser.Scene {
           repeat: -1,
           ease: 'Sine.easeInOut',
         });
+        // Tappable building: opens the info modal. We wire interactivity
+        // on the sprite itself rather than adding a zone so the hit area
+        // exactly matches the visual. Tap-vs-pan is disambiguated by the
+        // board-pan handler's drag threshold (see wireBoardTap).
+        spr.setInteractive({ useHandCursor: true });
+        spr.on('pointerup', (p: Phaser.Input.Pointer) => {
+          // Ignore taps that drifted too far — those are pans, not taps.
+          // 8 px of slop at any zoom keeps a firm tap reliable without
+          // stealing pan gestures.
+          const dragDist = Phaser.Math.Distance.Between(
+            p.downX, p.downY, p.upX, p.upY,
+          );
+          if (dragDist > 8) return;
+          this.openBuildingInfo(b);
+        });
         this.boardContainer.add(spr);
       }
       return;
@@ -1024,6 +1040,45 @@ export class HomeScene extends Phaser.Scene {
       });
       this.boardContainer.add(spr);
     }
+  }
+
+  // Tap handler: open the building info / upgrade modal. On a
+  // successful upgrade or demolish, refresh the server snapshot held
+  // locally and redraw the buildings layer so the new level / missing
+  // tile shows immediately. The modal itself calls the API; we only
+  // swap state + repaint here.
+  private openBuildingInfo(b: Types.Building): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    openBuildingInfoModal({
+      scene: this,
+      runtime,
+      building: b,
+      onUpdated: (base) => {
+        this.serverBase = base;
+        this.boardContainer.removeAll(true);
+        this.drawBoard();
+        this.drawBuildings();
+        this.refreshResourcesHud();
+      },
+      onDemolish: (base) => {
+        this.serverBase = base;
+        this.boardContainer.removeAll(true);
+        this.drawBoard();
+        this.drawBuildings();
+      },
+    });
+  }
+
+  private refreshResourcesHud(): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime?.player) return;
+    this.resources.sugar = runtime.player.player.sugar;
+    this.resources.leafBits = runtime.player.player.leafBits;
+    this.resources.aphidMilk = runtime.player.player.aphidMilk;
+    this.sugarText.setText(String(this.resources.sugar));
+    this.leafText.setText(String(this.resources.leafBits));
+    this.milkText.setText(String(this.resources.aphidMilk));
   }
 
   // Single-row footer. Seven buttons evenly distributed across the
@@ -1331,6 +1386,16 @@ export class HomeScene extends Phaser.Scene {
       this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
     this.footerChrome = this.add.graphics().setDepth(DEPTHS.hudChrome);
+    // Footer buttons have default depth 0; the chrome panel sits at
+    // DEPTHS.hudChrome (1), which would otherwise render ON TOP of the
+    // buttons and swallow their visuals + pointer hits. Pushing each
+    // button container one slot above the chrome keeps them visible
+    // and interactive. The DEPTHS.hud slot (8) is safely above chrome
+    // and below any modal backdrops, and this is also where the
+    // mobile Raid CTA already sits — keeps both paths consistent.
+    for (const btn of this.footerButtons) {
+      btn.container.setDepth(DEPTHS.hud);
+    }
     this.layoutFooter();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.

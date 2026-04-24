@@ -424,6 +424,19 @@ export class Api {
     return (await res.json()) as ArenaReserveResponse;
   }
 
+  // Upgrade a single building by one level. Costs scale with the
+  // building's placement price and the Fibonacci multiplier curve;
+  // server is authoritative and returns the new snapshot.
+  async upgradeBuilding(buildingId: string): Promise<UpgradeBuildingResponse> {
+    const res = await this.authedFetch('/player/upgrade-building', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ buildingId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'upgrade-building');
+    return (await res.json()) as UpgradeBuildingResponse;
+  }
+
   // Advance the Queen one tier. Fails with 409 at max level and 402
   // when the player can't afford the cost.
   async upgradeQueen(): Promise<UpgradeQueenResponse> {
@@ -951,6 +964,15 @@ export type BuildingCatalog = {
 export interface UpgradeQueenResponse {
   ok: true;
   newQueenLevel: number;
+  base: Types.Base;
+  player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
+}
+
+export interface UpgradeBuildingResponse {
+  ok: true;
+  buildingId: string;
+  newLevel: number;
+  cost: { sugar: number; leafBits: number; aphidMilk: number };
   base: Types.Base;
   player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
 }
