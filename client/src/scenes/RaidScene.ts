@@ -1039,7 +1039,9 @@ export class RaidScene extends Phaser.Scene {
       if (!spr || !bar) continue;
       if (b.hp <= 0) {
         if (spr.alpha > 0.2) {
-          this.tweens.add({ targets: spr, alpha: 0.18, duration: 200 });
+          const label = this.buildingRoleLabels.get(b.id);
+          const tweenTargets = label ? [spr, label] : [spr];
+          this.tweens.add({ targets: tweenTargets, alpha: 0.18, duration: 200 });
           // Juice: Queen death is the hero moment — camera-punch zoom
           // out + long shake + a wide particle burst. Every other
           // building gets a smaller thud + debris puff. `destroyed`
@@ -1748,7 +1750,9 @@ export class RaidScene extends Phaser.Scene {
     );
 
     this.deckSelectedIcon.setPosition(this.scale.width / 2 - 154, trayTop + 28);
-    this.deckSelectedText.setPosition(this.scale.width / 2 + 12, trayTop + 10);
+    this.deckSelectedText
+      .setWordWrapWidth(220)
+      .setPosition(this.scale.width / 2 + 12, trayTop + 10);
     this.deckHintText
       .setWordWrapWidth(this.scale.width - 56)
       .setPosition(this.scale.width / 2, trayTop + 28);
