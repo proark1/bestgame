@@ -1009,6 +1009,15 @@ export type BuildingCatalog = {
     string,
     { sugar: number; leafBits: number; aphidMilk: number }
   >;
+  // Queen upgrade cost curve, one entry per current-level→next-level
+  // step. The building info modal's Queen-chamber branch uses this
+  // to render an affordability preview before the /upgrade-queen
+  // submit debits resources.
+  queenUpgradeCost?: Array<{
+    sugar: number;
+    leafBits: number;
+    aphidMilk: number;
+  }>;
 };
 
 export interface UpgradeQueenResponse {

@@ -249,23 +249,97 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       actionsBottomY - actionBtnH * actionSlots - actionGap * (actionSlots - 1) + actionBtnH / 2;
 
     if (isQueen) {
+      // Queen has its own max-level + cost curve separate from the
+      // regular building curve (MAX_BUILDING_LEVEL is 10; Queen caps
+      // at MAX_QUEEN_LEVEL which is 5 on the server). We read the
+      // authoritative number from the catalog so a server balance
+      // change is picked up client-side without a redeploy.
+      const queenMax = catalog?.maxQueenLevel ?? 5;
+      const queenAtMax = level >= queenMax;
+      const queenCost = !queenAtMax
+        ? catalog?.queenUpgradeCost?.[level - 1] ?? null
+        : null;
+      const wallet = runtime.player?.player ?? null;
+      const haveSugar = wallet?.sugar ?? 0;
+      const haveLeaf = wallet?.leafBits ?? 0;
+      const haveMilk = wallet?.aphidMilk ?? 0;
+      const queenAffordable =
+        !!queenCost &&
+        haveSugar >= queenCost.sugar &&
+        haveLeaf >= queenCost.leafBits &&
+        haveMilk >= queenCost.aphidMilk;
+
+      // Blurb + cost / status line, depending on which state we're
+      // in. The button itself mirrors the regular-building pattern:
+      // ghost+"Max level" when maxed, ghost+"Upgrade Queen (need
+      // more)" when unaffordable, secondary+"Upgrade Queen" when
+      // ready. Clicks are gated so a disabled button is also
+      // functionally inert.
       bodyContainer.add(
-        crispText(scene, 22, actionsStartY - actionBtnH / 2 - 26,
+        crispText(scene, 22, actionsStartY - actionBtnH / 2 - 46,
           'Queen upgrades unlock new building slots and tiers.',
           bodyTextStyle(11, COLOR.textDim),
         ).setWordWrapWidth(MODAL_W - 44, true),
       );
+      const costY = actionsStartY - actionBtnH / 2 - 16;
+      let costLine: string;
+      let costColor: string = COLOR.textDim;
+      if (queenAtMax) {
+        costLine = `Queen is at max level (${queenMax}).`;
+      } else if (!queenCost) {
+        costLine = 'Loading upgrade cost…';
+      } else if (queenAffordable) {
+        // Include aphid milk when it's part of the cost so the player
+        // sees the full price, not just sugar + leaf.
+        const milkPart = queenCost.aphidMilk > 0
+          ? ` · ${queenCost.aphidMilk} milk`
+          : '';
+        costLine = `Next level: ${queenCost.sugar} sugar · ${queenCost.leafBits} leaf${milkPart}`;
+      } else {
+        const needs: string[] = [];
+        if (queenCost.sugar > haveSugar) needs.push(`${queenCost.sugar - haveSugar} more sugar`);
+        if (queenCost.leafBits > haveLeaf) needs.push(`${queenCost.leafBits - haveLeaf} more leaf`);
+        if (queenCost.aphidMilk > haveMilk) needs.push(`${queenCost.aphidMilk - haveMilk} more milk`);
+        costLine = `Need ${needs.join(' + ')}`;
+        costColor = '#ff9a80';
+      }
+      bodyContainer.add(
+        crispText(scene, MODAL_W / 2, costY, costLine, bodyTextStyle(12, costColor))
+          .setOrigin(0.5, 0.5),
+      );
+
+      const queenEnabled = !queenAtMax && queenAffordable;
+      // Three disabled sub-states: maxed, still-loading, or can't
+      // afford. Each gets a distinct label + toast so "why can't I
+      // click this?" is always answered by the UI itself.
+      const queenLabel = queenAtMax
+        ? 'Max level'
+        : !queenCost
+          ? 'Loading…'
+          : queenAffordable
+            ? 'Upgrade Queen'
+            : 'Upgrade Queen (need more)';
       const btn = makeHiveButton(scene, {
         x: MODAL_W / 2,
         y: actionsStartY,
         width: actionBtnW,
         height: actionBtnH,
-        label: atMax ? 'Max level' : 'Upgrade Queen',
-        variant: atMax ? 'ghost' : 'secondary',
+        label: queenLabel,
+        variant: queenEnabled ? 'secondary' : 'ghost',
         fontSize: 14,
+        enabled: queenEnabled,
         onPress: () => {
-          if (atMax) return;
-          void doQueenUpgrade(scene, runtime, close, opts.onUpdated);
+          if (!queenEnabled) {
+            if (queenAtMax) flashToast(scene, 'The Queen is already at her highest tier.');
+            else if (!queenCost) flashToast(scene, 'Still loading upgrade costs…');
+            else flashToast(scene, 'Not enough resources for the next Queen tier.');
+            return;
+          }
+          void doQueenUpgrade(scene, runtime, b, (base) => {
+            const fresh = base.buildings.find((x) => x.id === b.id);
+            if (fresh) renderBody(fresh);
+            opts.onUpdated(base);
+          });
         },
       });
       bodyContainer.add(btn.container);
@@ -476,11 +550,16 @@ async function doUpgrade(
   }
 }
 
+// Queen upgrade — advances the QueenChamber by one tier. We keep
+// the modal open afterwards and re-render with the fresh building
+// (new level, new cost line, possibly "max level") so the player
+// sees the progression without having to close + reopen. Errors
+// surface via the shared flashToast.
 async function doQueenUpgrade(
   scene: Phaser.Scene,
   runtime: HiveRuntime,
-  close: () => void,
-  onUpdated: (base: Types.Base) => void,
+  _building: Types.Building,
+  onDone: (base: Types.Base) => void,
 ): Promise<void> {
   try {
     const r = await runtime.api.upgradeQueen();
@@ -491,8 +570,7 @@ async function doQueenUpgrade(
       runtime.player.player.trophies = r.player.trophies;
       runtime.player.base = r.base;
     }
-    close();
-    onUpdated(r.base);
+    onDone(r.base);
   } catch (err) {
     flashToast(scene, (err as Error).message);
   }
