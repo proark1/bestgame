@@ -4,6 +4,7 @@ import { bakeTrailDot } from '../assets/placeholders.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
+import { sfxVictory, sfxDefeat } from '../ui/audio.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
@@ -396,10 +397,17 @@ export class RaidScene extends Phaser.Scene {
     if (!this.started) return;
     if (this.state.outcome !== 'ongoing' && this.state.tick >= this.cfg.maxTicks)
       return;
+    // Replay-mode controls: pause halts the sim entirely, speed
+    // multiplies the simulated delta so 2× / 4× playback does the
+    // same number of ticks per frame the sim would otherwise do in
+    // twice / four times as many renders. Live raids ignore both —
+    // replayContext is non-null only when we're replaying.
+    if (this.replayContext && this.replayPaused) return;
+    const replayMult = this.replayContext ? this.replaySpeed : 1;
 
     // Step the deterministic sim at 30 Hz regardless of render rate.
     const msPerTick = 1000 / TICK_HZ;
-    this.simTickElapsed += deltaMs;
+    this.simTickElapsed += deltaMs * replayMult;
     while (this.simTickElapsed >= msPerTick && this.state.outcome === 'ongoing') {
       this.simTickElapsed -= msPerTick;
       const nextTick = this.state.tick + 1;
@@ -1152,6 +1160,39 @@ export class RaidScene extends Phaser.Scene {
     this.trailEmitter.emitParticle(quantity, x, y);
   }
 
+  // Confetti burst for the victory card. Spawns ~24 small colored
+  // rectangles along the top of the card, each tweened downward
+  // with gravity-ish falloff and a soft alpha fade. Pure Phaser;
+  // no particle manager so there's nothing to clean up between
+  // raids. Colors are drawn from the theme palette so it matches
+  // the rest of the game rather than looking generic.
+  private emitConfetti(centerY: number): void {
+    const colors = [0xffd98a, 0xf7edd0, 0x83c76b, 0x5ba445, 0xffc44d, 0xd94c4c];
+    for (let i = 0; i < 28; i++) {
+      const color = colors[i % colors.length]!;
+      const x = this.scale.width / 2 + (Math.random() - 0.5) * this.scale.width * 0.7;
+      const y = centerY - 20 + Math.random() * 16;
+      const size = 5 + Math.random() * 5;
+      const dot = this.add
+        .rectangle(x, y, size, size * 1.5, color, 1)
+        .setRotation(Math.random() * Math.PI)
+        .setDepth(DEPTHS.resultContent)
+        .setScrollFactor(0);
+      const fallDistance = 220 + Math.random() * 200;
+      const horizontal = (Math.random() - 0.5) * 120;
+      this.tweens.add({
+        targets: dot,
+        y: y + fallDistance,
+        x: x + horizontal,
+        alpha: { from: 1, to: 0 },
+        rotation: dot.rotation + (Math.random() - 0.5) * Math.PI * 3,
+        duration: 1400 + Math.random() * 600,
+        ease: 'Cubic.easeIn',
+        onComplete: () => dot.destroy(),
+      });
+    }
+  }
+
   // Floating "+N sugar / +M leaf" popup at a kill location. Rises,
   // fades, and auto-destroys so repeated kills don't leak DOM/objects.
   private spawnLootPopup(x: number, y: number, sugar: number, leaf: number): void {
@@ -1335,7 +1376,6 @@ export class RaidScene extends Phaser.Scene {
     if (!this.replayContext) return;
     this.pendingInputs = [...this.replayContext.inputs];
     this.started = true;
-    // Tag the scene with a "watching replay" banner.
     this.add
       .text(this.scale.width / 2, 4, `Replay: ${this.replayContext.replayName}`, {
         fontFamily: 'ui-monospace, monospace',
@@ -1344,7 +1384,54 @@ export class RaidScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(DEPTHS.raidHudValue);
+
+    // Replay control strip — pause/play + 1×/2×/4× speed. The sim
+    // is deterministic and runs off pendingInputs, so "speed" is
+    // just a multiplier on how many sim ticks we advance per render
+    // frame; "pause" is a boolean the update loop reads before
+    // stepping. Both pieces are read by the run loop below.
+    this.replayControls = this.add.container(0, 0).setDepth(DEPTHS.raidHudValue);
+    const barY = this.scale.height - 52;
+    const center = this.scale.width / 2;
+    const pauseBtn = makeHiveButton(this, {
+      x: center - 96,
+      y: barY,
+      width: 80,
+      height: 32,
+      label: '❚❚ Pause',
+      variant: 'ghost',
+      fontSize: 11,
+      onPress: () => {
+        this.replayPaused = !this.replayPaused;
+        pauseBtn.setLabel(this.replayPaused ? '▶ Play' : '❚❚ Pause');
+      },
+    });
+    this.replayControls.add(pauseBtn.container);
+    const speeds: Array<1 | 2 | 4> = [1, 2, 4];
+    speeds.forEach((s, i) => {
+      const btn = makeHiveButton(this, {
+        x: center + 10 + i * 60,
+        y: barY,
+        width: 50,
+        height: 32,
+        label: `${s}×`,
+        variant: this.replaySpeed === s ? 'primary' : 'ghost',
+        fontSize: 11,
+        onPress: () => {
+          this.replaySpeed = s;
+          // Cheapest way to refresh the variant highlight is a re-
+          // render of the control strip.
+          this.replayControls?.destroy(true);
+          this.replayControls = null;
+          this.bootReplayPlayback();
+        },
+      });
+      this.replayControls?.add(btn.container);
+    });
   }
+  private replayPaused = false;
+  private replaySpeed: 1 | 2 | 4 = 1;
+  private replayControls: Phaser.GameObjects.Container | null = null;
 
   private showResult(): void {
     if (this.resultShown) return;
@@ -1425,15 +1512,77 @@ export class RaidScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(DEPTHS.resultContent);
 
-    this.add
+    // Loot line. On wins the numbers animate up from zero so the
+    // player feels the coin-drop. On losses we show the final
+    // (usually zero) totals immediately.
+    const lootText = this.add
       .text(
         this.scale.width / 2,
         cy + 130,
-        `${this.state.attackerSugarLooted} sugar · ${this.state.attackerLeafBitsLooted} leaf`,
-        displayTextStyle(15, COLOR.textDim, 3),
+        isWin
+          ? `0 sugar · 0 leaf`
+          : `${this.state.attackerSugarLooted} sugar · ${this.state.attackerLeafBitsLooted} leaf`,
+        displayTextStyle(15, isWin ? COLOR.textGold : COLOR.textDim, 3),
       )
       .setOrigin(0.5)
       .setDepth(DEPTHS.resultContent);
+    if (isWin) {
+      const tally = { sugar: 0, leaf: 0 };
+      this.tweens.add({
+        targets: tally,
+        sugar: this.state.attackerSugarLooted,
+        leaf: this.state.attackerLeafBitsLooted,
+        duration: 900,
+        ease: 'Cubic.easeOut',
+        onUpdate: () => {
+          lootText.setText(
+            `${Math.round(tally.sugar)} sugar · ${Math.round(tally.leaf)} leaf`,
+          );
+        },
+      });
+    }
+
+    // "NEW BEST" ribbon when this raid exceeds the player's tracked
+    // personal best for single-raid sugar loot. Written after every
+    // win so it always reflects the best they've ever done.
+    if (isWin) {
+      const PB_KEY = 'hive.bestRaidSugar';
+      let prev = 0;
+      try { prev = Number(localStorage.getItem(PB_KEY) ?? '0') || 0; } catch { /* ignore */ }
+      if (this.state.attackerSugarLooted > prev) {
+        try { localStorage.setItem(PB_KEY, String(this.state.attackerSugarLooted)); } catch { /* ignore */ }
+        const ribbon = this.add
+          .text(
+            this.scale.width / 2,
+            cy + 162,
+            '★  NEW BEST  ★',
+            displayTextStyle(12, '#ffe7b0', 3),
+          )
+          .setOrigin(0.5)
+          .setDepth(DEPTHS.resultContent)
+          .setAlpha(0);
+        this.tweens.add({
+          targets: ribbon,
+          alpha: 1,
+          scale: { from: 0.6, to: 1 },
+          duration: 380,
+          delay: 900,
+          ease: 'Back.easeOut',
+        });
+      }
+    }
+
+    // Audio sting + confetti burst. Confetti uses the existing
+    // trailEmitter's spare capacity so we don't add a second particle
+    // manager; a handful of colored dots at the top-center of the
+    // screen is the whole effect — cheap but it transforms the "a
+    // modal appeared" moment into a celebration.
+    if (isWin) {
+      sfxVictory();
+      this.emitConfetti(cy - 8);
+    } else {
+      sfxDefeat();
+    }
 
     const actionsY = isWin ? cy + 220 : cy + 170;
 

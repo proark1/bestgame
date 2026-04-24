@@ -4,8 +4,10 @@ import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
+import { openSettings } from '../ui/settingsModal.js';
 import { openBuildingInfoModal } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { formatCountdown } from '../ui/sceneFrame.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { isUiOverrideActive } from '../ui/uiOverrides.js';
@@ -408,6 +410,7 @@ export class HomeScene extends Phaser.Scene {
     const PILL_GAP = tier === 'phone' ? SPACING.xs : SPACING.sm;
     const ICON_SIZE = tier === 'phone' ? 20 : 26;
     let x = this.scale.width - (tier === 'phone' ? SPACING.sm : SPACING.md);
+    const kinds: Array<'sugar' | 'leaf' | 'milk'> = ['sugar', 'leaf', 'milk'];
     for (let i = badges.length - 1; i >= 0; i--) {
       const b = badges[i]!;
       const textW = Math.max(b.text.width, 24);
@@ -420,11 +423,26 @@ export class HomeScene extends Phaser.Scene {
         .image(pillX + PILL_PAD_X + ICON_SIZE / 2, cy, b.icon)
         .setDisplaySize(ICON_SIZE, ICON_SIZE);
       b.text.setPosition(pillX + pillW - PILL_PAD_X, cy);
-      // Numbers were created BEFORE the pill + icon in drawHud, so
-      // they sat UNDER both in the child array and were covered on
-      // HUD repaint — that read as "the pills have no numbers". Bump
-      // the text's depth so it always draws over the pill chrome.
       b.text.setDepth(DEPTHS.hudChrome);
+      // Tap-to-explain: an interactive zone covering the full pill
+      // opens a small popover detailing per-second income and when
+      // the next upgrade tier becomes affordable. The numbers alone
+      // are abstract ("480 sugar") — the popover turns them into a
+      // decision ("3 more minutes til you can upgrade your turret").
+      const kind = kinds[i]!;
+      const hit = this.add
+        .zone(pillX + pillW / 2, cy, pillW, PILL_H)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (
+        _p: Phaser.Input.Pointer,
+        _lx: number,
+        _ly: number,
+        e: Phaser.Types.Input.EventData,
+      ) => {
+        e?.stopPropagation?.();
+        this.openResourcePopover(kind, pillX + pillW / 2, cy + PILL_H / 2 + 6);
+      });
       void pill;
       void icon;
       x = pillX - PILL_GAP;
@@ -652,6 +670,7 @@ export class HomeScene extends Phaser.Scene {
       { label: '👥  Clan', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
       { label: '🏟  Arena', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
       { label: '📖  Codex', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
+      { label: '⚙️  Settings', onPress: () => { this.closeBurgerDrawer(); openSettings(); } },
       { label: '❓  Help', onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
       {
         label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
@@ -1140,6 +1159,116 @@ export class HomeScene extends Phaser.Scene {
     if (spr) this.homeBuildingSprites.set(b.id, spr);
   }
 
+  // Per-second income read off the server base snapshot. Mirrors the
+  // game-side income code so popover numbers match what actually
+  // ticks into the HUD. Ignores hp<=0 buildings (destroyed producers
+  // stop earning).
+  private currentIncomePerSecond(): { sugar: number; leaf: number; milk: number } {
+    let sugar = 0, leaf = 0, milk = 0;
+    const base = this.serverBase;
+    if (!base) return { sugar, leaf, milk };
+    for (const b of base.buildings) {
+      if (b.hp <= 0) continue;
+      const inc = INCOME_PER_SECOND[b.kind];
+      if (!inc) continue;
+      const mult = Math.max(1, b.level);
+      sugar += (inc.sugar ?? 0) * mult;
+      leaf += (inc.leafBits ?? 0) * mult;
+    }
+    return { sugar, leaf, milk };
+  }
+
+  private resourcePopover: Phaser.GameObjects.Container | null = null;
+
+  // Render a small popover underneath a resource pill. Explains
+  // the per-second rate, next-upgrade cost (if the currently
+  // selected building has one), and time-to-affordable. Tap outside
+  // to dismiss.
+  private openResourcePopover(
+    kind: 'sugar' | 'leaf' | 'milk',
+    anchorX: number,
+    anchorY: number,
+  ): void {
+    this.resourcePopover?.destroy(true);
+    const income = this.currentIncomePerSecond();
+    const rate = kind === 'sugar' ? income.sugar
+      : kind === 'leaf' ? income.leaf
+      : income.milk;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const wallet = runtime?.player?.player;
+    const have = wallet
+      ? kind === 'sugar' ? wallet.sugar
+        : kind === 'leaf' ? wallet.leafBits
+        : wallet.aphidMilk
+      : 0;
+    const title =
+      kind === 'sugar' ? 'Sugar' :
+      kind === 'leaf' ? 'Leaf bits' : 'Aphid milk';
+    const lines: string[] = [];
+    lines.push(`Current: ${have}`);
+    if (rate > 0) {
+      lines.push(`Income: +${rate}/sec from ${kind === 'sugar' ? 'Dew Collectors' : 'Larva Nurseries'}`);
+      // Quick "how long to 1000" style estimate so players sense
+      // the rate in concrete time units.
+      const target = Math.max(1000, have + 500);
+      const secs = Math.max(0, Math.ceil((target - have) / rate));
+      if (secs > 0 && secs < 48 * 3600) {
+        lines.push(`Next ${target}: in ${formatCountdown(secs)}`);
+      }
+    } else if (kind === 'milk') {
+      lines.push('Earn from daily streaks, comeback packs, chapter clears.');
+    } else {
+      lines.push('Build producers to raise your rate.');
+    }
+
+    const W = 260;
+    const lineH = 18;
+    const padY = 12;
+    const bodyH = padY + 18 + lines.length * lineH + padY;
+    const left = Math.max(12, Math.min(this.scale.width - W - 12, anchorX - W / 2));
+    const top = Math.min(this.scale.height - bodyH - 12, anchorY + 4);
+    const container = this.add.container(0, 0).setDepth(DEPTHS.drawer);
+
+    const bg = this.add.graphics();
+    drawPanel(bg, left, top, W, bodyH, {
+      topColor: 0x2a3f2d,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.14,
+      radius: 10,
+      shadowOffset: 3,
+      shadowAlpha: 0.28,
+    });
+    container.add(bg);
+    container.add(
+      crispText(this, left + 14, top + 10, title, labelTextStyle(11, COLOR.textGold)),
+    );
+    let ly = top + 28;
+    for (const ln of lines) {
+      container.add(
+        crispText(this, left + 14, ly, ln, bodyTextStyle(11, COLOR.textPrimary))
+          .setWordWrapWidth(W - 28, true),
+      );
+      ly += lineH;
+    }
+    // Backdrop tap closes — lightweight since a resource popover is
+    // transient chrome, not a modal.
+    const backdrop = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0)
+      .setOrigin(0, 0)
+      .setInteractive();
+    backdrop.setDepth(DEPTHS.drawer - 1);
+    backdrop.on('pointerdown', () => {
+      container.destroy(true);
+      backdrop.destroy();
+      if (this.resourcePopover === container) this.resourcePopover = null;
+    });
+    container.add(backdrop);
+    this.resourcePopover = container;
+  }
+
   // Tap handler: open the building info / upgrade modal. On a
   // successful upgrade or demolish we update only the affected sprite
   // (not the whole board), which keeps the scene snappy as bases
@@ -1589,7 +1718,81 @@ export class HomeScene extends Phaser.Scene {
     if (ps.nemesis && !ps.nemesis.avenged) {
       topY = this.drawNemesisRibbon(topY, runtime);
     }
+
+    // "What next?" banner — always last in the stack. Only shows a
+    // CTA when there's a concrete next action the player hasn't
+    // taken yet. Silently skipped when the other banners already
+    // cover the most valuable action (comeback, streak claim,
+    // revenge) so we never repeat nudges.
+    const suggestion = this.pickNextSuggestion(ps);
+    if (suggestion) {
+      topY = this.drawWhatNextBanner(topY, suggestion);
+    }
     void topY;
+  }
+
+  // Picks the single highest-priority next action based on server
+  // state the client already has. Returns null when nothing
+  // actionable beats the banners already stacked above this call.
+  // Order is: clan war (time-bound and most social) > campaign
+  // (narrative thread) > quests (daily). Extend as more systems
+  // need surfacing.
+  private pickNextSuggestion(
+    ps: NonNullable<NonNullable<HiveRuntime['player']>['player']>,
+  ): { title: string; body: string; cta: string; sceneKey: string } | null {
+    const campaign = ps.campaign;
+    // Active campaign chapter: if there's a mission in the current
+    // chapter still uncompleted, nudge the player toward Campaign.
+    if (campaign && campaign.progress < 3) {
+      return {
+        title: 'Campaign mission waiting',
+        body: `Chapter ${campaign.chapter} has missions you haven't cleared yet.`,
+        cta: 'Open campaign',
+        sceneKey: 'CampaignScene',
+      };
+    }
+    return {
+      title: 'Run a raid',
+      body: 'A quick raid fills the sugar vault and earns season XP.',
+      cta: 'Raid now',
+      sceneKey: 'RaidScene',
+    };
+  }
+
+  private drawWhatNextBanner(
+    topY: number,
+    s: { title: string; body: string; cta: string; sceneKey: string },
+  ): number {
+    const maxW = Math.min(520, this.scale.width - 24);
+    const x = (this.scale.width - maxW) / 2;
+    const h = 58;
+    const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
+    drawPanel(bg, x, topY, maxW, h, {
+      topColor: 0x2a3f2d, botColor: 0x09100a,
+      stroke: COLOR.brassDeep, strokeWidth: 2,
+      highlight: COLOR.brass, highlightAlpha: 0.14,
+      radius: 10, shadowOffset: 3, shadowAlpha: 0.22,
+    });
+    crispText(this, x + 14, topY + 8,
+      s.title.toUpperCase(),
+      labelTextStyle(10, COLOR.textGold),
+    ).setDepth(DEPTHS.boardOverlay);
+    crispText(this, x + 14, topY + 26,
+      s.body,
+      bodyTextStyle(12, COLOR.textPrimary),
+    ).setDepth(DEPTHS.boardOverlay).setWordWrapWidth(maxW - 160, true);
+    const btn = makeHiveButton(this, {
+      x: x + maxW - 80,
+      y: topY + h / 2,
+      width: 140,
+      height: 34,
+      label: s.cta,
+      variant: 'primary',
+      fontSize: 12,
+      onPress: () => fadeToScene(this, s.sceneKey),
+    });
+    btn.container.setDepth(DEPTHS.boardOverlay);
+    return topY + h + 8;
   }
 
   private drawComebackBanner(topY: number, runtime: HiveRuntime): number {

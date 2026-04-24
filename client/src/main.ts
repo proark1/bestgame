@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { FBInstantBridge } from './fbinstant/FBInstantBridge.js';
+import { applyGlobalSettings } from './ui/settingsModal.js';
 import { BootScene } from './scenes/BootScene.js';
 import { HomeScene } from './scenes/HomeScene.js';
 import { RaidScene } from './scenes/RaidScene.js';
@@ -50,6 +51,10 @@ function dismissSplash(): void {
 splashTimer = setTimeout(dismissSplash, 6000);
 
 async function main(): Promise<void> {
+  // Apply last-chosen text-size / color-blind / perf preset from
+  // localStorage before scenes start laying out so they honor the
+  // user's settings on first paint (not after a resize).
+  applyGlobalSettings();
   const fb = new FBInstantBridge();
   try {
     await fb.initialize(() => {});

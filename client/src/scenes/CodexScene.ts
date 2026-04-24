@@ -150,9 +150,44 @@ export class CodexScene extends Phaser.Scene {
       onPress: () => fadeToScene(this, 'HomeScene'),
     });
 
+    // Filter toggle — cycles the visible entry set between All /
+    // Units / Buildings so the admin can focus the deck. Lives next
+    // to the title so it's always one tap away on narrow viewports.
+    makeHiveButton(this, {
+      x: this.scale.width - 96,
+      y: HUD_H / 2,
+      width: 120,
+      height: 36,
+      label: this.filterLabel(),
+      variant: 'ghost',
+      fontSize: 12,
+      onPress: () => this.cycleFilter(),
+    });
+
     crispText(this, this.scale.width / 2, HUD_H / 2, 'Codex', displayTextStyle(20, '#ffe7b0', 4)).setOrigin(
       0.5,
     );
+  }
+
+  private filterMode: 'all' | 'units' | 'buildings' = 'all';
+  private filterLabel(): string {
+    return this.filterMode === 'all'
+      ? 'All ▾'
+      : this.filterMode === 'units' ? 'Units ▾' : 'Buildings ▾';
+  }
+  private cycleFilter(): void {
+    const order: Array<'all' | 'units' | 'buildings'> = ['all', 'units', 'buildings'];
+    const next = order[(order.indexOf(this.filterMode) + 1) % order.length]!;
+    this.filterMode = next;
+    this.entries = next === 'all'
+      ? ALL_CODEX_ENTRIES
+      : ALL_CODEX_ENTRIES.filter((e) =>
+          next === 'units'
+            ? e.spriteKey.startsWith('unit-')
+            : e.spriteKey.startsWith('building-'),
+        );
+    this.currentIdx = Math.min(this.currentIdx, this.entries.length - 1);
+    this.scene.restart();
   }
 
   private computeLayout(): CardLayout {
