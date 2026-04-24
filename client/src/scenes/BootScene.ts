@@ -461,7 +461,11 @@ export class BootScene extends Phaser.Scene {
 
     void fetchOverrides.finally(() => {
       document.getElementById('boot-splash')?.remove();
-      this.scene.start('HomeScene');
+      // New players without tutorial progress land on the scripted
+      // prologue — narrative hook before their first raid. Anyone
+      // past stage 5 lands on Home as before.
+      const tutorialStage = rt?.player?.player.tutorialStage ?? 100;
+      this.scene.start(tutorialStage < 5 ? 'PrologueScene' : 'HomeScene');
     });
   }
 }

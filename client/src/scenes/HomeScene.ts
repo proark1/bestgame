@@ -99,6 +99,7 @@ export class HomeScene extends Phaser.Scene {
     this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
     this.drawBuildings();
+    this.drawStickyHooks();
     this.drawFooter();
     this.wireBoardTap();
     // Kick off catalog fetch (non-blocking) — it's cached per scene
@@ -610,6 +611,11 @@ export class HomeScene extends Phaser.Scene {
         },
       },
       { label: '⚔  Raid a base', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
+      { label: '📖  Campaign', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
+      { label: '🏰  Clan wars', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
+      { label: '🎬  Top raids', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
+      { label: '👑  Queen',    onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
+      { label: '⏳  Builders', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
       { label: '🗓  Quests', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
       { label: '🧠  Defender AI', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
       { label: '🏆  Ranks', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
@@ -1037,6 +1043,181 @@ export class HomeScene extends Phaser.Scene {
   private static readonly FOOTER_MARGIN_X = 20;
   private static readonly FOOTER_GAP = 10;
 
+  // Overlay hooks from the stickiness retention system: streak, nemesis
+  // ribbon, comeback banner, and a Queen-portrait chip. Everything is
+  // optional — surfaces only when the relevant state is present.
+  private drawStickyHooks(): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const ps = runtime?.player?.player;
+    if (!ps) return;
+    let topY = HUD_H + 8;
+
+    // Comeback banner — the strongest signal (away 3+ days). Pushed
+    // above everything else.
+    if (ps.streak?.comebackPending) {
+      topY = this.drawComebackBanner(topY, runtime);
+    }
+
+    // Streak banner — shows current streak day + claim button if
+    // today's reward isn't claimed yet.
+    if (ps.streak && ps.streak.count > 0 && ps.streak.lastClaim < ps.streak.count) {
+      topY = this.drawStreakBanner(topY, runtime);
+    }
+
+    // Nemesis ribbon — unavenged loss to an identified opponent.
+    // Auto-fetches the full nemesis payload (online-status / name).
+    if (ps.nemesis && !ps.nemesis.avenged) {
+      topY = this.drawNemesisRibbon(topY, runtime);
+    }
+    void topY;
+  }
+
+  private drawComebackBanner(topY: number, runtime: HiveRuntime): number {
+    const maxW = Math.min(520, this.scale.width - 24);
+    const x = (this.scale.width - maxW) / 2;
+    const h = 62;
+    const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
+    drawPanel(bg, x, topY, maxW, h, {
+      topColor: 0x5c4020, botColor: 0x2a1d08,
+      stroke: COLOR.brass, strokeWidth: 2,
+      highlight: COLOR.brass, highlightAlpha: 0.25,
+      radius: 12, shadowOffset: 4, shadowAlpha: 0.36,
+    });
+    crispText(this, x + 14, topY + 10, 'Welcome back',
+      labelTextStyle(10, '#2a1d08'),
+    ).setDepth(DEPTHS.boardOverlay);
+    crispText(this, x + 14, topY + 28,
+      'Your colony missed you. Claim a returning-player pack.',
+      bodyTextStyle(12, COLOR.textPrimary),
+    ).setDepth(DEPTHS.boardOverlay);
+    const btn = makeHiveButton(this, {
+      x: x + maxW - 70,
+      y: topY + h / 2,
+      width: 120,
+      height: 36,
+      label: 'Claim',
+      variant: 'primary',
+      fontSize: 12,
+      onPress: () => { void this.claimComeback(runtime); },
+    });
+    btn.container.setDepth(DEPTHS.boardOverlay);
+    void bg;
+    return topY + h + 10;
+  }
+
+  private async claimComeback(runtime: HiveRuntime): Promise<void> {
+    try {
+      const r = await runtime.api.claimComeback();
+      this.resources.sugar = r.resources.sugar;
+      this.resources.leafBits = r.resources.leafBits;
+      this.resources.aphidMilk = r.resources.aphidMilk;
+      this.sugarText.setText(String(this.resources.sugar));
+      this.leafText.setText(String(this.resources.leafBits));
+      this.milkText.setText(String(this.resources.aphidMilk));
+      if (runtime.player) {
+        if (runtime.player.player.streak) runtime.player.player.streak.comebackPending = false;
+      }
+      this.scene.restart();
+    } catch (err) {
+      console.warn('comeback claim failed', err);
+    }
+  }
+
+  private drawStreakBanner(topY: number, runtime: HiveRuntime): number {
+    const ps = runtime.player?.player;
+    if (!ps?.streak) return topY;
+    const maxW = Math.min(520, this.scale.width - 24);
+    const x = (this.scale.width - maxW) / 2;
+    const h = 58;
+    const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
+    drawPanel(bg, x, topY, maxW, h, {
+      topColor: 0x2a3f2d, botColor: 0x09100a,
+      stroke: COLOR.brassDeep, strokeWidth: 2,
+      highlight: COLOR.brass, highlightAlpha: 0.14,
+      radius: 10, shadowOffset: 3, shadowAlpha: 0.22,
+    });
+    crispText(this, x + 14, topY + 8,
+      `Login streak: day ${ps.streak.count}`,
+      labelTextStyle(11, COLOR.textGold),
+    ).setDepth(DEPTHS.boardOverlay);
+    crispText(this, x + 14, topY + 28,
+      ps.streak.nextReward.label,
+      bodyTextStyle(12, COLOR.textPrimary),
+    ).setDepth(DEPTHS.boardOverlay);
+    const btn = makeHiveButton(this, {
+      x: x + maxW - 70,
+      y: topY + h / 2,
+      width: 120,
+      height: 34,
+      label: 'Claim',
+      variant: 'primary',
+      fontSize: 12,
+      onPress: () => { void this.claimStreak(runtime); },
+    });
+    btn.container.setDepth(DEPTHS.boardOverlay);
+    return topY + h + 8;
+  }
+
+  private async claimStreak(runtime: HiveRuntime): Promise<void> {
+    try {
+      const r = await runtime.api.claimStreak();
+      this.resources.sugar = r.resources.sugar;
+      this.resources.leafBits = r.resources.leafBits;
+      this.resources.aphidMilk = r.resources.aphidMilk;
+      this.sugarText.setText(String(this.resources.sugar));
+      this.leafText.setText(String(this.resources.leafBits));
+      this.milkText.setText(String(this.resources.aphidMilk));
+      if (runtime.player?.player.streak) {
+        runtime.player.player.streak.lastClaim = r.streakDay;
+      }
+      this.scene.restart();
+    } catch (err) {
+      console.warn('streak claim failed', err);
+    }
+  }
+
+  private drawNemesisRibbon(topY: number, runtime: HiveRuntime): number {
+    const ps = runtime.player?.player;
+    if (!ps?.nemesis) return topY;
+    const maxW = Math.min(520, this.scale.width - 24);
+    const x = (this.scale.width - maxW) / 2;
+    const h = 52;
+    const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
+    drawPanel(bg, x, topY, maxW, h, {
+      topColor: 0x4a1818, botColor: 0x1a0a0a,
+      stroke: COLOR.red, strokeWidth: 2,
+      highlight: 0xff9a80, highlightAlpha: 0.2,
+      radius: 10, shadowOffset: 3, shadowAlpha: 0.26,
+    });
+    const label = crispText(this, x + 14, topY + 8,
+      'NEMESIS',
+      labelTextStyle(10, '#ff9a80'),
+    ).setDepth(DEPTHS.boardOverlay);
+    label.setAlpha(0.7);
+    this.tweens.add({ targets: label, alpha: 1, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    crispText(this, x + 14, topY + 24,
+      `${ps.nemesis.stars}-starred you. Time for revenge.`,
+      bodyTextStyle(12, COLOR.textPrimary),
+    ).setDepth(DEPTHS.boardOverlay);
+    const btn = makeHiveButton(this, {
+      x: x + maxW - 74,
+      y: topY + h / 2,
+      width: 130,
+      height: 34,
+      label: 'Revenge raid',
+      variant: 'danger',
+      fontSize: 12,
+      onPress: () => {
+        // We stamp "revenge context" so RaidScene pulls the defender
+        // from the nemesis id instead of running matchmaking.
+        this.registry.set('revengeContext', { defenderId: ps.nemesis!.playerId });
+        fadeToScene(this, 'RaidScene');
+      },
+    });
+    btn.container.setDepth(DEPTHS.boardOverlay);
+    return topY + h + 8;
+  }
+
   private drawFooter(): void {
     this.footerChrome?.destroy();
     this.footerChrome = null;
@@ -1109,6 +1290,12 @@ export class HomeScene extends Phaser.Scene {
         short: () => 'Clan',
         variant: 'secondary',
         onPress: () => fadeToScene(this, 'ClanScene'),
+      },
+      {
+        full: () => '📖 Campaign',
+        short: () => 'Story',
+        variant: 'secondary',
+        onPress: () => fadeToScene(this, 'CampaignScene'),
       },
       {
         full: () => '⚔ Arena',

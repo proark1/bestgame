@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
@@ -298,6 +299,141 @@ export function registerWars(app: FastifyInstance): void {
       app.log.error({ err }, 'clan/war/attack failed');
       reply.code(500);
       return { error: 'attack failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // -- War opponent picker --------------------------------------------------
+  //
+  // Returns a random unattacked member of the opposing clan for the
+  // caller's active war. Used by the client when the player taps
+  // "Attack War Target" on the ClanWarsScene — it hands back a match
+  // token the same shape as /match so the existing RaidScene flow
+  // works unchanged. The token ties the pending match to a specific
+  // war so /raid/submit can auto-submit to /clan/war/attack.
+  app.post('/clan/war/find-target', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const me = await client.query<{ clan_id: string }>(
+        'SELECT clan_id FROM clan_members WHERE player_id = $1',
+        [playerId],
+      );
+      if (me.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'not in a clan' };
+      }
+      const myClanId = me.rows[0]!.clan_id;
+      const war = await client.query<{
+        id: string;
+        clan_a_id: string;
+        clan_b_id: string;
+      }>(
+        `SELECT id, clan_a_id, clan_b_id
+           FROM clan_wars
+          WHERE status = 'active'
+            AND (clan_a_id = $1 OR clan_b_id = $1)
+          ORDER BY started_at DESC
+          LIMIT 1`,
+        [myClanId],
+      );
+      if (war.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'no active war' };
+      }
+      const w = war.rows[0]!;
+      // Did the caller already use their war attack?
+      const alreadyAttacked = await client.query<{ id: string }>(
+        `SELECT id FROM clan_war_attacks
+          WHERE war_id = $1 AND attacker_player_id = $2`,
+        [w.id, playerId],
+      );
+      if (alreadyAttacked.rows.length > 0) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'you already used your war attack' };
+      }
+      const opponentClanId = w.clan_a_id === myClanId ? w.clan_b_id : w.clan_a_id;
+      // Pick a member of the opposing clan the caller hasn't attacked
+      // yet in this war. We pick one at random from the unattacked set.
+      const target = await client.query<{
+        player_id: string;
+        display_name: string;
+        trophies: number;
+        snapshot: unknown;
+        seed: string | null;
+      }>(
+        `SELECT cm.player_id, p.display_name, p.trophies,
+                b.snapshot,
+                NULL::text AS seed
+           FROM clan_members cm
+           JOIN players p ON p.id = cm.player_id
+           LEFT JOIN bases b ON b.player_id = p.id
+          WHERE cm.clan_id = $1
+            AND cm.player_id <> $2
+          ORDER BY RANDOM()
+          LIMIT 1`,
+        [opponentClanId, playerId],
+      );
+      if (target.rows.length === 0 || !target.rows[0]!.snapshot) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'no war target available' };
+      }
+      const t = target.rows[0]!;
+      // Create a pending_match the same way /api/match does. The
+      // resulting matchToken + defenderId feeds the existing RaidScene
+      // flow; once the client completes the raid + /raid/submit, the
+      // scene calls /clan/war/attack with the result to record the war
+      // hit. Matchmaking's own token shape is a 32-char hex string so
+      // we mint one of the same shape here.
+      const token = randomBytes(16).toString('hex');
+      const seed = Math.floor(Math.random() * 2 ** 31);
+      const insert = await client.query<{ expires_at: Date }>(
+        `INSERT INTO pending_matches
+           (token, attacker_id, defender_id, seed, base_snapshot, expires_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb,
+                 NOW() + INTERVAL '15 minutes')
+         RETURNING expires_at`,
+        [
+          token,
+          playerId,
+          t.player_id,
+          seed,
+          JSON.stringify(t.snapshot),
+        ],
+      );
+      await client.query('COMMIT');
+      const row = insert.rows[0]!;
+      return {
+        ok: true,
+        matchToken: token,
+        warId: w.id,
+        defenderId: t.player_id,
+        seed,
+        expiresAt: row.expires_at.toISOString(),
+        opponent: {
+          isBot: false,
+          displayName: t.display_name,
+          trophies: t.trophies,
+        },
+        baseSnapshot: t.snapshot,
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'clan/war/find-target failed');
+      reply.code(500);
+      return { error: 'target pick failed' };
     } finally {
       client.release();
     }

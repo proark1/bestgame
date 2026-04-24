@@ -11,6 +11,12 @@ import { ArenaScene } from './scenes/ArenaScene.js';
 import { CodexScene } from './scenes/CodexScene.js';
 import { QuestsScene } from './scenes/QuestsScene.js';
 import { DefenderAIScene } from './scenes/DefenderAIScene.js';
+import { CampaignScene } from './scenes/CampaignScene.js';
+import { ClanWarsScene } from './scenes/ClanWarsScene.js';
+import { ReplayFeedScene } from './scenes/ReplayFeedScene.js';
+import { QueenSkinScene } from './scenes/QueenSkinScene.js';
+import { BuilderQueueScene } from './scenes/BuilderQueueScene.js';
+import { PrologueScene } from './scenes/PrologueScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
 import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
@@ -150,6 +156,12 @@ async function main(): Promise<void> {
       new CodexScene(),
       new QuestsScene(),
       new DefenderAIScene(),
+      new CampaignScene(),
+      new ClanWarsScene(),
+      new ReplayFeedScene(),
+      new QueenSkinScene(),
+      new BuilderQueueScene(),
+      new PrologueScene(),
     ],
   });
   // Runtime is attached to the game registry so scenes can pull it

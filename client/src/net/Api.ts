@@ -14,6 +14,42 @@ function healthUrl(): string {
   return new URL('/health', window.location.origin).toString();
 }
 
+export interface StreakReward {
+  day: number;
+  sugar: number;
+  leafBits: number;
+  aphidMilk: number;
+  label: string;
+}
+
+export interface StreakState {
+  count: number;
+  lastDay: string;
+  lastClaim: number;
+  creditedToday: boolean;
+  comebackPending: boolean;
+  nextReward: StreakReward;
+  rewards: StreakReward[];
+  comebackReward: { sugar: number; leafBits: number; aphidMilk: number };
+}
+
+export interface NemesisStub {
+  playerId: string;
+  stars: number;
+  setAt: string | null;
+  avenged: boolean;
+}
+
+export interface QueenSkinState {
+  equipped: string;
+  owned: string[];
+}
+
+export interface CampaignBrief {
+  chapter: number;
+  progress: number;
+}
+
 export interface PlayerState {
   id: string;
   displayName: string;
@@ -29,6 +65,12 @@ export interface PlayerState {
   seasonId?: string;
   seasonXp?: number;
   seasonMilestonesClaimed?: number[];
+  // Stickiness features (0013). All optional so older servers work.
+  streak?: StreakState;
+  nemesis?: NemesisStub | null;
+  queenSkin?: QueenSkinState;
+  tutorialStage?: number;
+  campaign?: CampaignBrief;
 }
 
 export interface DailyQuestState {
@@ -537,6 +579,212 @@ export class Api {
     return (await res.json()) as Awaited<ReturnType<Api['setBuildingRules']>>;
   }
 
+  // ---- Stickiness: streak / nemesis / queen skin ------------------------
+  async claimStreak(): Promise<{
+    ok: true;
+    streakDay: number;
+    reward: StreakReward;
+    resources: { sugar: number; leafBits: number; aphidMilk: number };
+  }> {
+    const res = await this.authedFetch('/player/streak/claim', { method: 'POST' });
+    if (!res.ok) throw await errorFromResponse(res, 'streak/claim');
+    return (await res.json()) as Awaited<ReturnType<Api['claimStreak']>>;
+  }
+
+  async claimComeback(): Promise<{
+    ok: true;
+    reward: { sugar: number; leafBits: number; aphidMilk: number };
+    resources: { sugar: number; leafBits: number; aphidMilk: number };
+  }> {
+    const res = await this.authedFetch('/player/comeback/claim', { method: 'POST' });
+    if (!res.ok) throw await errorFromResponse(res, 'comeback/claim');
+    return (await res.json()) as Awaited<ReturnType<Api['claimComeback']>>;
+  }
+
+  async getNemesis(): Promise<{
+    nemesis: {
+      playerId: string;
+      displayName: string;
+      trophies: number;
+      faction: string;
+      queenSkinId: string;
+      stars: number;
+      setAt: string | null;
+      avenged: boolean;
+      onlineRecent: boolean;
+    } | null;
+  }> {
+    const res = await this.authedFetch('/player/nemesis');
+    if (!res.ok) throw await errorFromResponse(res, 'nemesis fetch');
+    return (await res.json()) as Awaited<ReturnType<Api['getNemesis']>>;
+  }
+
+  async getQueenSkins(): Promise<QueenSkinCatalog> {
+    const res = await this.authedFetch('/player/queen-skins');
+    if (!res.ok) throw await errorFromResponse(res, 'queen skin list');
+    return (await res.json()) as QueenSkinCatalog;
+  }
+
+  async equipQueenSkin(skinId: string): Promise<{
+    ok: true;
+    equipped: string;
+    owned: string[];
+  }> {
+    const res = await this.authedFetch('/player/queen-skins/equip', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ skinId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'queen skin equip');
+    return (await res.json()) as Awaited<ReturnType<Api['equipQueenSkin']>>;
+  }
+
+  async setTutorialStage(stage: number): Promise<{ ok: true; stage: number }> {
+    const res = await this.authedFetch('/player/tutorial', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'tutorial stage');
+    return (await res.json()) as { ok: true; stage: number };
+  }
+
+  // ---- Stickiness: campaign -------------------------------------------
+  async getCampaignState(): Promise<CampaignStateResponse> {
+    const res = await this.authedFetch('/campaign/state');
+    if (!res.ok) throw await errorFromResponse(res, 'campaign/state');
+    return (await res.json()) as CampaignStateResponse;
+  }
+
+  async completeMission(missionId: number): Promise<{
+    ok: true;
+    firstClear: boolean;
+    chapterId: number;
+    missionId: number;
+    progressInChapter: number;
+    reward: { sugar: number; leafBits: number };
+    resources: { sugar: number; leafBits: number };
+  }> {
+    const res = await this.authedFetch(`/campaign/mission/${missionId}/complete`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'mission/complete');
+    return (await res.json()) as Awaited<ReturnType<Api['completeMission']>>;
+  }
+
+  async claimChapter(chapterId: number): Promise<{
+    ok: true;
+    chapterId: number;
+    unlockedChapter: number;
+    unlockedSkinId: string | null;
+    reward: { sugar: number; leafBits: number; aphidMilk: number; skinId: string | null };
+    resources: { sugar: number; leafBits: number; aphidMilk: number };
+    ownedSkins: string[];
+  }> {
+    const res = await this.authedFetch(`/campaign/chapter/${chapterId}/claim`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'chapter/claim');
+    return (await res.json()) as Awaited<ReturnType<Api['claimChapter']>>;
+  }
+
+  // ---- Stickiness: builder queue --------------------------------------
+  async getBuilder(): Promise<BuilderQueueResponse> {
+    const res = await this.authedFetch('/player/builder');
+    if (!res.ok) throw await errorFromResponse(res, 'builder');
+    return (await res.json()) as BuilderQueueResponse;
+  }
+
+  async enqueueBuild(args: {
+    targetKind: 'unit' | 'building' | 'queen';
+    targetId: string;
+    levelTo: number;
+  }): Promise<{ ok: true; entry: BuilderEntry }> {
+    const res = await this.authedFetch('/player/builder/enqueue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'builder/enqueue');
+    return (await res.json()) as Awaited<ReturnType<Api['enqueueBuild']>>;
+  }
+
+  async skipBuild(
+    entryId: string,
+    useAphidMilk: boolean,
+  ): Promise<{ ok: true; id: string; usedAphidMilk: boolean }> {
+    const res = await this.authedFetch(`/player/builder/${encodeURIComponent(entryId)}/skip`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ useAphidMilk }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'builder/skip');
+    return (await res.json()) as Awaited<ReturnType<Api['skipBuild']>>;
+  }
+
+  async finishBuild(entryId: string): Promise<{
+    ok: true;
+    id: string;
+    appliedKind: 'unit' | 'building' | 'queen';
+    appliedId: string;
+    appliedLevel: number;
+  }> {
+    const res = await this.authedFetch(`/player/builder/${encodeURIComponent(entryId)}/finish`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'builder/finish');
+    return (await res.json()) as Awaited<ReturnType<Api['finishBuild']>>;
+  }
+
+  // ---- Stickiness: replay feed + sharing ------------------------------
+  async replayFeed(cursor?: string, limit = 20): Promise<ReplayFeedResponse> {
+    const q = new URLSearchParams();
+    q.set('limit', String(limit));
+    if (cursor) q.set('cursor', cursor);
+    const res = await this.authedFetch(`/replay/feed?${q.toString()}`);
+    if (!res.ok) throw await errorFromResponse(res, 'replay/feed');
+    return (await res.json()) as ReplayFeedResponse;
+  }
+
+  async replay(id: string): Promise<ReplayDetailResponse> {
+    const res = await this.authedFetch(`/replay/${encodeURIComponent(id)}`);
+    if (!res.ok) throw await errorFromResponse(res, 'replay');
+    return (await res.json()) as ReplayDetailResponse;
+  }
+
+  async replayView(id: string): Promise<{
+    ok: true;
+    rewarded: boolean;
+    reward: { sugar: number; leafBits: number } | null;
+    watchesToday: number;
+  }> {
+    const res = await this.authedFetch(`/replay/${encodeURIComponent(id)}/view`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'replay/view');
+    return (await res.json()) as Awaited<ReturnType<Api['replayView']>>;
+  }
+
+  async replayUpvote(id: string): Promise<{
+    ok: true;
+    hasMyUpvote: boolean;
+    upvoteCount: number;
+  }> {
+    const res = await this.authedFetch(`/replay/${encodeURIComponent(id)}/upvote`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'replay/upvote');
+    return (await res.json()) as Awaited<ReturnType<Api['replayUpvote']>>;
+  }
+
+  // ---- Stickiness: clan war target ------------------------------------
+  async warFindTarget(): Promise<WarTargetResponse | null> {
+    const res = await this.authedFetch('/clan/war/find-target', { method: 'POST' });
+    if (res.status === 404) return null;
+    if (!res.ok) throw await errorFromResponse(res, 'war/find-target');
+    return (await res.json()) as WarTargetResponse;
+  }
+
   async warEnd(warId: string): Promise<{
     ok: true;
     alreadyEnded?: boolean;
@@ -667,6 +915,7 @@ export interface MatchResponse {
 export interface RaidSubmitResponse {
   ok: boolean;
   replayId: string;
+  replayName?: string;
   result: {
     outcome: string;
     stars: 0 | 1 | 2 | 3;
@@ -717,6 +966,137 @@ export interface DeleteBuildingResponse {
   ok: true;
   base: Types.Base;
   removed: number;
+}
+
+// ----- Stickiness response shapes -----
+
+export interface QueenSkinDef {
+  id: string;
+  name: string;
+  tagline: string;
+  portraitKey: string;
+  unlock:
+    | { kind: 'default' }
+    | { kind: 'trophies'; threshold: number }
+    | { kind: 'streak'; day: number }
+    | { kind: 'seasonXp'; xp: number }
+    | { kind: 'chapter'; chapterId: number }
+    | { kind: 'shop'; aphidMilk: number };
+  palette: { primary: number; accent: number; glow: number };
+}
+export interface QueenSkinCatalog {
+  catalog: QueenSkinDef[];
+  owned: string[];
+  equipped: string;
+}
+
+export interface CampaignMissionDef {
+  id: number;
+  slug: string;
+  title: string;
+  intro: string;
+  outro: string;
+  difficulty: 'tutorial' | 'easy' | 'medium' | 'hard' | 'boss';
+  rewardSugar: number;
+  rewardLeaf: number;
+  rewardXp: number;
+}
+export interface CampaignChapterDef {
+  id: number;
+  slug: string;
+  title: string;
+  subtitle: string;
+  synopsis: string;
+  villain: string;
+  completionSugar: number;
+  completionLeaf: number;
+  completionAphidMilk: number;
+  unlockSkinId: string | null;
+  missions: CampaignMissionDef[];
+}
+export interface CampaignStateResponse {
+  chapters: CampaignChapterDef[];
+  playerState: {
+    unlockedChapter: number;
+    activeChapterId: number;
+    progressInChapter: number;
+    chapterComplete: boolean;
+    completedMissions: number[];
+    claimedChapters: number[];
+    ownedSkins: string[];
+  };
+}
+
+export interface BuilderEntry {
+  id: string;
+  targetKind: 'unit' | 'building' | 'queen';
+  targetId: string;
+  levelTo: number;
+  startedAt: string;
+  endsAt: string;
+  secondsRemaining: number;
+  skipCostAphidMilk: number;
+}
+export interface BuilderQueueResponse {
+  entries: BuilderEntry[];
+  slots: number;
+  freeSkipAvailable: boolean;
+  aphidMilk: number;
+}
+
+export interface ReplayFeedEntry {
+  id: string;
+  attackerId: string;
+  attackerName: string;
+  attackerTrophies: number;
+  defenderId: string | null;
+  defenderName: string;
+  stars: number;
+  sugarLooted: number;
+  replayName: string;
+  viewCount: number;
+  upvoteCount: number;
+  hasMyUpvote: boolean;
+  createdAt: string;
+}
+export interface ReplayFeedResponse {
+  entries: ReplayFeedEntry[];
+  nextCursor: string | null;
+}
+export interface ReplayDetailResponse {
+  replay: {
+    id: string;
+    seed: number;
+    baseSnapshot: Types.Base;
+    inputs: Types.SimInput[];
+    result: {
+      outcome: string;
+      stars: number;
+      sugarLooted: number;
+      leafBitsLooted: number;
+      tickEnded: number;
+    };
+    stars: number;
+    replayName: string;
+    viewCount: number;
+    upvoteCount: number;
+    createdAt: string;
+    attackerId: string;
+    attackerName: string;
+    defenderId: string | null;
+    defenderName: string;
+  };
+}
+
+export interface WarTargetResponse {
+  ok: true;
+  matchToken: string;
+  warId: string;
+  defenderId: string;
+  seed: number;
+  expiresAt: string;
+  opponent: { isBot: false; displayName: string; trophies: number };
+  baseSnapshot: Types.Base;
 }
 
 export interface RaidHistoryEntry {
