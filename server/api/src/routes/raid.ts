@@ -35,7 +35,19 @@ interface RaidSubmissionBody {
 // gains ~4. That's the self-flattening ladder.
 
 export function registerRaid(app: FastifyInstance): void {
-  app.post<{ Body: RaidSubmissionBody }>('/raid/submit', async (req, reply) => {
+  // Raid submission is the heaviest write path on the server (validates
+  // the deterministic sim + persists a full replay). A legit player caps
+  // out around one submit per ~60s (the raid length itself); 20/min per
+  // IP is ~20× that, which leaves plenty of room for a household sharing
+  // a NAT but shuts down the scripted-bot case.
+  app.post<{ Body: RaidSubmissionBody }>('/raid/submit', {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const attackerId = requirePlayer(req, reply);
     if (!attackerId) return;
     const body = req.body;

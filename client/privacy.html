@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f1b10" />
+    <title>Privacy — Hive Wars</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; padding: 0; background: #0f1b10; color: #f7edd0; }
+      body {
+        font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
+        line-height: 1.55;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: clamp(24px, 5vw, 48px) clamp(18px, 5vw, 32px);
+      }
+      h1, h2 {
+        font-family: "Arial Black", Impact, sans-serif;
+        color: #ffd98a;
+      }
+      h1 { font-size: clamp(28px, 5vw, 38px); margin: 0 0 8px; }
+      h2 { font-size: 20px; margin: 28px 0 8px; }
+      p, li { color: #bad3a3; }
+      .meta { color: #8ea383; font-size: 13px; margin-bottom: 24px; }
+      a { color: #ffd98a; }
+      nav { margin-bottom: 18px; }
+      nav a { margin-right: 14px; color: #bad3a3; text-decoration: none; }
+      nav a:hover { color: #ffd98a; text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav><a href="/">← Home</a> <a href="/play">Play</a> <a href="/terms">Terms</a></nav>
+      <h1>Privacy Policy</h1>
+      <p class="meta">Last updated: April 2026</p>
+
+      <p>Hive Wars is a browser game. We collect the minimum data needed to run the game and keep your progress safe. This page explains what we store, why, and how to remove it.</p>
+
+      <h2>What we store</h2>
+      <ul>
+        <li><strong>A device identifier.</strong> Generated locally in your browser the first time you play. It's a random string; it's not linked to your name or email.</li>
+        <li><strong>Your game state.</strong> Colony layout, units, resources, raid history, trophies. Attached to your device identifier.</li>
+        <li><strong>Optional account info.</strong> If you create an account to save progress across devices, we store the display name and a password hash. We never ask for your real name or address.</li>
+        <li><strong>Server logs.</strong> Anonymized IP + request path, retained up to 14 days for abuse protection and debugging.</li>
+      </ul>
+
+      <h2>What we don't do</h2>
+      <ul>
+        <li>We don't sell your data.</li>
+        <li>We don't use third-party advertising trackers.</li>
+        <li>We don't read your contacts, photos, or microphone.</li>
+      </ul>
+
+      <h2>Cookies + local storage</h2>
+      <p>The game uses <code>localStorage</code> to remember your settings (sound on/off, text size, color-blind palette) and your session token. It does not use tracking cookies. Clearing your site data will reset those.</p>
+
+      <h2>Analytics</h2>
+      <p>We use a lightweight product-analytics tool to understand which features players use (session start, raid completion, retention). Events are sent without your name or email — only the device identifier and the event name. You can disable analytics in the in-game Settings menu.</p>
+
+      <h2>Deleting your data</h2>
+      <p>Email us at <a href="mailto:privacy@hivewars.example">privacy@hivewars.example</a> with the device identifier shown in Settings → About, and we'll delete everything we hold against it within 30 days.</p>
+
+      <h2>Contact</h2>
+      <p>Questions? Email <a href="mailto:hello@hivewars.example">hello@hivewars.example</a>.</p>
+    </main>
+  </body>
+</html>

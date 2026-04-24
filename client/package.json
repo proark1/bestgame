@@ -15,8 +15,10 @@
   "dependencies": {
     "@hive/protocol": "workspace:*",
     "@hive/shared": "workspace:*",
+    "@sentry/browser": "^10.50.0",
+    "colyseus.js": "^0.16.6",
     "phaser": "^3.85.2",
-    "colyseus.js": "^0.16.6"
+    "posthog-js": "^1.371.3"
   },
   "devDependencies": {
     "typescript": "^5.6.2",

@@ -2,129 +2,259 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f1b10" />
-    <title>Hive Wars</title>
-    <!-- Facebook Instant Games SDK. When running outside FB, the script load
-         fails silently and the client falls back to guest auth. -->
-    <script src="https://connect.facebook.net/en_US/fbinstant.7.1.js"></script>
+    <meta name="description" content="Hive Wars — raise your ant colony and raid rival hives. Free browser strategy game, plays on any phone or desktop, no install needed." />
+    <meta property="og:title" content="Hive Wars — ant-colony strategy" />
+    <meta property="og:description" content="Raise, raid, rise. A free browser strategy game. No install." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og/cover.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og/cover.png" />
+    <title>Hive Wars — ant-colony strategy in your browser</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Preload the hero image so the first paint isn't blank text. -->
+    <link rel="preload" as="image" href="/og/cover.png" />
     <style>
-      html,
+      :root {
+        color-scheme: dark;
+        --bg: #0f1b10;
+        --panel-hi: #2a3f2d;
+        --panel-lo: #142117;
+        --brass: #ffd98a;
+        --brass-deep: #b8883a;
+        --ink: #2a1d08;
+        --text: #f7edd0;
+        --text-dim: #bad3a3;
+        --stroke: #5c4020;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
       body {
-        margin: 0;
-        padding: 0;
-        background: #0f1b10;
-        color: #fff;
-        overflow: hidden;
-        height: 100%;
-        /* On iOS Safari `100vh` includes the area behind the
-         * top/bottom browser chrome - content underneath is hidden
-         * when the toolbars are visible. `100dvh` (dynamic
-         * viewport height) excludes the chrome, and Phaser's
-         * Scale.RESIZE picks up the size change automatically. */
-        height: 100dvh;
-        font-family: system-ui, -apple-system, sans-serif;
-        touch-action: none;
-        /* Don't let the user accidentally pull-to-refresh while
-         * dragging a pheromone trail near the top of the screen. */
+        font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 30% 12%, rgba(255, 217, 138, 0.12), transparent 40%),
+          radial-gradient(circle at 80% 90%, rgba(90, 140, 90, 0.12), transparent 38%),
+          linear-gradient(180deg, var(--panel-hi) 0%, var(--panel-lo) 58%, var(--bg) 100%);
+        min-height: 100vh;
+        min-height: 100dvh;
+        -webkit-font-smoothing: antialiased;
         overscroll-behavior: none;
       }
-      #game {
-        /* Inset by env(safe-area-inset-*) so the canvas avoids the
-         * iOS notch / Dynamic Island at the top, the home-indicator
-         * bar at the bottom, and any landscape side rail. With the
-         * inset positioning the canvas is exactly the visible
-         * playable area, and Phaser's Scale.RESIZE sizes the
-         * backing buffer to match - pointer-to-game is identity. */
-        position: fixed;
-        top: env(safe-area-inset-top, 0);
-        right: env(safe-area-inset-right, 0);
-        bottom: env(safe-area-inset-bottom, 0);
-        left: env(safe-area-inset-left, 0);
-        overflow: hidden;
+      .wrap {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: clamp(20px, 5vw, 56px) clamp(18px, 5vw, 32px) 48px;
       }
-      #game canvas {
-        /* Kill inherited transforms. main.ts pairs each resize with a
-         * backing-buffer override: the canvas element's .width /
-         * .height attributes are logical x devicePixelRatio, while
-         * the CSS .style.width / .style.height stay at logical size.
-         * That renders every pixel at the display's physical
-         * resolution without the browser bitmap-upscaling the
-         * canvas, and without changing any pointer math. */
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        transform: none !important;
-        margin: 0 !important;
-        display: block;
-        touch-action: none;
-        /* Quality scaling on the browser side (belt-and-braces - the
-         * backing-buffer already matches DPR so there should be no
-         * upscale). Explicit `auto` blocks Chrome's occasional
-         * "pixelated" default on canvas inside transformed ancestors. */
-        image-rendering: auto;
-      }
-      #boot-splash {
-        position: fixed;
-        inset: 0;
+      header.top {
         display: flex;
         align-items: center;
-        justify-content: center;
-        background:
-          radial-gradient(circle at 50% 28%, rgba(255, 217, 138, 0.12), transparent 28%),
-          linear-gradient(180deg, #203224 0%, #142117 58%, #060b07 100%);
-        color: #f7edd0;
-        z-index: 10;
-        font-family: "Trebuchet MS", Verdana, sans-serif;
+        justify-content: space-between;
+        margin-bottom: clamp(24px, 6vw, 44px);
       }
-      .boot-splash__card {
-        min-width: min(460px, calc(100vw - 32px));
-        padding: 26px 28px;
-        border-radius: 18px;
-        border: 3px solid #5c4020;
-        background: linear-gradient(180deg, rgba(42, 63, 45, 0.96), rgba(9, 16, 10, 0.96));
-        box-shadow:
-          0 12px 30px rgba(0, 0, 0, 0.38),
-          inset 0 2px 0 rgba(255, 217, 138, 0.18);
-        text-align: center;
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
       }
-      .boot-splash__pill {
+      .brand-mark {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        border: 2px solid var(--stroke);
+        background-image: url('/icons/icon-192.png');
+        background-size: cover;
+      }
+      .brand-name {
+        font-family: "Arial Black", Impact, sans-serif;
+        font-size: 22px;
+        letter-spacing: -0.5px;
+        color: var(--brass);
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: clamp(20px, 5vw, 40px);
+        align-items: center;
+      }
+      @media (min-width: 780px) {
+        .hero { grid-template-columns: 1.1fr 1fr; }
+      }
+      .hero-copy h1 {
+        margin: 0 0 14px;
+        font-family: "Arial Black", Impact, sans-serif;
+        font-size: clamp(42px, 7vw, 72px);
+        color: var(--brass);
+        line-height: 1;
+        letter-spacing: -1.5px;
+        text-shadow: 0 4px 14px rgba(0, 0, 0, 0.38);
+      }
+      .hero-copy .tagline {
+        font-size: clamp(18px, 2.6vw, 22px);
+        color: var(--text-dim);
+        margin: 0 0 24px;
+      }
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+      .btn {
         display: inline-block;
-        margin-bottom: 14px;
-        padding: 4px 10px;
+        padding: 14px 28px;
         border-radius: 999px;
-        background: linear-gradient(180deg, #ffd98a, #d8a848);
-        color: #2a1d08;
-        font-size: 11px;
+        font-family: inherit;
+        font-size: 17px;
         font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
+        text-decoration: none;
+        text-align: center;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: transform 120ms ease, box-shadow 120ms ease;
       }
-      .boot-splash__title {
-        font-family: "Arial Black", "Trebuchet MS", sans-serif;
-        font-size: clamp(28px, 5vw, 34px);
-        color: #ffd98a;
-        text-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+      .btn:active { transform: translateY(1px); }
+      .btn-primary {
+        background: linear-gradient(180deg, var(--brass), var(--brass-deep));
+        color: var(--ink);
+        box-shadow:
+          0 10px 24px rgba(0, 0, 0, 0.32),
+          inset 0 2px 0 rgba(255, 255, 255, 0.28);
+        border-color: var(--stroke);
       }
-      .boot-splash__subtitle {
-        margin-top: 10px;
-        color: #bad3a3;
+      .btn-primary:hover { box-shadow: 0 14px 28px rgba(0, 0, 0, 0.4); }
+      .btn-ghost {
+        background: transparent;
+        color: var(--text);
+        border-color: var(--stroke);
+      }
+      .meta-line {
+        margin-top: 16px;
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+      .hero-art {
+        border-radius: 22px;
+        overflow: hidden;
+        border: 3px solid var(--stroke);
+        box-shadow:
+          0 18px 44px rgba(0, 0, 0, 0.44),
+          inset 0 2px 0 rgba(255, 217, 138, 0.18);
+        aspect-ratio: 1200 / 630;
+        background-image: url('/og/cover.png');
+        background-size: cover;
+        background-position: center;
+      }
+      .features {
+        margin-top: clamp(40px, 8vw, 72px);
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+      @media (min-width: 680px) {
+        .features { grid-template-columns: repeat(3, 1fr); }
+      }
+      .feature {
+        padding: 20px 22px;
+        border-radius: 16px;
+        border: 2px solid var(--stroke);
+        background: linear-gradient(180deg, rgba(42, 63, 45, 0.9), rgba(9, 16, 10, 0.9));
+      }
+      .feature h3 {
+        margin: 0 0 6px;
+        color: var(--brass);
+        font-family: "Arial Black", Impact, sans-serif;
+        font-size: 17px;
+      }
+      .feature p {
+        margin: 0;
+        color: var(--text-dim);
         font-size: 14px;
+        line-height: 1.45;
       }
+      footer.foot {
+        margin-top: clamp(40px, 8vw, 72px);
+        padding-top: 22px;
+        border-top: 1px solid rgba(92, 64, 32, 0.5);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+      footer.foot a {
+        color: var(--text-dim);
+        text-decoration: none;
+        margin-right: 14px;
+      }
+      footer.foot a:hover { color: var(--brass); text-decoration: underline; }
     </style>
   </head>
   <body>
-    <div id="game"></div>
-    <div id="boot-splash">
-      <div class="boot-splash__card">
-        <div class="boot-splash__pill">Live build</div>
-        <div class="boot-splash__title">Hive Wars</div>
-        <div class="boot-splash__subtitle">Raising the colony...</div>
-      </div>
+    <div class="wrap">
+      <header class="top">
+        <div class="brand">
+          <div class="brand-mark" role="img" aria-label="Hive Wars icon"></div>
+          <div class="brand-name">HIVE WARS</div>
+        </div>
+        <a class="btn btn-ghost" href="/play" aria-label="Skip landing and open the game">Skip to game</a>
+      </header>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <h1>Raise.<br />Raid.<br />Rise.</h1>
+          <p class="tagline">A browser-native ant-colony strategy game. Plays on any phone or desktop — no app to install.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="/play">Play now</a>
+            <a class="btn btn-ghost" href="#features">How it plays</a>
+          </div>
+          <div class="meta-line">Free · No login required · Works offline after first load</div>
+        </div>
+        <div class="hero-art" role="img" aria-label="Hive Wars title art"></div>
+      </section>
+
+      <section class="features" id="features">
+        <div class="feature">
+          <h3>Build your colony</h3>
+          <p>Lay sugar depots, larva nurseries, and defensive ramparts. Every building shapes how rivals attack you.</p>
+        </div>
+        <div class="feature">
+          <h3>Raid rivals</h3>
+          <p>Drop units at the edge of enemy colonies and steer them with pheromone trails. Every raid is a fresh puzzle.</p>
+        </div>
+        <div class="feature">
+          <h3>Climb the ladder</h3>
+          <p>Campaigns, clan wars, daily streaks, and a season-long leaderboard. Return every day for new rewards.</p>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <div>© 2026 Hive Wars</div>
+        <div>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="/play">Play</a>
+        </div>
+      </footer>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+
+    <script>
+      // If the user has already played (cached session), default the big
+      // CTA to "Continue playing" text. Purely cosmetic — the link
+      // target is identical.
+      try {
+        if (localStorage.getItem('hive.sessionToken')) {
+          const cta = document.querySelector('.btn-primary');
+          if (cta) cta.textContent = 'Continue playing';
+        }
+      } catch (e) { /* ignore storage errors */ }
+    </script>
   </body>
 </html>

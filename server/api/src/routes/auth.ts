@@ -96,8 +96,21 @@ const ALLOWED_FACTIONS: ReadonlyArray<Types.Faction> = [
 ];
 const DEVICE_ID_RE = /^[A-Za-z0-9-_]{4,64}$/;
 
+// Per-route rate limit config applied to auth endpoints. Tighter than
+// the global limit because signup/login are the classic brute-force
+// targets: one IP attempting thousands of guesses should be shut down
+// long before it finishes.
+const AUTH_RATE_LIMIT = {
+  config: {
+    rateLimit: {
+      max: 30,
+      timeWindow: '1 minute',
+    },
+  },
+};
+
 export function registerAuth(app: FastifyInstance): void {
-  app.post<{ Body: GuestLoginBody }>('/auth/guest', async (req, reply) => {
+  app.post<{ Body: GuestLoginBody }>('/auth/guest', AUTH_RATE_LIMIT, async (req, reply) => {
     const { deviceId, displayName, faction } = req.body ?? { deviceId: '' };
     if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
       reply.code(400);
@@ -169,7 +182,7 @@ export function registerAuth(app: FastifyInstance): void {
   // we CLAIM that guest's player for the new user — their existing
   // base, trophies, resources, and unit levels all carry over. If no
   // session is attached, we create a brand-new player + starting base.
-  app.post<{ Body: RegisterBody }>('/auth/register', async (req, reply) => {
+  app.post<{ Body: RegisterBody }>('/auth/register', AUTH_RATE_LIMIT, async (req, reply) => {
     const body = req.body ?? { username: '', password: '' };
     const username = typeof body.username === 'string' ? body.username.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
@@ -270,7 +283,7 @@ export function registerAuth(app: FastifyInstance): void {
   // then returns a session token bound to that user's linked player.
   // Works from any device — the whole point of the register/login
   // flow is that your progress lives on the server, not the device.
-  app.post<{ Body: LoginBody }>('/auth/login', async (req, reply) => {
+  app.post<{ Body: LoginBody }>('/auth/login', AUTH_RATE_LIMIT, async (req, reply) => {
     const body = req.body ?? { username: '', password: '' };
     const username = typeof body.username === 'string' ? body.username.trim() : '';
     const password = typeof body.password === 'string' ? body.password : '';
