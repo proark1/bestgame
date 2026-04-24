@@ -262,9 +262,88 @@ function renderAll(ctx: PreviewContext): void {
   const stage = document.createElement('div');
   stage.className = 'preview-scene-stage';
 
-  stage.append(buildMockup(scene));
-  stage.append(buildAssetsList(ctx, scene));
+  // Left column: live iframe of the actual game rendered at the
+  // selected scene. The iframe loads `/?previewScene=<id>` and
+  // BootScene routes to the matching Phaser scene. A Reload button
+  // force-refreshes for when the admin wants to re-fetch the latest
+  // sprites after generating new art.
+  const previewCol = buildLivePreview(scene);
+  stage.append(previewCol);
+  // Right column: the mockup + asset list. Mockup stays because the
+  // iframe doesn't always render every asset (e.g. the victory badge
+  // only appears at end-of-raid) — the thumbnails still tell the
+  // admin what images the scene touches.
+  const right = document.createElement('div');
+  right.className = 'preview-scene-right';
+  right.append(buildMockup(scene));
+  right.append(buildAssetsList(ctx, scene, previewCol));
+  stage.append(right);
   ctx.root.append(stage);
+}
+
+// Live iframe-based game preview. The admin iframes the game at
+// /?previewScene=<id>; BootScene reads that query param, skips the
+// tutorial/prologue routing, and jumps straight to the matching
+// Phaser scene. Reload button is exposed so regenerate flows that
+// want a fresh run of the manifest + BootScene preload can force
+// it without pressing browser refresh.
+interface LivePreviewHandle extends HTMLElement {
+  reload: () => void;
+}
+
+function buildLivePreview(scene: PreviewScene): LivePreviewHandle {
+  const card = document.createElement('div');
+  card.className = 'preview-live';
+
+  const head = document.createElement('div');
+  head.className = 'preview-live-head';
+  const label = document.createElement('span');
+  label.className = 'preview-live-label';
+  label.textContent = `Live: ${scene.label}`;
+  head.append(label);
+
+  const iframe = document.createElement('iframe');
+  iframe.className = 'preview-live-iframe';
+  iframe.loading = 'lazy';
+  iframe.title = `${scene.label} preview`;
+  iframe.sandbox.add(
+    'allow-scripts',
+    'allow-same-origin',
+    'allow-forms',
+    'allow-popups',
+    'allow-pointer-lock',
+  );
+  const buildSrc = (): string => {
+    // Cache-buster so repeated reloads after a save don't return a
+    // stale index.html / sprite from the disk cache.
+    const bust = Date.now();
+    return `/?previewScene=${encodeURIComponent(scene.id)}&previewT=${bust}`;
+  };
+  iframe.src = buildSrc();
+
+  const reloadBtn = document.createElement('button');
+  reloadBtn.type = 'button';
+  reloadBtn.className = 'btn ghost';
+  reloadBtn.textContent = '⟳ Reload';
+  reloadBtn.addEventListener('click', () => {
+    iframe.src = buildSrc();
+  });
+  const openBtn = document.createElement('a');
+  openBtn.className = 'btn ghost';
+  openBtn.textContent = 'Open ↗';
+  openBtn.href = buildSrc();
+  openBtn.target = '_blank';
+  openBtn.rel = 'noopener';
+  head.append(reloadBtn, openBtn);
+  card.append(head);
+  card.append(iframe);
+
+  const handle = card as unknown as LivePreviewHandle;
+  handle.reload = (): void => {
+    iframe.src = buildSrc();
+    openBtn.href = buildSrc();
+  };
+  return handle;
 }
 
 function buildMockup(scene: PreviewScene): HTMLElement {
@@ -294,16 +373,24 @@ function buildMockup(scene: PreviewScene): HTMLElement {
   return mockup;
 }
 
-function buildAssetsList(ctx: PreviewContext, scene: PreviewScene): HTMLElement {
+function buildAssetsList(
+  ctx: PreviewContext,
+  scene: PreviewScene,
+  livePreview: LivePreviewHandle,
+): HTMLElement {
   const list = document.createElement('div');
   list.className = 'preview-assets';
   for (const key of scene.assetKeys) {
-    list.append(buildAssetRow(ctx, key));
+    list.append(buildAssetRow(ctx, key, livePreview));
   }
   return list;
 }
 
-function buildAssetRow(ctx: PreviewContext, key: string): HTMLElement {
+function buildAssetRow(
+  ctx: PreviewContext,
+  key: string,
+  livePreview: LivePreviewHandle,
+): HTMLElement {
   const row = document.createElement('div');
   row.className = 'preview-asset';
 
@@ -351,6 +438,9 @@ function buildAssetRow(ctx: PreviewContext, key: string): HTMLElement {
       meta.textContent = cb.checked
         ? 'Override ON — the generated image is shown in-game.'
         : 'Override OFF — the Graphics fallback is shown in-game.';
+      // Reload the live preview so the toggle change takes effect
+      // inside the iframe without the admin pressing Reload manually.
+      livePreview.reload();
     } catch (err) {
       cb.checked = !cb.checked;
       alert(`Toggle failed: ${(err as Error).message}`);
@@ -364,7 +454,7 @@ function buildAssetRow(ctx: PreviewContext, key: string): HTMLElement {
   regenBtn.className = 'btn';
   regenBtn.textContent = 'Regenerate';
   regenBtn.addEventListener('click', () => {
-    openRegenerateDialog(ctx, key, img);
+    openRegenerateDialog(ctx, key, img, livePreview);
   });
   controls.append(regenBtn);
 
@@ -380,6 +470,7 @@ function openRegenerateDialog(
   ctx: PreviewContext,
   key: string,
   thumb: HTMLImageElement,
+  livePreview: LivePreviewHandle,
 ): void {
   const overlay = document.createElement('div');
   overlay.style.cssText = [
@@ -479,6 +570,10 @@ function openRegenerateDialog(
           imgEl.dataset.pngTried = '';
           imgEl.src = newUrl;
         });
+        // Also kick the iframe so the live game preview picks up
+        // the new sprite. Same cache-buster idea as the thumbnail
+        // swap above; BootScene refetches the manifest on every load.
+        livePreview.reload();
       },
     }).catch((err: Error) => {
       status.textContent = `Generate failed: ${err.message}`;

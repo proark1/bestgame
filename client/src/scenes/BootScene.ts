@@ -494,6 +494,18 @@ export class BootScene extends Phaser.Scene {
 
     void fetchOverrides.finally(() => {
       document.getElementById('boot-splash')?.remove();
+
+      // Admin preview jump: when the admin Preview tab iframes the
+      // game it appends `?previewScene=home` (or raid/codex/etc). We
+      // honor that here and skip the tutorial/prologue routing so the
+      // admin always lands on exactly the scene they picked — no
+      // matter what tutorial state the guest account happens to be in.
+      const previewScene = readPreviewSceneFromQuery();
+      if (previewScene) {
+        this.scene.start(previewScene);
+        return;
+      }
+
       // New players without tutorial progress land on the scripted
       // prologue — narrative hook before their first raid. Anyone
       // past stage 5 lands on Home as before.
@@ -501,4 +513,37 @@ export class BootScene extends Phaser.Scene {
       this.scene.start(tutorialStage < 5 ? 'PrologueScene' : 'HomeScene');
     });
   }
+}
+
+// Whitelist of scene keys that `?previewScene=<id>` may jump to. We
+// don't accept a raw scene name because typos or tampered URLs would
+// otherwise throw inside Phaser's scene manager. Kept small + explicit
+// so a new scene added to main.ts has to be opted-in here before the
+// admin Preview iframe can render it.
+const PREVIEW_SCENE_WHITELIST: Readonly<Record<string, string>> = {
+  home: 'HomeScene',
+  raid: 'RaidScene',
+  codex: 'CodexScene',
+  clan: 'ClanScene',
+  clanwars: 'ClanWarsScene',
+  campaign: 'CampaignScene',
+  queen: 'QueenSkinScene',
+  leaderboard: 'LeaderboardScene',
+  quests: 'QuestsScene',
+  builder: 'BuilderQueueScene',
+  feed: 'ReplayFeedScene',
+  arena: 'ArenaScene',
+  defenderai: 'DefenderAIScene',
+  history: 'RaidHistoryScene',
+  upgrade: 'UpgradeScene',
+  prologue: 'PrologueScene',
+};
+
+function readPreviewSceneFromQuery(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get('previewScene');
+  if (!key) return null;
+  const scene = PREVIEW_SCENE_WHITELIST[key.toLowerCase()];
+  return scene ?? null;
 }

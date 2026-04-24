@@ -80,6 +80,7 @@ export class ArenaScene extends Phaser.Scene {
 
   // Visuals
   private buildingSprites = new Map<number, Phaser.GameObjects.Image>();
+  private unitLastPos = new Map<number, { x: number; y: number }>();
   private unitSprites = new Map<
     number,
     Phaser.GameObjects.Image | Phaser.GameObjects.Sprite
@@ -106,6 +107,7 @@ export class ArenaScene extends Phaser.Scene {
     this.hasError = false;
     this.buildingSprites.clear();
     this.unitSprites.clear();
+    this.unitLastPos.clear();
     this.animationEnabled = {};
     // Settings is a best-effort non-blocking fetch; we fall back to
     // static sprites if it hasn't resolved by the time units spawn.
@@ -591,11 +593,32 @@ export class ArenaScene extends Phaser.Scene {
       } else {
         spr.setPosition(x, y);
       }
+      // Same movement-gated anim as RaidScene — pause the walk cycle
+      // while the unit is stationary so idles don't jog in place.
+      if (spr instanceof Phaser.GameObjects.Sprite) {
+        const prev = this.unitLastPos.get(u.id);
+        const EPS = 0.15;
+        const moving =
+          !prev ||
+          Math.abs(x - prev.x) > EPS ||
+          Math.abs(y - prev.y) > EPS;
+        if (moving) {
+          if (!spr.anims.isPlaying) {
+            const animKey = `walk-${u.kind}`;
+            if (this.anims.exists(animKey)) spr.play(animKey);
+          }
+        } else if (spr.anims.isPlaying) {
+          spr.anims.pause();
+          spr.setFrame(0);
+        }
+      }
+      this.unitLastPos.set(u.id, { x, y });
     }
     for (const [id, spr] of this.unitSprites) {
       if (!alive.has(id)) {
         spr.destroy();
         this.unitSprites.delete(id);
+        this.unitLastPos.delete(id);
       }
     }
     for (const b of this.state.buildings) {

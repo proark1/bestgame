@@ -181,6 +181,12 @@ export class RaidScene extends Phaser.Scene {
     number,
     Phaser.GameObjects.Image | Phaser.GameObjects.Sprite
   >();
+  // Previous-frame screen position for each live unit. Used to gate
+  // the walk-cycle animation — a unit that hasn't moved since the
+  // last render call is idle (attacking, stunned, waiting on a turret
+  // to die), and should freeze on the rest frame instead of jogging
+  // in place. Cleared when the unit dies.
+  private unitLastPos = new Map<number, { x: number; y: number }>();
   // Populated from GET /api/settings/animation at scene create.
   // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
   // (this Record has it set to true) AND (the walk texture loaded).
@@ -267,6 +273,7 @@ export class RaidScene extends Phaser.Scene {
     this.buildingKillPlayed.clear();
     this.unitSprites.clear();
     this.unitLastHp.clear();
+    this.unitLastPos.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
     // first unit spawns (usually a couple of ticks in), the settings
@@ -1069,6 +1076,32 @@ export class RaidScene extends Phaser.Scene {
       } else {
         spr.setPosition(x, y);
       }
+
+      // Movement-gated animation. For walk-cycle Sprites (not plain
+      // Images), play the animation only while the unit has actually
+      // moved since last render; freeze on frame 0 when it's stopped
+      // (attacking, waiting on a turret, pathing stalled). Plain
+      // Images stay unaffected — their "idle" IS their default look.
+      if (spr instanceof Phaser.GameObjects.Sprite) {
+        const prev = this.unitLastPos.get(u.id);
+        // Sub-pixel delta threshold so a rounding jitter at fixed-
+        // point boundaries isn't mis-read as movement.
+        const MOVE_EPSILON = 0.15;
+        const moving =
+          !prev ||
+          Math.abs(x - prev.x) > MOVE_EPSILON ||
+          Math.abs(y - prev.y) > MOVE_EPSILON;
+        if (moving) {
+          if (!spr.anims.isPlaying) {
+            const animKey = `walk-${u.kind}`;
+            if (this.anims.exists(animKey)) spr.play(animKey);
+          }
+        } else if (spr.anims.isPlaying) {
+          spr.anims.pause();
+          spr.setFrame(0);
+        }
+      }
+      this.unitLastPos.set(u.id, { x, y });
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
       spr.setAlpha(0.35 + 0.65 * hpFrac);
       // Hit flash for units — same logic as buildings, keyed on a
@@ -1098,6 +1131,7 @@ export class RaidScene extends Phaser.Scene {
         spr.destroy();
         this.unitSprites.delete(id);
         this.unitLastHp.delete(id);
+        this.unitLastPos.delete(id);
       }
     }
   }
