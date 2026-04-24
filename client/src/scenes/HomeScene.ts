@@ -4,6 +4,7 @@ import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
+import { openBuildingInfoModal } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
@@ -971,37 +972,20 @@ export class HomeScene extends Phaser.Scene {
     this.boardContainer.add([bg, deco, grid, frame, badge, badgeTitle, badgeSub]);
   }
 
+  // Index of server-base building sprites keyed by the building's
+  // stable `id`. Lets us surgically update / remove a single sprite on
+  // an upgrade or demolish without a full board repaint (which causes
+  // flicker + churns every sprite's tween timer).
+  private homeBuildingSprites: Map<string, Phaser.GameObjects.Image> = new Map();
+
   private drawBuildings(): void {
     // Prefer the server's base snapshot. Fall back to the hardcoded
     // starter layout when running guest-local (DB unavailable).
     if (this.serverBase) {
+      this.homeBuildingSprites.clear();
       for (const b of this.serverBase.buildings) {
-        const spans = b.spans ?? null;
-        const spansBoth = spans && spans.length > 1;
-        const onThisLayer =
-          (spansBoth && spans?.includes(this.layer)) ||
-          b.anchor.layer === this.layer;
-        if (!onThisLayer) continue;
-        const x = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
-        const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
-        const spr = this.add.image(x, y, `building-${b.kind}`);
-        spr.setOrigin(0.5, 0.75);
-        spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
-        const tiles = Math.max(b.footprint.w, b.footprint.h);
-        // 1.4× tile scaling: building sprites are 128×128 source, so a
-        // 1-tile building renders at 67 px — a cleaner 0.52 ratio than
-        // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
-        // an integer-multiple downscale means less blur.
-        spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
-        this.tweens.add({
-          targets: spr,
-          scale: { from: spr.scale, to: spr.scale * 1.03 },
-          duration: 1400 + Math.random() * 800,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-        });
-        this.boardContainer.add(spr);
+        const spr = this.createBuildingSprite(b);
+        if (spr) this.homeBuildingSprites.set(b.id, spr);
       }
       return;
     }
@@ -1024,6 +1008,97 @@ export class HomeScene extends Phaser.Scene {
       });
       this.boardContainer.add(spr);
     }
+  }
+
+  // Create, size, tween, and wire one building sprite. Returns the
+  // sprite (or null if the building isn't visible on the current
+  // layer). Used both in bulk by drawBuildings and one-off by
+  // upsertBuildingSprite when a single building changes.
+  private createBuildingSprite(b: Types.Building): Phaser.GameObjects.Image | null {
+    const spans = b.spans ?? null;
+    const spansBoth = spans && spans.length > 1;
+    const onThisLayer =
+      (spansBoth && spans?.includes(this.layer)) ||
+      b.anchor.layer === this.layer;
+    if (!onThisLayer) return null;
+    const x = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
+    const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
+    const spr = this.add.image(x, y, `building-${b.kind}`);
+    spr.setOrigin(0.5, 0.75);
+    spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
+    const tiles = Math.max(b.footprint.w, b.footprint.h);
+    // 1.4× tile scaling: building sprites are 128×128 source, so a
+    // 1-tile building renders at 67 px — a cleaner 0.52 ratio than
+    // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
+    // an integer-multiple downscale means less blur.
+    spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
+    this.tweens.add({
+      targets: spr,
+      scale: { from: spr.scale, to: spr.scale * 1.03 },
+      duration: 1400 + Math.random() * 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    spr.setInteractive({ useHandCursor: true });
+    spr.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const dragDist = Phaser.Math.Distance.Between(
+        p.downX, p.downY, p.upX, p.upY,
+      );
+      if (dragDist > HomeScene.TAP_THRESHOLD_PX) return;
+      this.openBuildingInfo(b);
+    });
+    this.boardContainer.add(spr);
+    return spr;
+  }
+
+  // Replace the sprite for a single building. Used after a successful
+  // upgrade so the level-visualized sprite refreshes without a full
+  // board repaint. The old sprite is destroyed (kills its tween too);
+  // a new one is created in its place and re-indexed.
+  private upsertBuildingSprite(b: Types.Building): void {
+    const existing = this.homeBuildingSprites.get(b.id);
+    existing?.destroy();
+    this.homeBuildingSprites.delete(b.id);
+    const spr = this.createBuildingSprite(b);
+    if (spr) this.homeBuildingSprites.set(b.id, spr);
+  }
+
+  // Tap handler: open the building info / upgrade modal. On a
+  // successful upgrade or demolish we update only the affected sprite
+  // (not the whole board), which keeps the scene snappy as bases
+  // grow and avoids resetting the idle tweens on every other building.
+  private openBuildingInfo(b: Types.Building): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    openBuildingInfoModal({
+      scene: this,
+      runtime,
+      building: b,
+      onUpdated: (base) => {
+        this.serverBase = base;
+        const updated = base.buildings.find((x) => x.id === b.id);
+        if (updated) this.upsertBuildingSprite(updated);
+        this.refreshResourcesHud();
+      },
+      onDemolish: (base) => {
+        this.serverBase = base;
+        const spr = this.homeBuildingSprites.get(b.id);
+        spr?.destroy();
+        this.homeBuildingSprites.delete(b.id);
+      },
+    });
+  }
+
+  private refreshResourcesHud(): void {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime?.player) return;
+    this.resources.sugar = runtime.player.player.sugar;
+    this.resources.leafBits = runtime.player.player.leafBits;
+    this.resources.aphidMilk = runtime.player.player.aphidMilk;
+    this.sugarText.setText(String(this.resources.sugar));
+    this.leafText.setText(String(this.resources.leafBits));
+    this.milkText.setText(String(this.resources.aphidMilk));
   }
 
   // Single-row footer. Seven buttons evenly distributed across the
@@ -1331,6 +1406,16 @@ export class HomeScene extends Phaser.Scene {
       this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
     this.footerChrome = this.add.graphics().setDepth(DEPTHS.hudChrome);
+    // Footer buttons have default depth 0; the chrome panel sits at
+    // DEPTHS.hudChrome (1), which would otherwise render ON TOP of the
+    // buttons and swallow their visuals + pointer hits. Pushing each
+    // button container one slot above the chrome keeps them visible
+    // and interactive. The DEPTHS.hud slot (8) is safely above chrome
+    // and below any modal backdrops, and this is also where the
+    // mobile Raid CTA already sits — keeps both paths consistent.
+    for (const btn of this.footerButtons) {
+      btn.container.setDepth(DEPTHS.hud);
+    }
     this.layoutFooter();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.
