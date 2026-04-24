@@ -1082,10 +1082,14 @@ export class RaidScene extends Phaser.Scene {
       // moved since last render; freeze on frame 0 when it's stopped
       // (attacking, waiting on a turret, pathing stalled). Plain
       // Images stay unaffected — their "idle" IS their default look.
+      //
+      // The tracking map only holds entries for Sprite units, and
+      // the per-unit position record is mutated in place each frame
+      // instead of re-allocated, so the loop adds zero per-frame
+      // garbage for the non-animated majority and one insertion per
+      // animated unit over the unit's lifetime.
       if (spr instanceof Phaser.GameObjects.Sprite) {
         const prev = this.unitLastPos.get(u.id);
-        // Sub-pixel delta threshold so a rounding jitter at fixed-
-        // point boundaries isn't mis-read as movement.
         const MOVE_EPSILON = 0.15;
         const moving =
           !prev ||
@@ -1100,8 +1104,13 @@ export class RaidScene extends Phaser.Scene {
           spr.anims.pause();
           spr.setFrame(0);
         }
+        if (prev) {
+          prev.x = x;
+          prev.y = y;
+        } else {
+          this.unitLastPos.set(u.id, { x, y });
+        }
       }
-      this.unitLastPos.set(u.id, { x, y });
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
       spr.setAlpha(0.35 + 0.65 * hpFrac);
       // Hit flash for units — same logic as buildings, keyed on a

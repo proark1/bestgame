@@ -595,13 +595,16 @@ export class ArenaScene extends Phaser.Scene {
       }
       // Same movement-gated anim as RaidScene — pause the walk cycle
       // while the unit is stationary so idles don't jog in place.
+      // Only Sprite-backed units are tracked, and the per-unit
+      // position record is mutated in place instead of re-allocated
+      // each frame to keep per-frame GC pressure at zero.
       if (spr instanceof Phaser.GameObjects.Sprite) {
         const prev = this.unitLastPos.get(u.id);
-        const EPS = 0.15;
+        const MOVE_EPSILON = 0.15;
         const moving =
           !prev ||
-          Math.abs(x - prev.x) > EPS ||
-          Math.abs(y - prev.y) > EPS;
+          Math.abs(x - prev.x) > MOVE_EPSILON ||
+          Math.abs(y - prev.y) > MOVE_EPSILON;
         if (moving) {
           if (!spr.anims.isPlaying) {
             const animKey = `walk-${u.kind}`;
@@ -611,8 +614,13 @@ export class ArenaScene extends Phaser.Scene {
           spr.anims.pause();
           spr.setFrame(0);
         }
+        if (prev) {
+          prev.x = x;
+          prev.y = y;
+        } else {
+          this.unitLastPos.set(u.id, { x, y });
+        }
       }
-      this.unitLastPos.set(u.id, { x, y });
     }
     for (const [id, spr] of this.unitSprites) {
       if (!alive.has(id)) {
