@@ -804,15 +804,14 @@ export function registerPlayer(app: FastifyInstance): void {
         // existing footprint moved to the new anchor. Skip the target
         // itself — the new location may legitimately overlap the
         // building's current tile if it's a 1-tile shift.
+        //
+        // Multi-layer buildings (Queen Chamber) keep their spans;
+        // single-layer buildings adopt the requested anchor layer.
         const candidateLayers = new Set<Types.Layer>(
-          target.spans ?? [body.anchor.layer],
+          target.spans && target.spans.length > 1
+            ? target.spans
+            : [body.anchor.layer],
         );
-        // If the building doesn't span and we're changing its anchor
-        // layer, the candidate only occupies the new layer.
-        if (!target.spans || target.spans.length <= 1) {
-          candidateLayers.clear();
-          candidateLayers.add(body.anchor.layer);
-        }
         for (const existing of base.buildings) {
           if (existing.id === target.id) continue;
           const existingLayers = new Set<Types.Layer>(

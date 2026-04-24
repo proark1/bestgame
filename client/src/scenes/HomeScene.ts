@@ -1103,13 +1103,14 @@ export class HomeScene extends Phaser.Scene {
   // (green = would place here, red = blocked by another building, out
   // of bounds, or wrong layer), and pin a banner + Cancel button above
   // the board. The next qualifying tap on a valid tile commits the
-  // move via /building/:id/move. Cancel (or tapping the backdrop /
-  // pressing Escape) restores the original state.
+  // move via /building/:id/move; the Cancel button or pressing Escape
+  // restores the original state without committing.
   private moveMode: {
     building: Types.Building;
     overlay: Phaser.GameObjects.Container;
     banner: Phaser.GameObjects.Container;
     origSpriteAlpha: number;
+    keyListener: (e: KeyboardEvent) => void;
   } | null = null;
 
   private enterMoveMode(b: Types.Building): void {
@@ -1135,8 +1136,9 @@ export class HomeScene extends Phaser.Scene {
     // reposition within the layers it already spans. For single-layer
     // buildings, we paint validity on the CURRENT viewed layer only
     // so the player has a clear "where can I put this" answer per
-    // layer. If they flip layers the overlay repaints automatically
-    // the next time drawBoard is called (handled by our Flip handler).
+    // layer. Flipping layers terminates move mode (see the Flip
+    // handler) because the overlay lives on boardContainer and is
+    // destroyed by the flip's full-board redraw.
     const paintOverlay = (): void => {
       overlayGraphics.clear();
       if (!this.serverBase) return;
@@ -1196,21 +1198,34 @@ export class HomeScene extends Phaser.Scene {
     cancelBtn.container.setDepth(DEPTHS.drawer);
     banner.add(cancelBtn.container);
 
+    // Keyboard cancel. Escape is the universal "get me out of this
+    // mode" chord on desktop + external-keyboard mobile, and the
+    // player has no other way to cancel without touching a specific
+    // Cancel button. Stored on the mode record so exitMoveMode can
+    // unwire it cleanly whether cancellation is from the button,
+    // Escape, or a layer flip.
+    const keyListener = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') this.exitMoveMode();
+    };
+    window.addEventListener('keydown', keyListener);
+
     this.moveMode = {
       building: b,
       overlay: overlayContainer,
       banner,
       origSpriteAlpha: origAlpha,
+      keyListener,
     };
   }
 
   private exitMoveMode(): void {
     if (!this.moveMode) return;
-    const { building, overlay, banner, origSpriteAlpha } = this.moveMode;
+    const { building, overlay, banner, origSpriteAlpha, keyListener } = this.moveMode;
     overlay.destroy(true);
     banner.destroy(true);
     const spr = this.homeBuildingSprites.get(building.id);
     if (spr) spr.setAlpha(origSpriteAlpha);
+    window.removeEventListener('keydown', keyListener);
     this.moveMode = null;
   }
 
