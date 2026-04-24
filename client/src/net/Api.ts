@@ -298,6 +298,22 @@ export class Api {
     return (await res.json()) as PlaceBuildingResponse;
   }
 
+  async moveBuilding(args: {
+    buildingId: string;
+    anchor: { x: number; y: number; layer: Types.Layer };
+  }): Promise<MoveBuildingResponse> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(args.buildingId)}/move`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ anchor: args.anchor }),
+      },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'move');
+    return (await res.json()) as MoveBuildingResponse;
+  }
+
   async deleteBuilding(buildingId: string): Promise<DeleteBuildingResponse> {
     const res = await this.authedFetch(
       `/player/building/${encodeURIComponent(buildingId)}`,
@@ -1004,6 +1020,12 @@ export interface DeleteBuildingResponse {
   ok: true;
   base: Types.Base;
   removed: number;
+}
+
+export interface MoveBuildingResponse {
+  ok: true;
+  base: Types.Base;
+  building: Types.Building;
 }
 
 // ----- Stickiness response shapes -----

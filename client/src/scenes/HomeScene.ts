@@ -605,6 +605,10 @@ export class HomeScene extends Phaser.Scene {
         label: this.layer === 0 ? '↓ Underground' : '↑ Surface',
         onPress: () => {
           this.closeBurgerDrawer();
+          // Move mode's overlay lives on boardContainer; flipping the
+          // layer destroys it. Exit cleanly first so the banner/sprite
+          // alpha also get restored.
+          this.exitMoveMode();
           this.layer = this.layer === 0 ? 1 : 0;
           this.boardContainer.removeAll(true);
           this.drawBoard();
@@ -1087,8 +1091,226 @@ export class HomeScene extends Phaser.Scene {
         spr?.destroy();
         this.homeBuildingSprites.delete(b.id);
       },
+      onMoveRequest: (building) => this.enterMoveMode(building),
     });
   }
+
+  // --- Move mode -----------------------------------------------------------
+  //
+  // "Move mode" is entered when the player taps Move on the building
+  // info modal. We freeze the building's existing sprite to half alpha,
+  // paint a translucent grid over every tile with validity coloring
+  // (green = would place here, red = blocked by another building, out
+  // of bounds, or wrong layer), and pin a banner + Cancel button above
+  // the board. The next qualifying tap on a valid tile commits the
+  // move via /building/:id/move; the Cancel button or pressing Escape
+  // restores the original state without committing.
+  private moveMode: {
+    building: Types.Building;
+    overlay: Phaser.GameObjects.Container;
+    banner: Phaser.GameObjects.Container;
+    origSpriteAlpha: number;
+    keyListener: (e: KeyboardEvent) => void;
+  } | null = null;
+
+  private enterMoveMode(b: Types.Building): void {
+    if (this.moveMode) this.exitMoveMode();
+    if (!this.serverBase) return;
+
+    // Dim the source sprite so the player sees it's "picked up".
+    const spr = this.homeBuildingSprites.get(b.id);
+    const origAlpha = spr?.alpha ?? 1;
+    if (spr) spr.setAlpha(0.35);
+
+    // Tile validity overlay. Lives inside boardContainer so it scales
+    // and pans with the board. A single Graphics is cheaper than one
+    // rect per tile and repaints in one pass.
+    const overlayContainer = this.add.container(0, 0);
+    const overlayGraphics = this.add.graphics();
+    overlayContainer.add(overlayGraphics);
+    this.boardContainer.add(overlayContainer);
+    overlayContainer.setDepth(DEPTHS.boardOverlay);
+
+    const { w: fw, h: fh } = b.footprint;
+    // For multi-layer buildings (QueenChamber), the user can only
+    // reposition within the layers it already spans. For single-layer
+    // buildings, we paint validity on the CURRENT viewed layer only
+    // so the player has a clear "where can I put this" answer per
+    // layer. Flipping layers terminates move mode (see the Flip
+    // handler) because the overlay lives on boardContainer and is
+    // destroyed by the flip's full-board redraw.
+    const paintOverlay = (): void => {
+      overlayGraphics.clear();
+      if (!this.serverBase) return;
+      for (let y = 0; y <= GRID_H - fh; y++) {
+        for (let x = 0; x <= GRID_W - fw; x++) {
+          const valid = this.isMoveTargetValid(b, x, y, this.layer);
+          const color = valid ? 0x5ba445 : 0xd94c4c;
+          overlayGraphics.fillStyle(color, 0.22);
+          overlayGraphics.fillRect(x * TILE, y * TILE, fw * TILE, fh * TILE);
+          overlayGraphics.lineStyle(1, color, 0.45);
+          overlayGraphics.strokeRect(x * TILE, y * TILE, fw * TILE, fh * TILE);
+        }
+      }
+    };
+    paintOverlay();
+
+    // Banner + Cancel button at the top of the viewport.
+    const bannerW = Math.min(520, this.scale.width - 32);
+    const bannerH = 56;
+    const bannerX = (this.scale.width - bannerW) / 2;
+    const bannerY = HUD_H + 8;
+    const banner = this.add.container(0, 0).setDepth(DEPTHS.drawer);
+    const bg = this.add.graphics();
+    drawPanel(bg, bannerX, bannerY, bannerW, bannerH, {
+      topColor: 0x2a3f2d,
+      botColor: COLOR.bgPanelLo,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.16,
+      radius: 10,
+      shadowOffset: 3,
+      shadowAlpha: 0.28,
+    });
+    banner.add(bg);
+    banner.add(
+      crispText(this, bannerX + 16, bannerY + 10, 'MOVE BUILDING',
+        labelTextStyle(10, COLOR.textGold),
+      ),
+    );
+    banner.add(
+      crispText(this, bannerX + 16, bannerY + 28,
+        'Tap a green tile to move. Red tiles are blocked.',
+        bodyTextStyle(12, COLOR.textPrimary),
+      ),
+    );
+    const cancelBtn = makeHiveButton(this, {
+      x: bannerX + bannerW - 70,
+      y: bannerY + bannerH / 2,
+      width: 120,
+      height: 36,
+      label: 'Cancel',
+      variant: 'ghost',
+      fontSize: 12,
+      onPress: () => this.exitMoveMode(),
+    });
+    cancelBtn.container.setDepth(DEPTHS.drawer);
+    banner.add(cancelBtn.container);
+
+    // Keyboard cancel. Escape is the universal "get me out of this
+    // mode" chord on desktop + external-keyboard mobile, and the
+    // player has no other way to cancel without touching a specific
+    // Cancel button. Stored on the mode record so exitMoveMode can
+    // unwire it cleanly whether cancellation is from the button,
+    // Escape, or a layer flip.
+    const keyListener = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') this.exitMoveMode();
+    };
+    window.addEventListener('keydown', keyListener);
+
+    this.moveMode = {
+      building: b,
+      overlay: overlayContainer,
+      banner,
+      origSpriteAlpha: origAlpha,
+      keyListener,
+    };
+  }
+
+  private exitMoveMode(): void {
+    if (!this.moveMode) return;
+    const { building, overlay, banner, origSpriteAlpha, keyListener } = this.moveMode;
+    overlay.destroy(true);
+    banner.destroy(true);
+    const spr = this.homeBuildingSprites.get(building.id);
+    if (spr) spr.setAlpha(origSpriteAlpha);
+    window.removeEventListener('keydown', keyListener);
+    this.moveMode = null;
+  }
+
+  // Purely geometric — same rules the server enforces, lifted client-
+  // side so the overlay colors match what the move endpoint will
+  // actually accept. Keep in sync with player.ts move handler.
+  private isMoveTargetValid(
+    b: Types.Building,
+    nx: number,
+    ny: number,
+    layer: Types.Layer,
+  ): boolean {
+    if (!this.serverBase) return false;
+    // Multi-layer (Queen) buildings stay on their anchor layer.
+    if (b.spans && b.spans.length > 1 && !b.spans.includes(layer)) {
+      return false;
+    }
+    if (nx < 0 || ny < 0) return false;
+    if (nx + b.footprint.w > this.serverBase.gridSize.w) return false;
+    if (ny + b.footprint.h > this.serverBase.gridSize.h) return false;
+    // Collision with OTHER buildings. Allow overlap with self.
+    for (const other of this.serverBase.buildings) {
+      if (other.id === b.id) continue;
+      const otherLayers = new Set<Types.Layer>(
+        other.spans ?? [other.anchor.layer],
+      );
+      const myLayers = new Set<Types.Layer>(
+        b.spans && b.spans.length > 1 ? b.spans : [layer],
+      );
+      let intersect = false;
+      for (const l of myLayers) {
+        if (otherLayers.has(l)) {
+          intersect = true;
+          break;
+        }
+      }
+      if (!intersect) continue;
+      const ex = other.anchor.x;
+      const ey = other.anchor.y;
+      const ew = other.footprint.w;
+      const eh = other.footprint.h;
+      const overlaps =
+        nx < ex + ew &&
+        nx + b.footprint.w > ex &&
+        ny < ey + eh &&
+        ny + b.footprint.h > ey;
+      if (overlaps) return false;
+    }
+    return true;
+  }
+
+  private async commitMove(tx: number, ty: number): Promise<void> {
+    const mode = this.moveMode;
+    if (!mode) return;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    const b = mode.building;
+    if (!this.isMoveTargetValid(b, tx, ty, this.layer)) {
+      this.flashToast('That tile is blocked.');
+      return;
+    }
+    try {
+      const r = await runtime.api.moveBuilding({
+        buildingId: b.id,
+        anchor: {
+          x: tx,
+          y: ty,
+          // Multi-layer buildings keep their own anchor layer; single-
+          // layer ones follow the currently-viewed layer. The server
+          // re-asserts this invariant so a tampered client can't
+          // change a Queen Chamber's layer.
+          layer: b.spans && b.spans.length > 1 ? b.anchor.layer : this.layer,
+        },
+      });
+      this.serverBase = r.base;
+      if (runtime.player) runtime.player.base = r.base;
+      this.exitMoveMode();
+      this.upsertBuildingSprite(r.building);
+    } catch (err) {
+      this.flashToast((err as Error).message);
+    }
+  }
+
+  // `flashToast` is defined further down with the building picker
+  // code — reused here for move-mode error feedback.
 
   private refreshResourcesHud(): void {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
@@ -1334,6 +1556,11 @@ export class HomeScene extends Phaser.Scene {
         short: flipShort,
         variant: 'secondary',
         onPress: () => {
+          // Same reasoning as the burger-drawer flip handler: the
+          // move-mode overlay is attached to boardContainer and would
+          // be destroyed by the removeAll below, so bail out of move
+          // mode first and let the banner/source sprite reset.
+          this.exitMoveMode();
           this.layer = this.layer === 0 ? 1 : 0;
           const btn = this.footerButtons[0];
           btn?.setLabel(this.footerLabelForIndex(0));
@@ -1892,6 +2119,15 @@ export class HomeScene extends Phaser.Scene {
       if (localX < 0 || localX >= BOARD_W || localY < 0 || localY >= BOARD_H) return;
       const tx = Math.floor(localX / TILE);
       const ty = Math.floor(localY / TILE);
+      // Move-mode hijacks board taps: the tile the player tapped is
+      // the new anchor for the building they're relocating. The
+      // existing picker flow is skipped while move-mode is active so
+      // a mis-tap into a free area doesn't also try to open the
+      // building picker on top of the relocation.
+      if (this.moveMode) {
+        void this.commitMove(tx, ty);
+        return;
+      }
       if (this.isTileOccupied(tx, ty, this.layer)) return;
       this.openPicker(tx, ty);
     });
