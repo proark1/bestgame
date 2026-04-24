@@ -23,6 +23,30 @@ export function drawQueenSilhouette(
 ): Phaser.GameObjects.Container {
   const c = scene.add.container(x, y);
   const palette = def?.palette ?? { primary: 0xd9a05a, accent: 0x7a4a22, glow: 0xffe7b0 };
+
+  // Generated portrait path: when the admin has created + loaded a
+  // queen-<id> texture, render that instead of the silhouette. The
+  // silhouette is the fallback chrome when art isn't ready yet.
+  // Texture-name convention matches QueenSkin.portraitKey so adding
+  // a new skin in queenSkins.ts + generating the art is a one-hop
+  // wire-up, no extra lookup table to maintain.
+  if (def && scene.textures.exists(def.portraitKey)) {
+    const halo = scene.add.graphics();
+    halo.fillStyle(palette.glow, 0.16);
+    halo.fillCircle(0, 0, radius * 1.25);
+    c.add(halo);
+    const img = scene.add.image(0, 0, def.portraitKey);
+    // Fit into a radius-sized circle while preserving aspect ratio.
+    const src = img.texture.getSourceImage();
+    const srcW = 'naturalWidth' in src ? src.naturalWidth : src.width;
+    const srcH = 'naturalHeight' in src ? src.naturalHeight : src.height;
+    const target = radius * 2;
+    const scale = target / Math.max(1, Math.max(srcW, srcH));
+    img.setDisplaySize(srcW * scale, srcH * scale);
+    c.add(img);
+    return c;
+  }
+
   // Soft glow halo
   const halo = scene.add.graphics();
   halo.fillStyle(palette.glow, 0.16);

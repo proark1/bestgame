@@ -869,15 +869,19 @@ export class HomeScene extends Phaser.Scene {
     const boardTileKey = 'ui-board-tile-surface';
     const useTile = isUiOverrideActive(this, boardTileKey);
     if (useTile) {
-      const tileSprite = this.add
-        .tileSprite(0, 0, BOARD_W, BOARD_H, boardTileKey)
-        .setOrigin(0, 0);
-      // Add directly — bg (still empty Graphics) stays as a handle so
-      // the rest of this function can keep drawing on it (vignette,
-      // etc.) without re-ordering. The basePad painted above sits
-      // under the tile sprite and fills any transparent pixels in
-      // the tile art.
-      this.boardContainer.add(tileSprite);
+      // Previously we painted the board with a repeating TileSprite
+      // at the texture's native 128×128 size. Because the generated
+      // images often include a faint transparent border, every tile
+      // seam showed as a thin dark line — "gaps between the board
+      // tiles." Stretching a single Image across the full board
+      // eliminates the seams entirely; we trade the tileable
+      // moss-pattern effect for a clean flat backdrop, which is
+      // what the user asked for. Detail loss from the stretch is
+      // minimal because the generated asset is already hand-painted
+      // soft / seamless.
+      const bg2 = this.add.image(0, 0, boardTileKey).setOrigin(0, 0);
+      bg2.setDisplaySize(BOARD_W, BOARD_H);
+      this.boardContainer.add(bg2);
     } else {
       // Vertical gradient fake via stacked bands. `fillGradientStyle`
       // would be ideal but Graphics' gradients draw solid on most
@@ -1219,16 +1223,19 @@ export class HomeScene extends Phaser.Scene {
       const leftX = this.boardContainer.x + cur.anchor.x * TILE * scale;
       const rightX = this.boardContainer.x + (cur.anchor.x + cur.footprint.w) * TILE * scale;
       const midY = this.boardContainer.y + (cur.anchor.y + cur.footprint.h / 2) * TILE * scale;
-      const OFFSET = 28;
+      // Small arrow chips — the user specifically asked for a
+      // minimal "hint" control rather than the chunky 40-px CTAs
+      // that felt too heavy on a small building sprite.
+      const OFFSET = 18;
       const mkArrow = (x: number, y: number, label: string, dx: number, dy: number): void => {
         const btn = makeHiveButton(this, {
           x,
           y,
-          width: 40,
-          height: 40,
+          width: 26,
+          height: 26,
           label,
           variant: 'primary',
-          fontSize: 18,
+          fontSize: 12,
           onPress: () => { void this.nudgeMove(dx, dy); },
         });
         btn.container.setDepth(DEPTHS.drawer);

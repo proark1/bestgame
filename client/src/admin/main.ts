@@ -522,6 +522,17 @@ const MENU_UI_KEYS = [
   // Logo wordmark. Shown on boot splash + HomeScene top-left when
   // generated AND the `ui-logo` override flag is flipped on.
   'ui-logo',
+  // Queen-skin portraits. Admin can generate + toggle each one;
+  // the Queen picker + HomeScene identity chip render the image
+  // when present and fall back to a tinted silhouette otherwise.
+  // Keep in sync with server/api/src/game/queenSkins.ts.
+  'queen-default',
+  'queen-obsidian',
+  'queen-honeydew',
+  'queen-frost',
+  'queen-ember',
+  'queen-verdant',
+  'queen-silver',
 ];
 
 function composePrompt(

@@ -1143,6 +1143,11 @@ export function registerPlayer(app: FastifyInstance): void {
       // upgrade a non-upgradeable kind.
       baseCost: BUILDING_PLACEMENT_COSTS,
       incomePerSecond: INCOME_PER_SECOND,
+      // Queen upgrade cost curve, one entry per L→L+1 step. The
+      // modal uses this to render an affordability preview for the
+      // Queen Chamber the same way it does for regular buildings —
+      // server is still authoritative on the debit at submit time.
+      queenUpgradeCost: QUEEN_UPGRADE_COST,
     };
   });
 

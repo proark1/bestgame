@@ -99,6 +99,18 @@ export const UI_OVERRIDE_KEYS = [
   // the asset and toggled the flag on. Graphics fallback = the text
   // "HIVE WARS" in display font.
   'ui-logo',
+  // Queen-skin portraits, one per QueenSkin id. Shown in the Queen
+  // picker + Home-scene identity chip when the matching override
+  // flag is on + the texture is loaded. Fallback = the stylized
+  // silhouette drawn in client/src/ui/queenPortrait.ts. Keep in
+  // sync with server/api/src/game/queenSkins.ts QUEEN_SKINS ids.
+  'queen-default',
+  'queen-obsidian',
+  'queen-honeydew',
+  'queen-frost',
+  'queen-ember',
+  'queen-verdant',
+  'queen-silver',
 ] as const;
 export type UiOverrideKey = (typeof UI_OVERRIDE_KEYS)[number];
 
