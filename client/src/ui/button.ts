@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { BUTTON_VARIANT, COLOR, FONT, SPACING, type ButtonVariant } from './theme.js';
 import { isUiOverrideActive } from './uiOverrides.js';
 import { isClickDebugEnabled } from './clickDebug.js';
+import { resumeAudio, sfxClick } from './audio.js';
 
 // Shared game-button factory. Graphics-drawn rounded rectangle with a
 // two-band gradient fill, thick outer stroke, inner highlight, drop
@@ -274,6 +275,12 @@ export function makeHiveButton(
       yoyo: true,
       ease: 'Quad.easeOut',
     });
+    // Resume-on-gesture: browsers gate AudioContext until the user
+    // actually taps. Every button press is a valid gesture, so call
+    // resume here once per press and then fire the click sfx. Both
+    // calls are silent when audio is muted / unsupported.
+    resumeAudio();
+    sfxClick();
     opts.onPress();
   });
   hit.on('pointerup', () => {
