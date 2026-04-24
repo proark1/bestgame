@@ -43,6 +43,13 @@ export interface Building {
   level: number;
   hp: number;
   hpMax: number;
+  // Orientation in 90-degree steps: 0 = default, 1 = 90°, 2 = 180°,
+  // 3 = 270°. Absent on buildings that haven't been rotated yet
+  // (implicit 0). Used by wall-like buildings so the admin / player
+  // can draw aesthetic wall lines + corners the way Clash of Clans
+  // does. The sim ignores rotation for collision + combat — it's a
+  // purely cosmetic transform applied at render time.
+  rotation?: 0 | 1 | 2 | 3;
   // Player-authored defender AI rules attached to this building. The
   // sim's `ai_rules` system evaluates them each tick and mutates
   // SimBuilding state (boost timers, extra spawns, reveal, etc.).

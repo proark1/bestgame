@@ -314,6 +314,24 @@ export class Api {
     return (await res.json()) as MoveBuildingResponse;
   }
 
+  async rotateBuilding(args: {
+    buildingId: string;
+    rotation?: 0 | 1 | 2 | 3;
+  }): Promise<RotateBuildingResponse> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(args.buildingId)}/rotate`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(
+          args.rotation === undefined ? {} : { rotation: args.rotation },
+        ),
+      },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'rotate');
+    return (await res.json()) as RotateBuildingResponse;
+  }
+
   async deleteBuilding(buildingId: string): Promise<DeleteBuildingResponse> {
     const res = await this.authedFetch(
       `/player/building/${encodeURIComponent(buildingId)}`,
@@ -1026,6 +1044,13 @@ export interface MoveBuildingResponse {
   ok: true;
   base: Types.Base;
   building: Types.Building;
+}
+
+export interface RotateBuildingResponse {
+  ok: true;
+  base: Types.Base;
+  building: Types.Building;
+  rotation: 0 | 1 | 2 | 3;
 }
 
 // ----- Stickiness response shapes -----

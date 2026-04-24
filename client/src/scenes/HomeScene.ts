@@ -1059,6 +1059,14 @@ export class HomeScene extends Phaser.Scene {
     // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
     // an integer-multiple downscale means less blur.
     spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
+    // Building rotation is a cosmetic 90-degree transform. Players
+    // can use it to line walls up properly (think CoC wall corners).
+    // Rotation 0 = default, 1 = 90°, 2 = 180°, 3 = 270° — so we map
+    // each step to π/2 radians.
+    const rot = b.rotation ?? 0;
+    if (rot !== 0) {
+      spr.setRotation((rot * Math.PI) / 2);
+    }
     this.tweens.add({
       targets: spr,
       scale: { from: spr.scale, to: spr.scale * 1.03 },
@@ -1132,53 +1140,141 @@ export class HomeScene extends Phaser.Scene {
     building: Types.Building;
     overlay: Phaser.GameObjects.Container;
     banner: Phaser.GameObjects.Container;
+    arrowContainer: Phaser.GameObjects.Container;
+    paintOverlay: () => void;
+    paintArrows: () => void;
     origSpriteAlpha: number;
+    // Pre-drag sprite coords so we can cleanly reset if the user
+    // drops on an invalid tile or cancels mid-drag.
+    origSpriteXY: { x: number; y: number };
     keyListener: (e: KeyboardEvent) => void;
+    dragOrigin: { px: number; py: number } | null;
   } | null = null;
 
   private enterMoveMode(b: Types.Building): void {
     if (this.moveMode) this.exitMoveMode();
     if (!this.serverBase) return;
 
-    // Dim the source sprite so the player sees it's "picked up".
+    // The sprite stays fully visible (a 35% alpha was confusing; the
+    // player needs to see what they're moving). We use a yellow outline
+    // overlay around its current tile to mark it "picked up" instead.
     const spr = this.homeBuildingSprites.get(b.id);
     const origAlpha = spr?.alpha ?? 1;
-    if (spr) spr.setAlpha(0.35);
+    const origXY = spr ? { x: spr.x, y: spr.y } : { x: 0, y: 0 };
 
     // Tile validity overlay. Lives inside boardContainer so it scales
     // and pans with the board. A single Graphics is cheaper than one
     // rect per tile and repaints in one pass.
     const overlayContainer = this.add.container(0, 0);
     const overlayGraphics = this.add.graphics();
+    const selectionGraphics = this.add.graphics();
     overlayContainer.add(overlayGraphics);
+    overlayContainer.add(selectionGraphics);
     this.boardContainer.add(overlayContainer);
     overlayContainer.setDepth(DEPTHS.boardOverlay);
 
     const { w: fw, h: fh } = b.footprint;
-    // For multi-layer buildings (QueenChamber), the user can only
-    // reposition within the layers it already spans. For single-layer
-    // buildings, we paint validity on the CURRENT viewed layer only
-    // so the player has a clear "where can I put this" answer per
-    // layer. Flipping layers terminates move mode (see the Flip
-    // handler) because the overlay lives on boardContainer and is
-    // destroyed by the flip's full-board redraw.
     const paintOverlay = (): void => {
       overlayGraphics.clear();
+      selectionGraphics.clear();
       if (!this.serverBase) return;
+      const cur = this.serverBase.buildings.find((x) => x.id === b.id) ?? b;
       for (let y = 0; y <= GRID_H - fh; y++) {
         for (let x = 0; x <= GRID_W - fw; x++) {
-          const valid = this.isMoveTargetValid(b, x, y, this.layer);
+          const valid = this.isMoveTargetValid(cur, x, y, this.layer);
           const color = valid ? 0x5ba445 : 0xd94c4c;
-          overlayGraphics.fillStyle(color, 0.22);
+          overlayGraphics.fillStyle(color, 0.16);
           overlayGraphics.fillRect(x * TILE, y * TILE, fw * TILE, fh * TILE);
-          overlayGraphics.lineStyle(1, color, 0.45);
-          overlayGraphics.strokeRect(x * TILE, y * TILE, fw * TILE, fh * TILE);
         }
       }
+      // Brass outline on the building's CURRENT tile so the player
+      // can see what they're about to move.
+      selectionGraphics.lineStyle(3, 0xffd98a, 0.95);
+      selectionGraphics.strokeRect(
+        cur.anchor.x * TILE,
+        cur.anchor.y * TILE,
+        fw * TILE,
+        fh * TILE,
+      );
     };
     paintOverlay();
 
-    // Banner + Cancel button at the top of the viewport.
+    // --- Arrow nudge buttons --------------------------------------------
+    //
+    // Four small buttons positioned on the four sides of the building's
+    // current tile. Each taps fires a 1-tile nudge. Repainted every
+    // time the building moves (via the API or drag release) so they
+    // track the new position.
+    const arrowContainer = this.add.container(0, 0).setDepth(DEPTHS.drawer);
+    const paintArrows = (): void => {
+      arrowContainer.removeAll(true);
+      const cur = this.serverBase?.buildings.find((x) => x.id === b.id) ?? b;
+      // Convert tile coords to on-screen coords through boardContainer's
+      // scale + offset so the arrows stay with the building even while
+      // the player pans/zooms the board.
+      const scale = this.boardScale || 1;
+      const cx = this.boardContainer.x + (cur.anchor.x + cur.footprint.w / 2) * TILE * scale;
+      const topY = this.boardContainer.y + cur.anchor.y * TILE * scale;
+      const botY = this.boardContainer.y + (cur.anchor.y + cur.footprint.h) * TILE * scale;
+      const leftX = this.boardContainer.x + cur.anchor.x * TILE * scale;
+      const rightX = this.boardContainer.x + (cur.anchor.x + cur.footprint.w) * TILE * scale;
+      const midY = this.boardContainer.y + (cur.anchor.y + cur.footprint.h / 2) * TILE * scale;
+      const OFFSET = 28;
+      const mkArrow = (x: number, y: number, label: string, dx: number, dy: number): void => {
+        const btn = makeHiveButton(this, {
+          x,
+          y,
+          width: 40,
+          height: 40,
+          label,
+          variant: 'primary',
+          fontSize: 18,
+          onPress: () => { void this.nudgeMove(dx, dy); },
+        });
+        btn.container.setDepth(DEPTHS.drawer);
+        arrowContainer.add(btn.container);
+      };
+      mkArrow(cx, topY - OFFSET, '↑', 0, -1);
+      mkArrow(cx, botY + OFFSET, '↓', 0, 1);
+      mkArrow(leftX - OFFSET, midY, '←', -1, 0);
+      mkArrow(rightX + OFFSET, midY, '→', 1, 0);
+    };
+    paintArrows();
+
+    // --- Drag the building sprite ---------------------------------------
+    //
+    // Phaser's built-in drag flag uses the pointer delta to move the
+    // GameObject; we piggyback on dragstart/drag/dragend to snap-to-
+    // grid visually and commit on release.
+    if (spr) {
+      this.input.setDraggable(spr, true);
+      spr.on('dragstart', () => {
+        if (this.moveMode) this.moveMode.dragOrigin = { px: spr.x, py: spr.y };
+      });
+      spr.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+        spr.setPosition(dragX, dragY);
+      });
+      spr.on('dragend', (pointer: Phaser.Input.Pointer) => {
+        // boardContainer coords → tile coords. The sprite origin is
+        // (0.5, 0.75) so the tile is anchored near the sprite's base.
+        if (!this.serverBase || !this.moveMode) return;
+        const cur = this.serverBase.buildings.find((x) => x.id === b.id) ?? b;
+        const scale = this.boardScale || 1;
+        const localX = (pointer.x - this.boardContainer.x) / scale;
+        const localY = (pointer.y - this.boardContainer.y) / scale;
+        const tx = Math.max(
+          0,
+          Math.min(GRID_W - cur.footprint.w, Math.floor(localX / TILE - cur.footprint.w / 2 + 0.5)),
+        );
+        const ty = Math.max(
+          0,
+          Math.min(GRID_H - cur.footprint.h, Math.floor(localY / TILE - cur.footprint.h / 2 + 0.5)),
+        );
+        void this.commitMove(tx, ty);
+      });
+    }
+
+    // --- Banner with Cancel ---------------------------------------------
     const bannerW = Math.min(520, this.scale.width - 32);
     const bannerH = 56;
     const bannerX = (this.scale.width - bannerW) / 2;
@@ -1204,7 +1300,7 @@ export class HomeScene extends Phaser.Scene {
     );
     banner.add(
       crispText(this, bannerX + 16, bannerY + 28,
-        'Tap a green tile to move. Red tiles are blocked.',
+        'Drag the building or tap the arrow buttons to move it.',
         bodyTextStyle(12, COLOR.textPrimary),
       ),
     );
@@ -1213,7 +1309,7 @@ export class HomeScene extends Phaser.Scene {
       y: bannerY + bannerH / 2,
       width: 120,
       height: 36,
-      label: 'Cancel',
+      label: 'Done',
       variant: 'ghost',
       fontSize: 12,
       onPress: () => this.exitMoveMode(),
@@ -1221,12 +1317,6 @@ export class HomeScene extends Phaser.Scene {
     cancelBtn.container.setDepth(DEPTHS.drawer);
     banner.add(cancelBtn.container);
 
-    // Keyboard cancel. Escape is the universal "get me out of this
-    // mode" chord on desktop + external-keyboard mobile, and the
-    // player has no other way to cancel without touching a specific
-    // Cancel button. Stored on the mode record so exitMoveMode can
-    // unwire it cleanly whether cancellation is from the button,
-    // Escape, or a layer flip.
     const keyListener = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') this.exitMoveMode();
     };
@@ -1236,20 +1326,65 @@ export class HomeScene extends Phaser.Scene {
       building: b,
       overlay: overlayContainer,
       banner,
+      arrowContainer,
+      paintOverlay,
+      paintArrows,
       origSpriteAlpha: origAlpha,
+      origSpriteXY: origXY,
       keyListener,
+      dragOrigin: null,
     };
   }
 
   private exitMoveMode(): void {
     if (!this.moveMode) return;
-    const { building, overlay, banner, origSpriteAlpha, keyListener } = this.moveMode;
+    const { building, overlay, banner, arrowContainer, origSpriteAlpha, keyListener } = this.moveMode;
     overlay.destroy(true);
     banner.destroy(true);
+    arrowContainer.destroy(true);
     const spr = this.homeBuildingSprites.get(building.id);
-    if (spr) spr.setAlpha(origSpriteAlpha);
+    if (spr) {
+      spr.setAlpha(origSpriteAlpha);
+      // Make sure the sprite is at its persisted tile position (not
+      // wherever a canceled drag might have left it) AND no longer
+      // flagged as draggable.
+      this.input.setDraggable(spr, false);
+      spr.off('dragstart');
+      spr.off('drag');
+      spr.off('dragend');
+      this.snapSpriteToBuilding(spr, building.id);
+    }
     window.removeEventListener('keydown', keyListener);
     this.moveMode = null;
+  }
+
+  private snapSpriteToBuilding(
+    spr: Phaser.GameObjects.Image,
+    buildingId: string,
+  ): void {
+    const cur = this.serverBase?.buildings.find((x) => x.id === buildingId);
+    if (!cur) return;
+    const x = cur.anchor.x * TILE + (cur.footprint.w * TILE) / 2;
+    const y = cur.anchor.y * TILE + (cur.footprint.h * TILE) / 2;
+    spr.setPosition(x, y);
+  }
+
+  // Arrow nudge — move the active building by (dx, dy) tiles. Same
+  // server validation as the drag/tap paths; we bail silently if the
+  // target tile is out of bounds or blocked.
+  private async nudgeMove(dx: number, dy: number): Promise<void> {
+    if (!this.moveMode || !this.serverBase) return;
+    const cur = this.serverBase.buildings.find(
+      (x) => x.id === this.moveMode!.building.id,
+    );
+    if (!cur) return;
+    const tx = cur.anchor.x + dx;
+    const ty = cur.anchor.y + dy;
+    if (!this.isMoveTargetValid(cur, tx, ty, this.layer)) {
+      this.flashToast('That tile is blocked.');
+      return;
+    }
+    await this.commitMove(tx, ty);
   }
 
   // Purely geometric — same rules the server enforces, lifted client-
@@ -1305,14 +1440,23 @@ export class HomeScene extends Phaser.Scene {
     if (!mode) return;
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
-    const b = mode.building;
-    if (!this.isMoveTargetValid(b, tx, ty, this.layer)) {
+    // Use the latest snapshot of the building (it may have moved since
+    // the modal opened). Falls back to the mode's starting snapshot
+    // only if it somehow vanished from the server state.
+    const currentSnap =
+      this.serverBase?.buildings.find((x) => x.id === mode.building.id) ??
+      mode.building;
+    if (!this.isMoveTargetValid(currentSnap, tx, ty, this.layer)) {
       this.flashToast('That tile is blocked.');
+      // Snap the (possibly just-dragged) sprite back to the building's
+      // persisted location so the player sees "nothing happened."
+      const spr = this.homeBuildingSprites.get(mode.building.id);
+      if (spr) this.snapSpriteToBuilding(spr, mode.building.id);
       return;
     }
     try {
       const r = await runtime.api.moveBuilding({
-        buildingId: b.id,
+        buildingId: mode.building.id,
         anchor: {
           x: tx,
           y: ty,
@@ -1320,15 +1464,27 @@ export class HomeScene extends Phaser.Scene {
           // layer ones follow the currently-viewed layer. The server
           // re-asserts this invariant so a tampered client can't
           // change a Queen Chamber's layer.
-          layer: b.spans && b.spans.length > 1 ? b.anchor.layer : this.layer,
+          layer:
+            currentSnap.spans && currentSnap.spans.length > 1
+              ? currentSnap.anchor.layer
+              : this.layer,
         },
       });
       this.serverBase = r.base;
       if (runtime.player) runtime.player.base = r.base;
-      this.exitMoveMode();
-      this.upsertBuildingSprite(r.building);
+      // Snap the sprite to the new position rather than recreating it
+      // (recreation would lose the draggable flag + event handlers
+      // registered in enterMoveMode). Repaint the overlay + arrows
+      // so they follow the building's new tile.
+      const spr = this.homeBuildingSprites.get(mode.building.id);
+      if (spr) this.snapSpriteToBuilding(spr, mode.building.id);
+      mode.paintOverlay();
+      mode.paintArrows();
     } catch (err) {
       this.flashToast((err as Error).message);
+      // Restore the sprite to the pre-drag position on any failure.
+      const spr = this.homeBuildingSprites.get(mode.building.id);
+      if (spr) this.snapSpriteToBuilding(spr, mode.building.id);
     }
   }
 

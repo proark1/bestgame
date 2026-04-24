@@ -2,9 +2,10 @@ import Phaser from 'phaser';
 import { Types, Sim } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { BuildingCatalog } from '../net/Api.js';
+import { BUILDING_CODEX } from '../codex/codexData.js';
 import { crispText } from './text.js';
 import { drawPanel, drawPill } from './panel.js';
-import { makeHiveButton } from './button.js';
+import { makeHiveButton, type HiveButton } from './button.js';
 import { openConfirm } from './confirmModal.js';
 import {
   COLOR,
@@ -23,14 +24,19 @@ import {
 // Purely Phaser — no DOM — so the modal layers cleanly on top of
 // the game board in the same scene. Closes on backdrop tap.
 
-const MODAL_W = 360;
-// Modal is tall enough to fit three stacked action buttons at the
-// bottom (Upgrade / Move / Demolish) plus the stats column above. If
-// the "at next level" preview gets longer, bump this, not the button
-// heights — the buttons' size matches the player's expectation from
-// the rest of the game.
-const MODAL_H = 540;
+const MODAL_W = 380;
+// Modal is tall enough to fit the description block on top of the
+// stats + four stacked action buttons (Upgrade / Move / Rotate /
+// Demolish) at the bottom. The card always renders the same height
+// regardless of whether the building is rotatable (Rotate is hidden
+// for non-walls but the reserved slot keeps the layout stable).
+const MODAL_H = 640;
 const MAX_BUILDING_LEVEL = 10;
+const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.BuildingKind>([
+  'LeafWall',
+  'PebbleBunker',
+  'ThornHedge',
+]);
 
 // Friendly human-readable labels for each building kind. Keeps the
 // codex's marketing-blurb names out of the modal — here we want a
@@ -148,22 +154,26 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
 
     const title = KIND_LABELS[b.kind] ?? b.kind;
     const level = b.level ?? 1;
+    const codex = BUILDING_CODEX[b.kind];
 
+    // ---- Header: name + role pill + level pill + close × -----------------
     bodyContainer.add(
-      crispText(scene, MODAL_W / 2, 20, title, displayTextStyle(20, COLOR.textGold, 4))
+      crispText(scene, MODAL_W / 2, 18, title, displayTextStyle(20, COLOR.textGold, 4))
         .setOrigin(0.5, 0),
     );
-
-    // Level pill
+    if (codex?.role) {
+      bodyContainer.add(
+        crispText(scene, MODAL_W / 2, 46, codex.role, labelTextStyle(11, COLOR.textDim))
+          .setOrigin(0.5, 0),
+      );
+    }
     const pill = scene.add.graphics();
-    drawPill(pill, MODAL_W / 2 - 50, 56, 100, 24, { brass: true });
+    drawPill(pill, MODAL_W / 2 - 50, 64, 100, 22, { brass: true });
     bodyContainer.add(pill);
     bodyContainer.add(
-      crispText(scene, MODAL_W / 2, 68, `Level ${level}`, labelTextStyle(11, '#2a1d08'))
+      crispText(scene, MODAL_W / 2, 75, `Level ${level}`, labelTextStyle(11, '#2a1d08'))
         .setOrigin(0.5, 0.5),
     );
-
-    // Close ×
     const closeX = crispText(scene, MODAL_W - 16, 14, '×',
       displayTextStyle(22, COLOR.textPrimary, 2))
       .setOrigin(1, 0)
@@ -171,10 +181,24 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     closeX.on('pointerdown', close);
     bodyContainer.add(closeX);
 
-    // Stats list.
+    // ---- Description block (from BUILDING_CODEX) -----------------------
+    let sy = 100;
+    if (codex) {
+      // Short lore + concrete "what this does in raids" lines stacked
+      // as two body paragraphs. Wraps to the modal width.
+      const storyText = crispText(scene, 22, sy, codex.story, bodyTextStyle(11, COLOR.textPrimary))
+        .setWordWrapWidth(MODAL_W - 44, true);
+      bodyContainer.add(storyText);
+      sy += storyText.height + 6;
+      const powerText = crispText(scene, 22, sy, codex.power, bodyTextStyle(11, COLOR.textDim))
+        .setWordWrapWidth(MODAL_W - 44, true);
+      bodyContainer.add(powerText);
+      sy += powerText.height + 10;
+    }
+
+    // ---- Stats list ----------------------------------------------------
     const stats = Sim.BUILDING_STATS[b.kind];
     const mult = statMultiplier(level);
-    let sy = 100;
     const addStat = (label: string, value: string): void => {
       bodyContainer.add(
         crispText(scene, 22, sy, label, labelTextStyle(11, COLOR.textMuted)),
@@ -183,9 +207,8 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         crispText(scene, MODAL_W - 22, sy, value, bodyTextStyle(13, COLOR.textPrimary))
           .setOrigin(1, 0),
       );
-      sy += 22;
+      sy += 20;
     };
-
     if (stats) {
       const hpMax = b.hpMax ?? Math.round(stats.hpMax * mult);
       const hp = b.hp ?? hpMax;
@@ -207,49 +230,27 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     const incomeMap = catalog?.incomePerSecond ?? INCOME_FALLBACK;
     const income = incomeMap[b.kind];
     if (income) {
-      const mult = Math.max(1, level);
-      if (income.sugar > 0) addStat('Sugar / sec', `+${income.sugar * mult}`);
-      if (income.leafBits > 0) addStat('Leaf / sec', `+${income.leafBits * mult}`);
+      const levelMult = Math.max(1, level);
+      if (income.sugar > 0) addStat('Sugar / sec', `+${income.sugar * levelMult}`);
+      if (income.leafBits > 0) addStat('Leaf / sec', `+${income.leafBits * levelMult}`);
     }
 
-    // "At next level" preview — nudges the upgrade button.
-    if (b.kind !== 'QueenChamber' && level < MAX_BUILDING_LEVEL) {
-      sy += 8;
-      bodyContainer.add(
-        crispText(scene, 22, sy, 'At next level',
-          labelTextStyle(11, COLOR.textGold)),
-      );
-      sy += 20;
-      const nextMult = statMultiplier(level + 1);
-      const pctGain = Math.round((nextMult / mult - 1) * 100);
-      bodyContainer.add(
-        crispText(scene, 22, sy,
-          `+${pctGain}% HP and damage; production scales +1 slot.`,
-          bodyTextStyle(11, COLOR.textDim),
-        ).setWordWrapWidth(MODAL_W - 44, true),
-      );
-      sy += 26;
-    }
-
-    // Actions. Queen Chamber routes to the dedicated queen-upgrade
-    // endpoint; every other kind gets a symmetric 3-button stack:
-    // Upgrade (green) / Move (ghost) / Demolish (red). Same width +
-    // height across the three so the player reads them as equally
-    // reachable alternatives — matches the Clash-style "primary
-    // action stack" the rest of the UI uses.
+    // ---- Actions -------------------------------------------------------
     const isQueen = b.kind === 'QueenChamber';
     const atMax = level >= MAX_BUILDING_LEVEL;
+    const canRotate = !isQueen && ROTATABLE_KINDS.has(b.kind);
     const actionBtnW = MODAL_W - 44;
-    const actionBtnH = 44;
-    const actionGap = 8;
-    const actionsBottomY = MODAL_H - 24;
-    const actionsStartY = isQueen
-      ? actionsBottomY - actionBtnH / 2
-      : actionsBottomY - actionBtnH * 3 - actionGap * 2 + actionBtnH / 2;
+    const actionBtnH = 42;
+    const actionGap = 7;
+    // How many action buttons we actually paint in this render.
+    const actionSlots = isQueen ? 1 : (canRotate ? 4 : 3);
+    const actionsBottomY = MODAL_H - 20;
+    const actionsStartY =
+      actionsBottomY - actionBtnH * actionSlots - actionGap * (actionSlots - 1) + actionBtnH / 2;
 
     if (isQueen) {
       bodyContainer.add(
-        crispText(scene, 22, actionsStartY - actionBtnH / 2 - 28,
+        crispText(scene, 22, actionsStartY - actionBtnH / 2 - 26,
           'Queen upgrades unlock new building slots and tiers.',
           bodyTextStyle(11, COLOR.textDim),
         ).setWordWrapWidth(MODAL_W - 44, true),
@@ -268,100 +269,144 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         },
       });
       bodyContainer.add(btn.container);
-    } else {
-      // Cost line sits just above the action stack so the Upgrade
-      // button label stays short ("Upgrade") and visually matches
-      // the Demolish button rather than being twice as wide.
-      const costLineY = actionsStartY - actionBtnH / 2 - 18;
-      if (!atMax) {
-        const cost = estimateCost(b, catalog);
-        bodyContainer.add(
-          crispText(
-            scene,
-            MODAL_W / 2,
-            costLineY,
-            `Next level: ${cost.sugar} sugar · ${cost.leafBits} leaf`,
-            bodyTextStyle(12, COLOR.textDim),
-          ).setOrigin(0.5, 0.5),
-        );
-      } else {
-        bodyContainer.add(
-          crispText(
-            scene,
-            MODAL_W / 2,
-            costLineY,
-            'This building is at max level.',
-            bodyTextStyle(12, COLOR.textDim),
-          ).setOrigin(0.5, 0.5),
-        );
-      }
+      return;
+    }
 
-      // Upgrade — same shape as Demolish, green instead of red.
-      const upgradeBtn = makeHiveButton(scene, {
+    // Cost + affordability. We check the cached player resource totals
+    // that HomeScene keeps in sync — when the player hasn't got enough
+    // sugar/leaf for the next upgrade, we dim the Upgrade button and
+    // replace the cost line with a concrete "Need X more sugar" hint.
+    const cost = atMax ? null : estimateCost(b, catalog);
+    const wallet = runtime.player?.player ?? null;
+    const haveSugar = wallet?.sugar ?? 0;
+    const haveLeaf = wallet?.leafBits ?? 0;
+    const affordable = !!cost && haveSugar >= cost.sugar && haveLeaf >= cost.leafBits;
+    const missingSugar = cost ? Math.max(0, cost.sugar - haveSugar) : 0;
+    const missingLeaf = cost ? Math.max(0, cost.leafBits - haveLeaf) : 0;
+
+    const costLineY = actionsStartY - actionBtnH / 2 - 16;
+    if (atMax) {
+      bodyContainer.add(
+        crispText(scene, MODAL_W / 2, costLineY,
+          'This building is at max level.',
+          bodyTextStyle(12, COLOR.textDim),
+        ).setOrigin(0.5, 0.5),
+      );
+    } else if (affordable) {
+      bodyContainer.add(
+        crispText(scene, MODAL_W / 2, costLineY,
+          `Next level: ${cost!.sugar} sugar · ${cost!.leafBits} leaf`,
+          bodyTextStyle(12, COLOR.textDim),
+        ).setOrigin(0.5, 0.5),
+      );
+    } else {
+      const needs: string[] = [];
+      if (missingSugar > 0) needs.push(`${missingSugar} more sugar`);
+      if (missingLeaf > 0) needs.push(`${missingLeaf} more leaf`);
+      bodyContainer.add(
+        crispText(scene, MODAL_W / 2, costLineY,
+          `Need ${needs.join(' + ')}`,
+          bodyTextStyle(12, '#ff9a80'),
+        ).setOrigin(0.5, 0.5),
+      );
+    }
+
+    // Upgrade — green. Disabled + ghost when the player can't afford
+    // so the button itself signals "not yet".
+    const upgradeEnabled = !atMax && affordable;
+    let slotIdx = 0;
+    const slotY = (): number =>
+      actionsStartY + (actionBtnH + actionGap) * slotIdx++;
+
+    const upgradeLabel = atMax
+      ? 'Max level'
+      : affordable
+        ? 'Upgrade'
+        : 'Upgrade (need more)';
+    const upgradeBtn: HiveButton = makeHiveButton(scene, {
+      x: MODAL_W / 2,
+      y: slotY(),
+      width: actionBtnW,
+      height: actionBtnH,
+      label: upgradeLabel,
+      variant: upgradeEnabled ? 'secondary' : 'ghost',
+      fontSize: 14,
+      enabled: upgradeEnabled,
+      onPress: () => {
+        if (!upgradeEnabled) return;
+        void doUpgrade(scene, runtime, b, (base) => {
+          const fresh = base.buildings.find((x) => x.id === b.id);
+          if (fresh) renderBody(fresh);
+          opts.onUpdated(base);
+        });
+      },
+    });
+    bodyContainer.add(upgradeBtn.container);
+
+    // Move.
+    const moveBtn = makeHiveButton(scene, {
+      x: MODAL_W / 2,
+      y: slotY(),
+      width: actionBtnW,
+      height: actionBtnH,
+      label: 'Move',
+      variant: 'ghost',
+      fontSize: 14,
+      onPress: () => {
+        close();
+        opts.onMoveRequest?.(b);
+      },
+    });
+    bodyContainer.add(moveBtn.container);
+
+    // Rotate — only for walls + bunker + thorn hedge. Keeps the slot
+    // reserved so the Demolish button ends up in the same screen slot
+    // across kinds (matters for muscle memory).
+    if (canRotate) {
+      const rotateBtn = makeHiveButton(scene, {
         x: MODAL_W / 2,
-        y: actionsStartY,
+        y: slotY(),
         width: actionBtnW,
         height: actionBtnH,
-        label: atMax ? 'Max level' : 'Upgrade',
-        variant: atMax ? 'ghost' : 'secondary',
+        label: 'Rotate',
+        variant: 'ghost',
         fontSize: 14,
         onPress: () => {
-          if (atMax) return;
-          void doUpgrade(scene, runtime, b, (base) => {
+          void doRotate(scene, runtime, b, (base) => {
             const fresh = base.buildings.find((x) => x.id === b.id);
             if (fresh) renderBody(fresh);
             opts.onUpdated(base);
           });
         },
       });
-      bodyContainer.add(upgradeBtn.container);
-
-      // Move — closes the modal and hands control back to the caller
-      // so it can enter placement-preview mode on the board. The
-      // scene is responsible for actually calling /building/:id/move;
-      // the modal only delivers the "user wants to move this" intent.
-      const moveBtn = makeHiveButton(scene, {
-        x: MODAL_W / 2,
-        y: actionsStartY + actionBtnH + actionGap,
-        width: actionBtnW,
-        height: actionBtnH,
-        label: 'Move',
-        variant: 'ghost',
-        fontSize: 14,
-        onPress: () => {
-          close();
-          opts.onMoveRequest?.(b);
-        },
-      });
-      bodyContainer.add(moveBtn.container);
-
-      // Demolish — red, confirm-gated. Same size as Upgrade / Move
-      // above so all three read as siblings of equal weight.
-      const demBtn = makeHiveButton(scene, {
-        x: MODAL_W / 2,
-        y: actionsStartY + (actionBtnH + actionGap) * 2,
-        width: actionBtnW,
-        height: actionBtnH,
-        label: 'Demolish',
-        variant: 'danger',
-        fontSize: 14,
-        onPress: () => {
-          void openConfirm({
-            title: 'Demolish this building?',
-            body: 'You will not get the resources back. This action cannot be undone.',
-            confirmLabel: 'Demolish',
-            danger: true,
-          }).then((confirmed) => {
-            if (!confirmed) return;
-            void doDemolish(scene, runtime, b, (base) => {
-              close();
-              opts.onDemolish?.(base);
-            });
-          });
-        },
-      });
-      bodyContainer.add(demBtn.container);
+      bodyContainer.add(rotateBtn.container);
     }
+
+    // Demolish.
+    const demBtn = makeHiveButton(scene, {
+      x: MODAL_W / 2,
+      y: slotY(),
+      width: actionBtnW,
+      height: actionBtnH,
+      label: 'Demolish',
+      variant: 'danger',
+      fontSize: 14,
+      onPress: () => {
+        void openConfirm({
+          title: 'Demolish this building?',
+          body: 'You will not get the resources back. This action cannot be undone.',
+          confirmLabel: 'Demolish',
+          danger: true,
+        }).then((confirmed) => {
+          if (!confirmed) return;
+          void doDemolish(scene, runtime, b, (base) => {
+            close();
+            opts.onDemolish?.(base);
+          });
+        });
+      },
+    });
+    bodyContainer.add(demBtn.container);
   };
 
   renderBody(building);
@@ -448,6 +493,21 @@ async function doQueenUpgrade(
     }
     close();
     onUpdated(r.base);
+  } catch (err) {
+    flashToast(scene, (err as Error).message);
+  }
+}
+
+async function doRotate(
+  scene: Phaser.Scene,
+  runtime: HiveRuntime,
+  b: Types.Building,
+  onDone: (base: Types.Base) => void,
+): Promise<void> {
+  try {
+    const r = await runtime.api.rotateBuilding({ buildingId: b.id });
+    if (runtime.player) runtime.player.base = r.base;
+    onDone(r.base);
   } catch (err) {
     flashToast(scene, (err as Error).message);
   }
