@@ -888,6 +888,100 @@ export function registerPlayer(app: FastifyInstance): void {
     },
   );
 
+  // POST /api/player/building/:id/rotate — spin a building in 90-degree
+  // steps. Purely cosmetic: rotation is stored on the building and
+  // used by the client renderer to tilt the sprite. The sim ignores
+  // it (collision boxes stay axis-aligned, which matches the
+  // "walls are a grid" feel of the genre).
+  //
+  // Request body is optional. Without a body we just cycle +90°;
+  // with `{ rotation: 0|1|2|3 }` we set an explicit orientation —
+  // useful for an admin UI that paints arrow buttons around the
+  // sprite and wants deterministic values.
+  interface RotateBuildingBody { rotation?: 0 | 1 | 2 | 3 }
+  app.post<{ Params: { id: string }; Body: RotateBuildingBody | null }>(
+    '/player/building/:id/rotate',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body ?? {};
+      const explicit = body.rotation;
+      if (
+        explicit !== undefined &&
+        explicit !== 0 && explicit !== 1 && explicit !== 2 && explicit !== 3
+      ) {
+        reply.code(400);
+        return { error: 'rotation must be 0, 1, 2 or 3' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === req.params.id);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        // Queen chamber stays axis-aligned — its combined surface +
+        // underground silhouette doesn't read well rotated.
+        if (target.kind === 'QueenChamber') {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'the Queen Chamber cannot be rotated' };
+        }
+        const current: 0 | 1 | 2 | 3 = (target.rotation ?? 0) as 0 | 1 | 2 | 3;
+        const next: 0 | 1 | 2 | 3 =
+          explicit !== undefined
+            ? explicit
+            : (((current + 1) % 4) as 0 | 1 | 2 | 3);
+        const updated: Types.Base = {
+          ...base,
+          buildings: base.buildings.map((b) =>
+            b.id === target.id ? { ...b, rotation: next } : b,
+          ),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          base: updated,
+          building: updated.buildings.find((b) => b.id === target.id),
+          rotation: next,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'player/building rotate failed');
+        reply.code(500);
+        return { error: 'rotate failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
   // PUT /api/player/building/:id/ai — replace the full rule list on a
   // single building. Keeping it as a REPLACE (not append) makes the
   // client editor trivial: build the new list locally, send it, done.
