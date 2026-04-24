@@ -245,7 +245,17 @@ function render(): void {
     return;
   }
   if (activeTab === 'preview') {
-    root.append(renderPreviewPanel());
+    // Pass the admin's cached state in so the Preview tab doesn't
+    // re-fetch prompts / UI-override settings on every tab switch.
+    // getCompression is a getter rather than a snapshot so the admin
+    // can tweak the format/quality/maxDim sliders up top and the
+    // very next Regenerate inside Preview picks up the new values.
+    root.append(
+      renderPreviewPanel({
+        initialPrompts: state.prompts,
+        getCompression: () => ({ ...state.compression }),
+      }),
+    );
     return;
   }
 

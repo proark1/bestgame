@@ -143,38 +143,82 @@ type Prompts = Awaited<ReturnType<typeof fetchPrompts>>;
 interface PreviewContext {
   prompts: Prompts | null;
   overrides: Record<string, boolean>;
+  getCompression: () => CompressOptions;
   root: HTMLElement;
   activeScene: string;
+}
+
+// Output-format preferences for the regenerate flow. Mirrors the
+// shape exposed by main.ts::state.compression so callers can pass
+// their existing cache directly.
+export interface CompressOptions {
+  format: 'webp' | 'png';
+  quality: number;
+  maxDim: number;
 }
 
 const STYLE_ID = 'hive-admin-preview';
 const PREVIEW_TAB_STORAGE_KEY = 'hive.adminPreviewScene';
 
-export function renderPreviewPanel(): HTMLElement {
+// Module-scope cache for prompts + overrides so flipping back to
+// the Preview tab doesn't trigger a fresh network round-trip every
+// time. The caller (main admin) owns the prompt cache already —
+// renderPreviewPanel accepts it as `initialPrompts` so we skip the
+// /admin/api/prompts fetch entirely when the caller has it. For
+// overrides the admin didn't maintain a shared cache yet, so we
+// memoize the first fetch here. Both fall through to a fetch if
+// nothing was passed and the cache is empty.
+let cachedOverrides: Record<string, boolean> | null = null;
+
+export interface RenderPreviewOptions {
+  initialPrompts?: Prompts | null;
+  initialOverrides?: Record<string, boolean> | null;
+  getCompression?: () => CompressOptions;
+}
+
+export function renderPreviewPanel(
+  opts: RenderPreviewOptions = {},
+): HTMLElement {
   ensureStyle();
   const wrap = document.createElement('section');
   wrap.className = 'preview-panel';
   const ctx: PreviewContext = {
-    prompts: null,
-    overrides: {},
+    prompts: opts.initialPrompts ?? null,
+    overrides: opts.initialOverrides ?? cachedOverrides ?? {},
+    getCompression:
+      opts.getCompression ??
+      ((): CompressOptions => ({ format: 'webp', quality: 0.88, maxDim: 512 })),
     root: wrap,
     activeScene:
       localStorage.getItem(PREVIEW_TAB_STORAGE_KEY) ?? PREVIEW_SCENES[0]!.id,
   };
+  if (opts.initialOverrides) cachedOverrides = opts.initialOverrides;
 
-  void hydrate(ctx);
+  // Paint immediately with whatever cached data we already have so
+  // there's no blank frame on tab switches; hydrate() only fetches
+  // the pieces we still need (prompts and/or overrides) and swaps
+  // them in when they arrive.
+  const havePrompts = ctx.prompts !== null;
+  const haveOverrides = opts.initialOverrides != null || cachedOverrides != null;
+  if (havePrompts || haveOverrides) renderAll(ctx);
+  if (!havePrompts || !haveOverrides) void hydrate(ctx, { havePrompts, haveOverrides });
 
   return wrap;
 }
 
-async function hydrate(ctx: PreviewContext): Promise<void> {
+async function hydrate(
+  ctx: PreviewContext,
+  already: { havePrompts: boolean; haveOverrides: boolean },
+): Promise<void> {
   try {
-    const [prompts, overrides] = await Promise.all([
-      fetchPrompts(),
-      fetchUiOverrideSettings(),
-    ]);
-    ctx.prompts = prompts;
-    ctx.overrides = { ...overrides.values };
+    const promptsP = already.havePrompts ? null : fetchPrompts();
+    const overridesP = already.haveOverrides ? null : fetchUiOverrideSettings();
+    const [prompts, overrides] = await Promise.all([promptsP, overridesP]);
+    if (prompts) ctx.prompts = prompts;
+    if (overrides) {
+      ctx.overrides = { ...overrides.values };
+      cachedOverrides = ctx.overrides;
+    }
   } catch (err) {
     renderMessage(ctx.root, `Failed to load preview data: ${(err as Error).message}`);
     return;
@@ -414,16 +458,27 @@ function openRegenerateDialog(
   genBtn.className = 'btn primary';
   genBtn.textContent = 'Generate';
   genBtn.addEventListener('click', () => {
+    const compression = ctx.getCompression();
     void runGeneration({
       prompt: [styleLock, promptBox.value].filter(Boolean).join('\n\n'),
       statusEl: status,
       resultsEl: resultsWrap,
       key,
       thumb,
+      compression,
       onSaved: () => {
-        // Update the sprite URL on the row's thumb so the admin sees
-        // the new image land immediately without a reload.
-        thumb.src = spriteUrl(key, 'webp') + `?v=${Date.now()}`;
+        // Update every thumbnail that renders this key — the row's
+        // img, the mockup strip at the top of the stage, and any
+        // other matching <img alt="key"> inside the Preview panel —
+        // so the admin sees the new image land everywhere instantly
+        // without a reload. Reset `pngTried` so the error listener
+        // can fall back correctly if the new asset 404s.
+        const newUrl = spriteUrl(key, compression.format) + `?v=${Date.now()}`;
+        ctx.root.querySelectorAll(`img[alt="${key}"]`).forEach((el) => {
+          const imgEl = el as HTMLImageElement;
+          imgEl.dataset.pngTried = '';
+          imgEl.src = newUrl;
+        });
       },
     }).catch((err: Error) => {
       status.textContent = `Generate failed: ${err.message}`;
@@ -441,12 +496,14 @@ async function runGeneration(args: {
   resultsEl: HTMLElement;
   key: string;
   thumb: HTMLImageElement;
+  compression: CompressOptions;
   onSaved: () => void;
 }): Promise<void> {
   args.statusEl.textContent = 'Generating…';
   args.resultsEl.innerHTML = '';
   const images = await generateImages({ prompt: args.prompt, variants: 3 });
   args.statusEl.textContent = `Generated ${images.length}. Click one to save.`;
+  const { format, quality, maxDim } = args.compression;
   for (const img of images) {
     const el = document.createElement('img');
     el.src = `data:${img.mimeType};base64,${img.data}`;
@@ -455,11 +512,11 @@ async function runGeneration(args: {
     el.addEventListener('click', async () => {
       args.statusEl.textContent = 'Compressing + saving…';
       const compressed = await compressBase64Image(img.data, img.mimeType, {
-        format: 'webp',
-        quality: 0.88,
-        maxDimension: 512,
+        format,
+        quality,
+        maxDimension: maxDim,
       });
-      await saveSprite({ key: args.key, data: compressed.base64, format: 'webp' });
+      await saveSprite({ key: args.key, data: compressed.base64, format });
       args.statusEl.textContent = 'Saved.';
       args.onSaved();
     });
