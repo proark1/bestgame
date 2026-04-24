@@ -5,7 +5,7 @@ import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { crispText } from '../ui/text.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
+import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
 import { addNineSliceIfActive } from '../ui/uiOverrides.js';
 import { ALL_CODEX_ENTRIES, type CodexEntry } from '../codex/codexData.js';
 
@@ -95,7 +95,7 @@ export class CodexScene extends Phaser.Scene {
 
   private drawAmbient(): void {
     // Gradient backdrop so the card sits in a pool of light.
-    const g = this.add.graphics().setDepth(-100);
+    const g = this.add.graphics().setDepth(DEPTHS.background);
     const top = 0x1c3020;
     const bot = 0x070d08;
     const BANDS = 14;
@@ -112,7 +112,7 @@ export class CodexScene extends Phaser.Scene {
         Math.ceil(this.scale.height / BANDS) + 1,
       );
     }
-    const glow = this.add.graphics().setDepth(-99);
+    const glow = this.add.graphics().setDepth(DEPTHS.ambient);
     glow.fillStyle(COLOR.brass, 0.05);
     glow.fillEllipse(this.scale.width / 2, HUD_H + 140, Math.min(880, this.scale.width * 0.92), 240);
     glow.fillStyle(COLOR.greenHi, 0.06);

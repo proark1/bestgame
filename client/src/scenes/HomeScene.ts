@@ -9,7 +9,7 @@ import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { isUiOverrideActive } from '../ui/uiOverrides.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
+import { BREAKPOINTS, COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle, SPACING } from '../ui/theme.js';
 
 // HomeScene — the player's own colony. Shows a dual-layer backyard
 // with the Queen Chamber plus a scatter of starter buildings. Player
@@ -207,7 +207,7 @@ export class HomeScene extends Phaser.Scene {
   // flat rectangles floating over dead ground. Cheap: 22 stacked bands
   // + a single radial fog ellipse.
   private drawAmbient(): void {
-    const g = this.add.graphics().setDepth(-100);
+    const g = this.add.graphics().setDepth(DEPTHS.background);
     const top = 0x203224;
     const bot = 0x070d08;
     const BANDS = 22;
@@ -227,7 +227,7 @@ export class HomeScene extends Phaser.Scene {
     // Subtle warm glow behind the board area so the play field sits in
     // a "pool of light" — reads as intentional rather than a slab of
     // the same dark green as the chrome.
-    const glow = this.add.graphics().setDepth(-99);
+    const glow = this.add.graphics().setDepth(DEPTHS.ambient);
     glow.fillStyle(COLOR.brass, 0.05);
     glow.fillEllipse(
       this.scale.width / 2,
@@ -252,7 +252,7 @@ export class HomeScene extends Phaser.Scene {
           i % 4 === 0 ? COLOR.brass : COLOR.greenHi,
           0.12,
         )
-        .setDepth(-98);
+        .setDepth(DEPTHS.ambientParticles);
       this.tweens.add({
         targets: mote,
         y: mote.y - (16 + (i % 5) * 5),
@@ -311,8 +311,20 @@ export class HomeScene extends Phaser.Scene {
     // small viewports (e.g. iPhone 375 — "HIVE WAR" visibly clipped
     // INTO the first pill in the user's screenshot). These tiers keep
     // everything visible at any viewport.
-    const tier: 'wide' | 'narrow' | 'phone' =
-      w >= 760 ? 'wide' : w >= 500 ? 'narrow' : 'phone';
+    // On mobile layouts (portrait phone or short-height landscape)
+    // the burger drawer owns nav and sits at the top-left where the
+    // title would normally render. Forcing the HUD tier to 'phone'
+    // in those cases keeps the title + chip hidden so the burger
+    // doesn't overlap them. A landscape phone at 812×375 would
+    // otherwise pick the 'wide' tier and draw the title underneath
+    // the burger button.
+    const tier: 'wide' | 'narrow' | 'phone' = this.isMobileLayout()
+      ? 'phone'
+      : w >= BREAKPOINTS.desktop
+        ? 'wide'
+        : w >= BREAKPOINTS.phone
+          ? 'narrow'
+          : 'phone';
     const cy = HUD_H / 2;
 
     // Title — hidden on phone so nothing collides with pills.
@@ -387,7 +399,7 @@ export class HomeScene extends Phaser.Scene {
       // they sat UNDER both in the child array and were covered on
       // HUD repaint — that read as "the pills have no numbers". Bump
       // the text's depth so it always draws over the pill chrome.
-      b.text.setDepth(1);
+      b.text.setDepth(DEPTHS.hudChrome);
       void pill;
       void icon;
       x = pillX - PILL_GAP;
@@ -414,10 +426,24 @@ export class HomeScene extends Phaser.Scene {
   // into a burger drawer and lets the board scroll in all directions
   // (pan-the-map). Desktop / tablet keeps the full footer + scale-
   // to-fit board so the whole base is visible at once.
-  private static readonly MOBILE_MAX_WIDTH = 700;
+  //
+  // Short-viewport landscape phones (e.g. iPhone SE rotated: 812×375)
+  // pass the width test but have too little height for a 2-row
+  // footer + HUD + a usable board. LANDSCAPE_PHONE_MAX_HEIGHT folds
+  // those back into the mobile layout so they also get the burger +
+  // floating Raid CTA.
+  private static readonly MOBILE_MAX_WIDTH = BREAKPOINTS.tablet;
+  private static readonly LANDSCAPE_PHONE_MAX_HEIGHT = 480;
 
   private isMobileLayout(): boolean {
-    return this.scale.width < HomeScene.MOBILE_MAX_WIDTH;
+    if (this.scale.width < HomeScene.MOBILE_MAX_WIDTH) return true;
+    // Landscape phones: short + wider-than-tall. The aspect guard
+    // avoids triggering on genuinely short desktop windows that a
+    // user might legitimately resize for dev tools.
+    return (
+      this.scale.height < HomeScene.LANDSCAPE_PHONE_MAX_HEIGHT &&
+      this.scale.width > this.scale.height
+    );
   }
 
   private burgerDrawer: Phaser.GameObjects.Container | null = null;
@@ -474,7 +500,7 @@ export class HomeScene extends Phaser.Scene {
     if (this.burgerDrawer) return;
     const W = this.burgerDrawerWidth();
     const H = this.scale.height;
-    const container = this.add.container(0, 0).setDepth(220);
+    const container = this.add.container(0, 0).setDepth(DEPTHS.drawer);
 
     // Full-screen dim backdrop. Tapping outside the panel closes.
     const backdrop = this.add
@@ -1117,7 +1143,7 @@ export class HomeScene extends Phaser.Scene {
     this.footerButtons = buttons.map((b) =>
       this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
-    this.footerChrome = this.add.graphics().setDepth(1);
+    this.footerChrome = this.add.graphics().setDepth(DEPTHS.hudChrome);
     this.layoutFooter();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.
@@ -1134,7 +1160,7 @@ export class HomeScene extends Phaser.Scene {
     if (!def) return '';
     // 700 is the breakpoint: below it labels shorten so they never
     // truncate inside the button; above it full marketing copy.
-    return this.scale.width < 700 ? def.short() : def.full();
+    return this.scale.width < BREAKPOINTS.tablet ? def.short() : def.full();
   }
 
   private footerButtonDefs: Array<{
@@ -1172,7 +1198,7 @@ export class HomeScene extends Phaser.Scene {
       fontSize: 16,
       onPress: () => fadeToScene(this, 'RaidScene'),
     });
-    btn.container.setDepth(8);
+    btn.container.setDepth(DEPTHS.hud);
     this.tweens.add({
       targets: btn.container,
       scale: { from: 1, to: 1.03 },
@@ -1951,7 +1977,7 @@ export class HomeScene extends Phaser.Scene {
     const baseY = this.scale.height - (this.isMobileLayout() ? 92 : 56);
     const container = this.add
       .container(this.scale.width / 2, baseY)
-      .setDepth(500)
+      .setDepth(DEPTHS.toast)
       .setAlpha(0)
       .setScale(0.97);
     const bg = this.add.graphics();

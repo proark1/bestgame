@@ -8,7 +8,7 @@ import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 // ClanScene — three views:
 //   1. My clan (when the player is in one)        — members + chat
@@ -53,7 +53,7 @@ export class ClanScene extends Phaser.Scene {
   }
 
   private drawAmbient(): void {
-    const g = this.add.graphics().setDepth(-100);
+    const g = this.add.graphics().setDepth(DEPTHS.background);
     const top = 0x203224;
     const bot = 0x070d08;
     const bands = 18;
@@ -70,7 +70,7 @@ export class ClanScene extends Phaser.Scene {
         Math.ceil(this.scale.height / bands) + 1,
       );
     }
-    const glow = this.add.graphics().setDepth(-99);
+    const glow = this.add.graphics().setDepth(DEPTHS.ambient);
     glow.fillStyle(COLOR.brass, 0.05);
     glow.fillEllipse(this.scale.width / 2, HUD_H + 150, Math.min(860, this.scale.width * 0.9), 220);
   }
