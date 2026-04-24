@@ -184,7 +184,7 @@ export class ClanScene extends Phaser.Scene {
     this.layerContainer.add(card);
     this.layerContainer.add(pill);
     this.layerContainer.add(
-      crispText(this, x + 56, y + 24, 'Status', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, x + 56, y + 24, 'Status', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
     this.layerContainer.add(
       crispText(this, this.scale.width / 2, y + 48, msg, bodyTextStyle(14, COLOR.textPrimary)).setOrigin(0.5, 0.5),
@@ -280,7 +280,7 @@ export class ClanScene extends Phaser.Scene {
         listX + 65,
         listY + 20,
         `Members ${this.my.members?.length ?? 0}`,
-        labelTextStyle(10, '#2a1d08'),
+        labelTextStyle(10, COLOR.textGold),
       ).setOrigin(0.5, 0.5),
     );
     (this.my.members ?? []).forEach((m, i) => {
@@ -345,7 +345,7 @@ export class ClanScene extends Phaser.Scene {
     drawPill(chatPill, chatX + 10, chatY + 10, 86, 20, { brass: true });
     this.layerContainer.add(chatPill);
     this.layerContainer.add(
-      crispText(this, chatX + 53, chatY + 20, 'Clan chat', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, chatX + 53, chatY + 20, 'Clan chat', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
 
     this.renderMessages(chatX, chatY, chatW, chatH);

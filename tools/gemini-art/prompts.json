@@ -39,7 +39,7 @@
     "QueenChamber": "a majestic glowing queen chamber on layered dirt mound, lit from within, throne-like silhouette",
     "DewCollector": "a shimmering dew drop suspended in a twig cradle, rain-catcher",
     "MushroomTurret": "a red-capped mushroom turret with a small cannon in the stem, white dots",
-    "LeafWall": "a tall overlapping leaf wall woven with spider silk, organic ridge",
+    "LeafWall": "a HORIZONTAL section of overlapping leaf-wall, long axis running left-to-right across the tile like a fence panel, tightly woven chlorophyll armor with spider-silk seams, clearly oriented so rotating the asset 90 degrees produces a different-looking vertical panel",
     "PebbleBunker": "a fortress of stacked river pebbles, moss in the cracks",
     "LarvaNursery": "a cozy domed nursery with glowing larva pods visible through oval windows",
     "SugarVault": "a wooden vault door with a giant sugar-cube lock, sprinkles around it",
@@ -50,7 +50,7 @@
     "RootSnare": "a one-shot root trap made from thorny vines and buried hooks, tense coiled silhouette",
     "HiddenStinger": "a stealthy tesla-like stinger turret disguised among leaves, hidden needle cannon, ambush posture",
     "SpiderNest": "a sinister underground spider nest with silk-wrapped eggs and tunnel openings, defender-spawner silhouette",
-    "ThornHedge": "a dense reinforced thorn hedge wall, layered brambles with sharp spikes, defensive organic barrier"
+    "ThornHedge": "a HORIZONTAL section of reinforced thorn hedge, long axis running left-to-right across the tile, dense brambles with sharp outward-pointing spikes along the top and bottom edges, clearly oriented so rotating the asset 90 degrees produces a different-looking vertical hedge"
   },
   "menuUi": {
     "ui-button-primary-bg": "a Clash-of-Clans style game button background, rich brass gold gradient top-to-bottom, thick carved wooden border in warm dark brown (#3a2512), soft painted highlight along the top edge (purely lighting, NOT a 3D tilt), subtle inner glow. Flat 2D asset rendered head-on, viewed straight from the front with zero perspective, zero isometric tilt, zero foreshortening — the rectangle reads as a perfectly axis-aligned rectangle. Painterly but crisp, 256x128 pixels transparent PNG, designed for 9-slice scaling (safe center region for stretching, corners hold the ornamentation). No text, no icons, no logos — just the button surface.",

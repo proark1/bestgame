@@ -254,7 +254,7 @@ export class LeaderboardScene extends Phaser.Scene {
     drawPill(pill, originX + 16, y + 14, 96, 20, { brass: true });
     this.rowContainer.add(pill);
     this.rowContainer.add(
-      crispText(this, originX + 64, y + 24, 'Season rank', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, originX + 64, y + 24, 'Season rank', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
 
     this.rowContainer.add(
@@ -309,7 +309,7 @@ export class LeaderboardScene extends Phaser.Scene {
         y + 26,
         `#${r.rank}`,
         r.rank <= 3 || isMe
-          ? labelTextStyle(11, '#2a1d08')
+          ? labelTextStyle(11, COLOR.textGold)
           : labelTextStyle(11, COLOR.textPrimary),
       ).setOrigin(0.5, 0.5),
     );

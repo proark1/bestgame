@@ -133,7 +133,7 @@ export class BuilderQueueScene extends Phaser.Scene {
           this.queueData.freeSkipAvailable
             ? 'Free daily skip ready'
             : 'Free skip used today',
-          labelTextStyle(11, this.queueData.freeSkipAvailable ? '#2a1d08' : COLOR.textMuted),
+          labelTextStyle(11, this.queueData.freeSkipAvailable ? COLOR.textGold : COLOR.textMuted),
         ).setOrigin(0.5, 0.5),
       );
       this.body.container.add(

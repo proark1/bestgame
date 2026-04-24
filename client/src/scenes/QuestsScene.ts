@@ -215,7 +215,7 @@ export class QuestsScene extends Phaser.Scene {
     drawPill(badge, originX + 16, y + 14, 102, 20, { brass: true });
     this.rowContainer.add(badge);
     this.rowContainer.add(
-      crispText(this, originX + 67, y + 24, 'Live track', labelTextStyle(10, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, originX + 67, y + 24, 'Live track', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
 
     this.rowContainer.add(
@@ -245,7 +245,7 @@ export class QuestsScene extends Phaser.Scene {
     drawPill(pill, originX, y, 154, 24, { brass: true });
     this.rowContainer.add(pill);
     this.rowContainer.add(
-      crispText(this, originX + 77, y + 12, label, labelTextStyle(11, '#2a1d08')).setOrigin(0.5, 0.5),
+      crispText(this, originX + 77, y + 12, label, labelTextStyle(11, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
     this.rowContainer.add(
       crispText(this, originX + 166, y + 3, sublabel, bodyTextStyle(12, COLOR.textDim)).setOrigin(0, 0),
@@ -364,7 +364,7 @@ export class QuestsScene extends Phaser.Scene {
         y + 22,
         q.claimed ? 'Claimed' : complete ? 'Ready' : 'Active',
         q.claimed || complete
-          ? labelTextStyle(10, '#2a1d08')
+          ? labelTextStyle(10, COLOR.textGold)
           : labelTextStyle(10, COLOR.textPrimary),
       ).setOrigin(0.5, 0.5),
     );

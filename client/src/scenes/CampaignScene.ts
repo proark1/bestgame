@@ -172,7 +172,7 @@ export class CampaignScene extends Phaser.Scene {
         originX + 57,
         y + 24,
         ch.subtitle,
-        labelTextStyle(10, locked ? COLOR.textDim : '#2a1d08'),
+        labelTextStyle(10, locked ? COLOR.textDim : COLOR.textGold),
       ).setOrigin(0.5, 0.5),
     );
     container.add(

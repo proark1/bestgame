@@ -581,7 +581,7 @@ export class HomeScene extends Phaser.Scene {
       76,
       69,
       'Quick access',
-      labelTextStyle(10, '#2a1d08'),
+      labelTextStyle(10, COLOR.textGold),
     ).setOrigin(0.5, 0.5);
     const tip = crispText(
       this,
@@ -737,7 +737,7 @@ export class HomeScene extends Phaser.Scene {
       tier === 'phone' ? 'C' : 'CODEX',
       tier === 'phone'
         ? displayTextStyle(14, COLOR.textPrimary, 2)
-        : labelTextStyle(11, '#2a1d08'),
+        : labelTextStyle(11, COLOR.textGold),
     ).setOrigin(0.5, 0.5);
     this.add
       .zone(left + pillW / 2, cy, pillW, pillH)
@@ -767,7 +767,7 @@ export class HomeScene extends Phaser.Scene {
         chipX + 34,
         cy - 8,
         'COLONY',
-        labelTextStyle(9, '#2a1d08'),
+        labelTextStyle(9, COLOR.textGold),
       ).setOrigin(0.5, 0.5);
       this.accountChip = crispText(
         this,
@@ -979,28 +979,30 @@ export class HomeScene extends Phaser.Scene {
     frame.lineStyle(1, COLOR.brass, 0.55);
     frame.strokeRoundedRect(5, 5, BOARD_W - 10, BOARD_H - 10, 6);
 
+    // Clash-of-Clans-style layer banner: a single brass chip with
+    // just the mode title, vertically centered. The prior version
+    // stacked a descriptive subtitle BELOW the chip (outside the
+    // pill outline), which read as two disconnected labels rather
+    // than one banner. Dropping the subtitle and centering the
+    // title keeps the label clean and matches the "chip + icon"
+    // pattern used elsewhere in the game.
+    const badgeW = 180;
+    const badgeH = 34;
+    const badgeX = 18;
+    const badgeY = 16;
     const badge = this.add.graphics();
-    drawPill(badge, 18, 16, 184, 28, { brass: true });
+    drawPill(badge, badgeX, badgeY, badgeW, badgeH, { brass: true });
     const modeTitle =
       this.layer === 0 ? 'Surface Colony' : 'Underground Warren';
-    const modeSubtitle =
-      this.layer === 0 ? 'Build, collect, and scout your defenses' : 'Tunnels, stores, and inner chambers';
     const badgeTitle = crispText(
       this,
-      30,
-      30,
+      badgeX + badgeW / 2,
+      badgeY + badgeH / 2,
       modeTitle,
-      displayTextStyle(13, COLOR.textGold, 3),
-    ).setOrigin(0, 0.5);
-    const badgeSub = crispText(
-      this,
-      30,
-      48,
-      modeSubtitle,
-      bodyTextStyle(10, COLOR.textDim),
-    ).setOrigin(0, 0.5);
+      displayTextStyle(14, COLOR.textGold, 3),
+    ).setOrigin(0.5, 0.5);
 
-    this.boardContainer.add([bg, deco, grid, frame, badge, badgeTitle, badgeSub]);
+    this.boardContainer.add([bg, deco, grid, frame, badge, badgeTitle]);
   }
 
   // Index of server-base building sprites keyed by the building's
@@ -1079,8 +1081,43 @@ export class HomeScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
-    spr.setInteractive({ useHandCursor: true });
-    spr.on('pointerup', (p: Phaser.Input.Pointer) => {
+    // Generous hit area: the building's painterly texture usually
+    // has empty corners in the 128×128 source, but we want the tap
+    // target to match the tile footprint the player sees. Override
+    // the default texture-size rect with a wider one so a click
+    // "near" the building still counts as "on" it. Coordinates are
+    // texture-space (0,0 = top-left of source image); padding by
+    // 20% on each side closes the gap without overlapping neighbor
+    // tiles meaningfully.
+    const padX = spr.width * 0.2;
+    const padY = spr.height * 0.2;
+    spr.setInteractive(
+      new Phaser.Geom.Rectangle(-padX, -padY, spr.width + padX * 2, spr.height + padY * 2),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    spr.input!.cursor = 'pointer';
+    // Claim the pointerdown so the scene-level board-tap handler
+    // in wireBoardTap() doesn't also open the empty-tile picker
+    // when the press actually landed on this sprite. Without this,
+    // some touches register both the sprite's tap (→ modal) AND
+    // the scene's tap (→ picker) in the same gesture, giving the
+    // "building tapped shows the picker too" behavior the user
+    // flagged.
+    spr.on('pointerdown', (
+      _p: Phaser.Input.Pointer,
+      _lx: number,
+      _ly: number,
+      e: Phaser.Types.Input.EventData,
+    ) => {
+      e?.stopPropagation?.();
+    });
+    spr.on('pointerup', (
+      p: Phaser.Input.Pointer,
+      _lx: number,
+      _ly: number,
+      e: Phaser.Types.Input.EventData,
+    ) => {
+      e?.stopPropagation?.();
       const dragDist = Phaser.Math.Distance.Between(
         p.downX, p.downY, p.upX, p.upY,
       );
@@ -1567,7 +1604,7 @@ export class HomeScene extends Phaser.Scene {
       radius: 12, shadowOffset: 4, shadowAlpha: 0.36,
     });
     crispText(this, x + 14, topY + 10, 'Welcome back',
-      labelTextStyle(10, '#2a1d08'),
+      labelTextStyle(10, COLOR.textGold),
     ).setDepth(DEPTHS.boardOverlay);
     crispText(this, x + 14, topY + 28,
       'Your colony missed you. Claim a returning-player pack.',
@@ -2430,7 +2467,7 @@ export class HomeScene extends Phaser.Scene {
       ox + 83,
       oy + 29,
       'Build menu',
-      labelTextStyle(10, '#2a1d08'),
+      labelTextStyle(10, COLOR.textGold),
     )
       .setOrigin(0.5, 0.5)
       .setDepth(203);
@@ -2692,7 +2729,7 @@ export class HomeScene extends Phaser.Scene {
       -width / 2 + 39,
       -height / 2 + 16,
       'NOTICE',
-      labelTextStyle(9, '#2a1d08'),
+      labelTextStyle(9, COLOR.textGold),
     ).setOrigin(0.5, 0.5);
     const text = crispText(
       this,
