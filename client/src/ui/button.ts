@@ -93,14 +93,14 @@ export function makeHiveButton(
 
     shadow.clear();
     if (!useImage) {
+      // Soft navy-tinted ambient shadow — modern mobile-game feel.
+      // Pure-black drop shadows looked harsh on the new pastel scenes.
       if (state !== 'press') {
-        shadow.fillStyle(0x000000, 0.45);
-        shadow.fillRoundedRect(-w / 2 + 2, -h / 2 + 4, w, h + 2, r);
-        shadow.fillStyle(COLOR.brassDeep, 0.15);
-        shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h + 1, r);
+        shadow.fillStyle(0x1f2148, 0.22);
+        shadow.fillRoundedRect(-w / 2, -h / 2 + 4, w, h + 2, r);
       } else {
-        shadow.fillStyle(0x000000, 0.3);
-        shadow.fillRoundedRect(-w / 2 + 1, -h / 2 + 2, w, h, r);
+        shadow.fillStyle(0x1f2148, 0.16);
+        shadow.fillRoundedRect(-w / 2, -h / 2 + 2, w, h, r);
       }
     }
 

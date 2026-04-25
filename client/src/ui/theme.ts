@@ -3,54 +3,55 @@
 // callers stay in sync. Extend this module when a new design token
 // is needed — don't inline hex literals in scenes.
 //
-// Palette direction: "warm cartoon colony". Earth greens for the
-// play field, brass/gold for primary accents (resource counts,
-// legendary buttons), deep brown shadows, off-white text on dark
-// surfaces.
+// Palette direction: "vibrant pastel". Modern mobile-game aesthetic
+// inspired by Royal Match / Sky CotL — bright cream scene, pastel
+// mint board, white card panels with soft tints, saturated coral/
+// sky/lavender accents on buttons, deep navy text for crisp legibility.
+// Replaces the earlier "warm cartoon colony" brown/forest direction.
 
 export const COLOR = {
-  // Dark chrome (HUD panels, modal backgrounds, button presses)
-  bgDeep: 0x08100d,
-  bgPanel: 0x16261b,
-  bgPanelHi: 0x2a3f2d,
-  bgPanelLo: 0x09100a,
-  bgCard: 0x203224,
-  bgInset: 0x101910,
+  // Scene chrome — light cream/pastel cards, modern airy aesthetic
+  bgDeep: 0xf7f0e3,        // warm cream scene base
+  bgPanel: 0xffffff,       // crisp white card
+  bgPanelHi: 0xfff4f6,     // soft pink-cream gradient top
+  bgPanelLo: 0xede4f7,     // soft lavender gradient bottom
+  bgCard: 0xfdf8f0,        // cream card body
+  bgInset: 0xece2e7,       // muted dust-pink inset
 
-  // Board
-  boardSurface: 0x305829,
-  boardSurfaceLo: 0x1d3b1a,
-  boardUnder: 0x3a271b,
-  boardUnderLo: 0x21140d,
+  // Board — bright pastel mint surface with peachy under-layer
+  boardSurface: 0xb6e6c0,
+  boardSurfaceLo: 0x8edaa1,
+  boardUnder: 0xeacca8,
+  boardUnderLo: 0xd1ad88,
 
-  // Text. Contrasts quoted against bgDeep (#0f1b10):
-  //   primary 19:1, dim 7:1, muted 5.3:1 (WCAG AA), label 5.3:1 —
-  //   bumped from the original #86a676/#9bb88a which sat at ~4.2:1
-  //   and ~3.8:1 respectively, borderline for aging/low-vision eyes.
-  textPrimary: '#f7edd0',
-  textDim: '#bad3a3',
-  textMuted: '#a6c48e',
-  textLabel: '#b8d3a4',
-  textGold: '#ffd98a',
-  textDark: '#0f1b10',
-  textError: '#ffb0a0',
+  // Text — deep navy/charcoal on light surfaces gives high contrast
+  // without the heavy black-stroke "old cartoon" feel of the previous
+  // theme. Contrasts vs bgDeep (#f7f0e3): primary 13:1, dim 7.2:1,
+  // muted 5.6:1, label 8.4:1 — all pass WCAG AA.
+  textPrimary: '#1f2148',
+  textDim: '#4a4d72',
+  textMuted: '#6e7196',
+  textLabel: '#3a3d65',
+  textGold: '#e8884d',     // warm coral (legacy "brass-y" highlights)
+  textDark: '#0c0e22',
+  textError: '#e25a7c',
 
-  // Accents
-  brass: 0xffd98a,
-  brassDeep: 0x5c4020,
-  gold: 0xffc44d,
-  goldHi: 0xfff2a8,
-  goldLo: 0xb97e1c,
-  red: 0xd94c4c,
-  green: 0x5ba445,
-  greenHi: 0x83c76b,
-  greenLo: 0x2c4724,
-  cyan: 0x8fd3c4,
+  // Accents — saturated pastels
+  brass: 0xfdcd6a,         // butter yellow (legacy "brass")
+  brassDeep: 0xc99b3a,
+  gold: 0xffd97a,
+  goldHi: 0xfff2b8,
+  goldLo: 0xc8943a,
+  red: 0xff7a92,           // pastel coral
+  green: 0x6cd47e,         // vibrant mint
+  greenHi: 0x9be0a8,
+  greenLo: 0x3fa257,
+  cyan: 0x9cdaef,          // sky blue
 
   // Outlines / strokes
-  strokeDark: 0x0a120c,
-  strokeLight: 0xffe7b0,
-  outline: 0x2c5a23,
+  strokeDark: 0x1f2148,    // deep navy
+  strokeLight: 0xfff8ec,
+  outline: 0x4d9b5c,       // mint stroke
 } as const;
 
 export const FONT = {
@@ -59,26 +60,32 @@ export const FONT = {
   accent: "Georgia, 'Times New Roman', serif",
 } as const;
 
-// Stroked text style helper. CoC-style UI uses thick dark strokes
-// around light text for punchy readability over variable backdrops.
-// Callers pass the base style and the helper injects the stroke.
+// Display text style. Modern mobile-game text — crisp navy with a
+// soft cream halo so it stays readable over both light cards and
+// pastel game-board surfaces. Stroke is much thinner than the old
+// "CoC chunky stroke" look (4px → 2px default) so the type reads
+// cleaner / more modern.
 export function displayTextStyle(
   size: number,
   color: string = COLOR.textPrimary,
-  strokeThickness: number = 4,
+  strokeThickness: number = 2,
 ): Phaser.Types.GameObjects.Text.TextStyle {
+  // Lighter strokes look better on dark text against a light bg
+  // (cream halo) and on light text against a dark bg (navy halo).
+  const isLightText = color.startsWith('#f') || color.startsWith('#ff') ||
+                       color === COLOR.textGold;
   return {
     fontFamily: FONT.display,
     fontSize: `${size}px`,
     color,
-    stroke: '#0a120c',
+    stroke: isLightText ? '#1f2148' : '#fff8ec',
     strokeThickness,
     fontStyle: 'bold',
     shadow: {
       offsetX: 0,
-      offsetY: 3,
-      color: '#000000',
-      blur: 6,
+      offsetY: 2,
+      color: 'rgba(31,33,72,0.18)',
+      blur: 4,
       stroke: false,
       fill: true,
     },
@@ -127,61 +134,61 @@ export interface ButtonPalette {
 }
 
 export const BUTTON_VARIANT: Record<string, ButtonPalette> = {
-  // The primary CTA — big, bold, brass. "Raid a base →".
+  // Primary CTA — vibrant pastel coral/pink. "Raid a base →".
   primary: {
-    fillTop: 0xffd98a,
-    fillBot: 0xd8a848,
-    fillTopHover: 0xfff2a8,
-    fillBotHover: 0xffd98a,
-    fillTopPress: 0xb97e1c,
-    fillBotPress: 0xffd98a,
-    stroke: 0x5c4020,
-    strokeWidth: 3,
-    textColor: '#2a1a08',
-    textStroke: '#fff2a8',
-    textStrokeThickness: 2,
-  },
-  // Secondary nav — mossy green. Everyday buttons.
-  secondary: {
-    fillTop: 0x3d7a2c,
-    fillBot: 0x2a4f1e,
-    fillTopHover: 0x5ba145,
-    fillBotHover: 0x3d7a2c,
-    fillTopPress: 0x1e3b16,
-    fillBotPress: 0x3d7a2c,
-    stroke: 0x0e2008,
-    strokeWidth: 3,
-    textColor: '#ecf7d4',
-    textStroke: '#0a1208',
-    textStrokeThickness: 2,
-  },
-  // Neutral — darker chrome, for utility actions (close, back, cancel).
-  ghost: {
-    fillTop: 0x243824,
-    fillBot: 0x162317,
-    fillTopHover: 0x3a4d37,
-    fillBotHover: 0x243824,
-    fillTopPress: 0x0e1a0e,
-    fillBotPress: 0x243824,
-    stroke: 0x2c5a23,
+    fillTop: 0xff90a8,
+    fillBot: 0xee5e7c,
+    fillTopHover: 0xffb0c2,
+    fillBotHover: 0xff7a96,
+    fillTopPress: 0xc73f5e,
+    fillBotPress: 0xee5e7c,
+    stroke: 0xb13455,
     strokeWidth: 2,
-    textColor: '#c3e8b0',
-    textStroke: '#0a1208',
-    textStrokeThickness: 2,
+    textColor: '#fff8ec',
+    textStroke: '#9a2a4a',
+    textStrokeThickness: 1,
   },
-  // Danger — red. For destructive ops (leave clan, demolish).
+  // Secondary nav — soft sky blue. Everyday buttons.
+  secondary: {
+    fillTop: 0xa6dcf2,
+    fillBot: 0x6cb0e0,
+    fillTopHover: 0xc4e8f8,
+    fillBotHover: 0x8fc7ec,
+    fillTopPress: 0x4a91c0,
+    fillBotPress: 0x6cb0e0,
+    stroke: 0x3878a8,
+    strokeWidth: 2,
+    textColor: '#0e1f3a',
+    textStroke: '#e8f4fc',
+    textStrokeThickness: 1,
+  },
+  // Neutral — soft cream chrome, for utility actions (close, back, cancel).
+  ghost: {
+    fillTop: 0xfff8ec,
+    fillBot: 0xeadfcd,
+    fillTopHover: 0xfffaf2,
+    fillBotHover: 0xf0e6d4,
+    fillTopPress: 0xd3c5ad,
+    fillBotPress: 0xeadfcd,
+    stroke: 0xb8a285,
+    strokeWidth: 2,
+    textColor: '#1f2148',
+    textStroke: '#fff8ec',
+    textStrokeThickness: 1,
+  },
+  // Danger — deeper coral for destructive ops (leave clan, demolish).
   danger: {
-    fillTop: 0xd94c4c,
-    fillBot: 0x9a2a2a,
-    fillTopHover: 0xf27070,
-    fillBotHover: 0xc73c3c,
-    fillTopPress: 0x731e1e,
-    fillBotPress: 0xb03535,
-    stroke: 0x3a0e0e,
-    strokeWidth: 3,
-    textColor: '#fff2d2',
-    textStroke: '#2a0404',
-    textStrokeThickness: 2,
+    fillTop: 0xff6585,
+    fillBot: 0xd03e5e,
+    fillTopHover: 0xff85a0,
+    fillBotHover: 0xe25478,
+    fillTopPress: 0xa92a48,
+    fillBotPress: 0xd03e5e,
+    stroke: 0x80213a,
+    strokeWidth: 2,
+    textColor: '#fff8ec',
+    textStroke: '#80213a',
+    textStrokeThickness: 1,
   },
 } as const;
 

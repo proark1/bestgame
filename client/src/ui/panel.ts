@@ -36,46 +36,43 @@ export function drawPanel(
 ): void {
   const topColor = style.topColor ?? COLOR.bgPanelHi;
   const botColor = style.botColor ?? COLOR.bgPanelLo;
-  const stroke = style.stroke ?? COLOR.brassDeep;
-  const strokeWidth = style.strokeWidth ?? 2;
-  const strokeAlpha = style.strokeAlpha ?? 0.85;
-  const highlight = style.highlight ?? COLOR.brass;
-  const highlightAlpha = style.highlightAlpha ?? 0.25;
+  const stroke = style.stroke ?? COLOR.strokeDark;
+  const strokeWidth = style.strokeWidth ?? 1;
+  const strokeAlpha = style.strokeAlpha ?? 0.18;
+  const highlight = style.highlight ?? 0xffffff;
+  const highlightAlpha = style.highlightAlpha ?? 0.55;
   const radius = style.radius ?? SPACING.radiusMd;
   const shadowOffset = style.shadowOffset ?? 4;
-  const shadowAlpha = style.shadowAlpha ?? 0.4;
+  const shadowAlpha = style.shadowAlpha ?? 0.18;
 
-  // Drop shadow
+  // Soft modern drop shadow — navy-tinted instead of pure black so it
+  // doesn't punch a hole in light-pastel scenes.
   if (shadowAlpha > 0) {
-    g.fillStyle(0x000000, shadowAlpha);
+    g.fillStyle(0x1f2148, shadowAlpha);
     g.fillRoundedRect(x + 1, y + shadowOffset, w, h + 1, radius);
-    g.fillStyle(COLOR.brassDeep, shadowAlpha * 0.22);
-    g.fillRoundedRect(x, y + 2, w, h, radius);
   }
 
   // Gradient fill via two-color top/bottom (same on each side).
   g.fillGradientStyle(topColor, topColor, botColor, botColor, 1);
   g.fillRoundedRect(x, y, w, h, radius);
-  g.fillStyle(0xffffff, 0.05);
-  g.fillRoundedRect(x + 2, y + 2, w - 4, Math.max(6, Math.min(12, h * 0.18)), radius - 2);
 
-  // Inner top highlight band (bevel)
+  // Inner top highlight band — soft white bevel that reads as a
+  // glassy gloss on the white/cream cards.
   if (highlightAlpha > 0) {
     g.fillStyle(highlight, highlightAlpha);
-    g.fillRoundedRect(x + strokeWidth, y + strokeWidth, w - strokeWidth * 2, 3, radius - 1);
+    g.fillRoundedRect(
+      x + strokeWidth + 1,
+      y + strokeWidth + 1,
+      w - strokeWidth * 2 - 2,
+      Math.max(4, Math.min(10, h * 0.14)),
+      Math.max(2, radius - 1),
+    );
   }
 
-  // Outer stroke
+  // Outer stroke — single soft navy line; the heavy double-stroke +
+  // brass rim from the old theme felt dated against pastel cards.
   g.lineStyle(strokeWidth, stroke, strokeAlpha);
   g.strokeRoundedRect(x, y, w, h, radius);
-  g.lineStyle(1, COLOR.strokeLight, 0.18);
-  g.strokeRoundedRect(
-    x + strokeWidth + 1,
-    y + strokeWidth + 1,
-    w - strokeWidth * 2 - 2,
-    h - strokeWidth * 2 - 2,
-    Math.max(2, radius - strokeWidth - 1),
-  );
 }
 
 // Resource-pill panel — wider-than-tall capsule used for sugar/leaf/
@@ -99,18 +96,19 @@ export function drawPill(
   // the user specifically asked for no gloss/mirror on top.
   const brass = style.brass ?? true;
   const radius = h / 2;
-  // Soft drop shadow — stays BELOW the pill so the eye reads it as
-  // depth, never as top-bleed.
-  g.fillStyle(0x000000, 0.55);
+  // Soft navy-tinted shadow that reads as ambient occlusion on light
+  // surfaces (heavy black shadows look harsh on cream cards).
+  g.fillStyle(0x1f2148, 0.18);
   g.fillRoundedRect(x + 1, y + 3, w, h + 1, radius);
-  // Main body: vertical gradient with no lighten strip on top.
+  // Body: vertical gradient using the panel theme tokens.
   g.fillGradientStyle(COLOR.bgPanelHi, COLOR.bgPanelHi, COLOR.bgPanelLo, COLOR.bgPanelLo, 1);
   g.fillRoundedRect(x, y, w, h, radius);
   if (brass) {
-    g.lineStyle(1.5, COLOR.brassDeep, 0.9);
+    // Coral border on accent pills — picks up the new primary palette.
+    g.lineStyle(1.5, 0xee5e7c, 0.85);
     g.strokeRoundedRect(x, y, w, h, radius);
   } else {
-    g.lineStyle(1, 0x000000, 0.35);
+    g.lineStyle(1, COLOR.strokeDark, 0.22);
     g.strokeRoundedRect(x, y, w, h, radius);
   }
 }
