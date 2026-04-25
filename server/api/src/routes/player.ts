@@ -26,7 +26,12 @@ import {
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
 import { upgradeCostMult, levelStatPercent, LEVEL_COST_MULT } from '../game/progression.js';
-import { storageCaps } from '@hive/shared/sim';
+import {
+  storageCaps,
+  buildTimeMs,
+  remainingMsAt,
+  skipCostMilk,
+} from '@hive/shared/sim';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
@@ -176,6 +181,51 @@ export function registerPlayer(app: FastifyInstance): void {
       }
       const player = pRes.rows[0]!;
       const base = bRes.rows[0]!;
+
+      // Lazy builder-gate finalization. Walk the snapshot for any
+      // building whose pendingCompletesAt has elapsed and promote it
+      // to the queued level — clearing the pending fields. The HP /
+      // hpMax re-scale uses the same proportional-damage rule as
+      // pre-time-gate immediate upgrades. Snapshot is mutated in place
+      // here; the persisted UPDATE downstream picks up the change.
+      const nowMs = Date.now();
+      let snapshotMutated = false;
+      for (const b of base.snapshot.buildings) {
+        if (!b.pendingCompletesAt || !b.pendingToLevel) continue;
+        if (Date.parse(b.pendingCompletesAt) > nowMs) continue;
+        const oldLevel = b.level ?? 1;
+        const newLevel = b.pendingToLevel;
+        if (newLevel <= oldLevel) {
+          // Defensive: pending pointed below current. Just clear.
+          delete b.pendingCompletesAt;
+          delete b.pendingToLevel;
+          snapshotMutated = true;
+          continue;
+        }
+        const oldPct = levelStatPercent(oldLevel) / 100;
+        const newPct = levelStatPercent(newLevel) / 100;
+        const oldHpMax = b.hpMax ?? b.hp;
+        const baseMax = oldHpMax / oldPct;
+        const newHpMax = Math.round(baseMax * newPct);
+        const damageTaken = oldHpMax - b.hp;
+        b.level = newLevel;
+        b.hpMax = newHpMax;
+        b.hp = Math.max(1, newHpMax - damageTaken);
+        delete b.pendingCompletesAt;
+        delete b.pendingToLevel;
+        snapshotMutated = true;
+      }
+      if (snapshotMutated) {
+        base.snapshot = {
+          ...base.snapshot,
+          version: (base.snapshot.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases SET snapshot = $2::jsonb, version = version + 1, updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(base.snapshot)],
+        );
+      }
 
       // Offline trickle. Compute from last_seen_at → now, cap, add.
       const lastSeenMs = player.last_seen_at.getTime();
@@ -1785,6 +1835,18 @@ export function registerPlayer(app: FastifyInstance): void {
           reply.code(409);
           return { error: `already at max level (${MAX_UNIT_LEVEL})` };
         }
+        // Reject queueing on a building that's already mid-upgrade —
+        // each building has at most one pending job at a time. Player
+        // must wait it out (or pay milk to skip) before queuing again.
+        if (target.pendingCompletesAt) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return {
+            error: 'building is already upgrading',
+            pendingCompletesAt: target.pendingCompletesAt,
+            pendingToLevel: target.pendingToLevel,
+          };
+        }
         const mult = upgradeCostMult(currentLevel);
         if (mult === null) {
           await client.query('ROLLBACK');
@@ -1803,7 +1865,11 @@ export function registerPlayer(app: FastifyInstance): void {
           aphidMilk: 0,
         };
 
-        // Debit resources + bump the building level in the snapshot.
+        // Debit resources up-front. Builder gates take cost at queue
+        // time (CoC pattern) — refunds on cancel are not yet supported,
+        // so once you queue you've spent. The level bump itself is
+        // delayed until the timer elapses; /me lazily promotes
+        // expired pending jobs on next read.
         const debit = await client.query<{
           sugar: string;
           leaf_bits: string;
@@ -1811,8 +1877,9 @@ export function registerPlayer(app: FastifyInstance): void {
           trophies: number;
         }>(
           `UPDATE players
-              SET sugar     = sugar - $2,
-                  leaf_bits = leaf_bits - $3
+              SET sugar          = sugar - $2,
+                  leaf_bits      = leaf_bits - $3,
+                  total_invested = total_invested + ($2 + $3)
             WHERE id = $1
               AND sugar >= $2
               AND leaf_bits >= $3
@@ -1825,25 +1892,146 @@ export function registerPlayer(app: FastifyInstance): void {
           return { error: 'insufficient resources', cost };
         }
 
-        // Re-scale the building's hp/hpMax by the old-level → new-level
-        // stat-percent ratio so visible max-HP tracks the upgrade.
-        // Current hp/hpMax fields are mutated in-place; we leave
-        // runtime-stat derivation (damage, range) to the shared sim
-        // which already accounts for level at deploy time.
-        const newLevel = currentLevel + 1;
+        // Stamp the pending fields. completesAt is computed server-
+        // side from buildTimeMs(currentLevel) so client-supplied
+        // timestamps never make it into authoritative state.
+        const targetLevel = currentLevel + 1;
+        const completesAt = new Date(Date.now() + buildTimeMs(currentLevel)).toISOString();
         const updatedBuildings = base.buildings.map((b) => {
           if (b.id !== body.buildingId) return b;
-          const oldPct = levelStatPercent(currentLevel) / 100;
-          const newPct = levelStatPercent(newLevel) / 100;
-          // Preserve any in-flight damage — upgrades shouldn't fully
-          // heal a damaged building; heal by the same proportion the
-          // max HP grew. (A perfect-HP building stays perfect HP.)
-          const oldHpMax = b.hpMax ?? b.hp;
-          const baseMax = oldHpMax / oldPct;
-          const newHpMax = Math.round(baseMax * newPct);
-          const damageTaken = oldHpMax - b.hp;
-          const newHp = Math.max(1, newHpMax - damageTaken);
-          return { ...b, level: newLevel, hp: newHp, hpMax: newHpMax };
+          return { ...b, pendingCompletesAt: completesAt, pendingToLevel: targetLevel };
+        });
+        const updated: Types.Base = {
+          ...base,
+          buildings: updatedBuildings,
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases
+              SET snapshot = $2::jsonb,
+                  version = version + 1,
+                  updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(updated)],
+        );
+        await client.query('COMMIT');
+        const r = debit.rows[0]!;
+        return {
+          ok: true,
+          buildingId: body.buildingId,
+          // Echo back the QUEUED level (not the current). Client uses
+          // this to render the pending state immediately.
+          pendingToLevel: targetLevel,
+          pendingCompletesAt: completesAt,
+          cost,
+          base: updated,
+          player: {
+            trophies: r.trophies,
+            sugar: safeBigintToNumber(r.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(r.leaf_bits, 'leaf_bits', app.log),
+            aphidMilk: safeBigintToNumber(r.aphid_milk, 'aphid_milk', app.log),
+          },
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'upgrade-building failed');
+        reply.code(500);
+        return { error: 'building upgrade failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/player/builder/skip — pay AphidMilk to instantly
+  // complete a pending building upgrade. Skip cost is computed from
+  // the remaining time via skipCostMilk() — paying when there's only
+  // 1 second left costs 1 milk, paying right after queue costs the
+  // full skip price. The bump itself runs the same finalization
+  // logic as /me's lazy promotion.
+  interface BuilderSkipBody { buildingId: string }
+  app.post<{ Body: BuilderSkipBody }>(
+    '/player/builder/skip',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const body = req.body;
+      if (!body || typeof body.buildingId !== 'string') {
+        reply.code(400);
+        return { error: 'buildingId required' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === body.buildingId);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        if (!target.pendingCompletesAt || !target.pendingToLevel) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: 'building has no pending upgrade' };
+        }
+        const remaining = remainingMsAt(target.pendingCompletesAt, Date.now());
+        const cost = skipCostMilk(remaining);
+
+        // Debit the milk price atomically.
+        const debit = await client.query<{
+          aphid_milk: string;
+          sugar: string;
+          leaf_bits: string;
+          trophies: number;
+        }>(
+          `UPDATE players
+              SET aphid_milk = aphid_milk - $2
+            WHERE id = $1 AND aphid_milk >= $2
+        RETURNING aphid_milk, sugar, leaf_bits, trophies`,
+          [playerId, cost],
+        );
+        if (debit.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(402);
+          return { error: 'insufficient aphid milk', cost };
+        }
+
+        // Promote the pending bump immediately. Same proportional-
+        // damage HP rule as /me's lazy finalize.
+        const oldLevel = target.level ?? 1;
+        const newLevel = target.pendingToLevel;
+        const oldPct = levelStatPercent(oldLevel) / 100;
+        const newPct = levelStatPercent(newLevel) / 100;
+        const oldHpMax = target.hpMax ?? target.hp;
+        const baseMax = oldHpMax / oldPct;
+        const newHpMax = Math.round(baseMax * newPct);
+        const damageTaken = oldHpMax - target.hp;
+        const updatedBuildings = base.buildings.map((b) => {
+          if (b.id !== body.buildingId) return b;
+          const next: Types.Building = {
+            ...b,
+            level: newLevel,
+            hp: Math.max(1, newHpMax - damageTaken),
+            hpMax: newHpMax,
+          };
+          delete next.pendingCompletesAt;
+          delete next.pendingToLevel;
+          return next;
         });
         const updated: Types.Base = {
           ...base,
@@ -1864,7 +2052,7 @@ export function registerPlayer(app: FastifyInstance): void {
           ok: true,
           buildingId: body.buildingId,
           newLevel,
-          cost,
+          milkSpent: cost,
           base: updated,
           player: {
             trophies: r.trophies,
@@ -1875,9 +2063,9 @@ export function registerPlayer(app: FastifyInstance): void {
         };
       } catch (err) {
         await client.query('ROLLBACK').catch(() => undefined);
-        app.log.error({ err }, 'upgrade-building failed');
+        app.log.error({ err }, 'builder/skip failed');
         reply.code(500);
-        return { error: 'building upgrade failed' };
+        return { error: 'builder skip failed' };
       } finally {
         client.release();
       }

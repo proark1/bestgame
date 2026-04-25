@@ -544,36 +544,127 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     }
 
     // Upgrade — green. Disabled + ghost when the player can't afford
-    // so the button itself signals "not yet".
+    // so the button itself signals "not yet". When the building has a
+    // pending upgrade in flight (builder time gate), the button
+    // becomes a "Skip with milk" CTA showing the live countdown +
+    // milk price; tapping it consumes milk and finalizes immediately.
     const upgradeEnabled = !atMax && affordable;
     let slotIdx = 0;
     const slotY = (): number =>
       actionsStartY + (actionBtnH + actionGap) * slotIdx++;
 
-    const upgradeLabel = atMax
-      ? 'Max level'
-      : affordable
-        ? 'Upgrade'
-        : 'Upgrade (need more)';
-    const upgradeBtn: HiveButton = makeHiveButton(scene, {
-      x: MODAL_W / 2,
-      y: slotY(),
-      width: actionBtnW,
-      height: actionBtnH,
-      label: upgradeLabel,
-      variant: upgradeEnabled ? 'secondary' : 'ghost',
-      fontSize: 14,
-      enabled: upgradeEnabled,
-      onPress: () => {
-        if (!upgradeEnabled) return;
-        void doUpgrade(scene, runtime, b, (base) => {
-          const fresh = base.buildings.find((x) => x.id === b.id);
-          if (fresh) renderBody(fresh);
-          opts.onUpdated(base);
-        });
-      },
-    });
-    bodyContainer.add(upgradeBtn.container);
+    const isPending = !!b.pendingCompletesAt && !!b.pendingToLevel;
+    if (isPending) {
+      const completesAt = b.pendingCompletesAt!;
+      const wallet = runtime.player?.player ?? null;
+      const haveMilk = wallet?.aphidMilk ?? 0;
+      // Live countdown: refresh every second while modal is open. Each
+      // tick re-derives the remaining ms + milk price and updates the
+      // button label in place. event.removed cleanup runs on close().
+      const formatRemaining = (ms: number): string => {
+        if (ms <= 0) return 'finishing…';
+        const totalSec = Math.ceil(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+      };
+      const remaining = (): number => Sim.remainingMsAt(completesAt, Date.now());
+      const skipPrice = (): number => Sim.skipCostMilk(remaining());
+      const skipLabel = (): string => {
+        const r = remaining();
+        if (r <= 0) return 'Finalizing…';
+        const price = skipPrice();
+        const canAfford = haveMilk >= price;
+        return canAfford
+          ? `Skip ${formatRemaining(r)} (${price} milk)`
+          : `${formatRemaining(r)} left (need ${price} milk)`;
+      };
+      const skipBtn: HiveButton = makeHiveButton(scene, {
+        x: MODAL_W / 2,
+        y: slotY(),
+        width: actionBtnW,
+        height: actionBtnH,
+        label: skipLabel(),
+        variant: haveMilk >= skipPrice() ? 'secondary' : 'ghost',
+        fontSize: 12,
+        enabled: haveMilk >= skipPrice(),
+        onPress: () => {
+          const price = skipPrice();
+          if (haveMilk < price) {
+            flashToast(scene, 'Not enough milk to skip this upgrade.');
+            return;
+          }
+          void doSkipBuilder(scene, runtime, b, (base) => {
+            const fresh = base.buildings.find((x) => x.id === b.id);
+            if (fresh) renderBody(fresh);
+            opts.onUpdated(base);
+          });
+        },
+      });
+      bodyContainer.add(skipBtn.container);
+      // 1 Hz countdown ticker. Re-renders the body whenever the timer
+      // hits zero so the player sees the post-finalize state without
+      // closing + reopening the modal.
+      const ticker = scene.time.addEvent({
+        delay: 1000,
+        loop: true,
+        callback: () => {
+          const r = remaining();
+          if (r <= 0) {
+            ticker.remove();
+            // The next /me will lazily promote — defer rendering by
+            // tapping the existing onUpdated path via a no-op route.
+            // Cheaper: just close + reopen would lose the modal, so
+            // we just blank the label until the next refresh.
+            skipBtn.container.list.forEach((child) => {
+              if (
+                child instanceof Phaser.GameObjects.Text &&
+                child.text.toLowerCase().includes('skip')
+              ) {
+                child.setText('Finalizing…');
+              }
+            });
+            return;
+          }
+          // Update button label in place.
+          skipBtn.container.list.forEach((child) => {
+            if (child instanceof Phaser.GameObjects.Text) {
+              child.setText(skipLabel());
+            }
+          });
+        },
+      });
+      // Clean up the ticker when the modal closes.
+      bodyContainer.once(Phaser.GameObjects.Events.DESTROY, () => ticker.remove());
+    } else {
+      const upgradeLabel = atMax
+        ? 'Max level'
+        : affordable
+          ? 'Upgrade'
+          : 'Upgrade (need more)';
+      const upgradeBtn: HiveButton = makeHiveButton(scene, {
+        x: MODAL_W / 2,
+        y: slotY(),
+        width: actionBtnW,
+        height: actionBtnH,
+        label: upgradeLabel,
+        variant: upgradeEnabled ? 'secondary' : 'ghost',
+        fontSize: 14,
+        enabled: upgradeEnabled,
+        onPress: () => {
+          if (!upgradeEnabled) return;
+          void doUpgrade(scene, runtime, b, (base) => {
+            const fresh = base.buildings.find((x) => x.id === b.id);
+            if (fresh) renderBody(fresh);
+            opts.onUpdated(base);
+          });
+        },
+      });
+      bodyContainer.add(upgradeBtn.container);
+    }
 
     // Move.
     const moveBtn = makeHiveButton(scene, {
@@ -702,7 +793,33 @@ async function doUpgrade(
       runtime.player.player.trophies = r.player.trophies;
       runtime.player.base = r.base;
     }
-    onDone(r.base, r.newLevel);
+    // The server returns the queued target level; the actual `level`
+    // field on the building stays at its current value until /me
+    // promotes the pending. Pass the queued level so the modal can
+    // hint at the in-flight tier without misleading the player about
+    // current stats.
+    onDone(r.base, r.pendingToLevel);
+  } catch (err) {
+    flashToast(scene, (err as Error).message);
+  }
+}
+
+async function doSkipBuilder(
+  scene: Phaser.Scene,
+  runtime: HiveRuntime,
+  b: Types.Building,
+  onDone: (base: Types.Base) => void,
+): Promise<void> {
+  try {
+    const r = await runtime.api.skipBuilder(b.id);
+    if (runtime.player) {
+      runtime.player.player.sugar = r.player.sugar;
+      runtime.player.player.leafBits = r.player.leafBits;
+      runtime.player.player.aphidMilk = r.player.aphidMilk;
+      runtime.player.player.trophies = r.player.trophies;
+      runtime.player.base = r.base;
+    }
+    onDone(r.base);
   } catch (err) {
     flashToast(scene, (err as Error).message);
   }
