@@ -57,6 +57,18 @@ button {
   padding-bottom: 16px;
   margin-bottom: 24px;
 }
+.admin-header .admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.admin-header .admin-brand-logo {
+  /* SVG wordmark is 320×80 native; cap height keeps the header
+     compact while letting the wordmark dominate the brand block. */
+  height: 44px;
+  width: auto;
+  display: block;
+}
 .admin-header h1 {
   font-family: var(--font);
   font-size: 22px;

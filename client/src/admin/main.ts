@@ -171,12 +171,21 @@ function render(): void {
   root.innerHTML = '';
 
   // -- Header ---------------------------------------------------------------
+  // The brand mark (`/units/logo-hivewars.svg`) ships with the static
+  // public assets and is also what the landing page surfaces, so the
+  // admin tool reads as part of the same product instead of a generic
+  // text shell. Plain <img> rather than the admin-generated `ui-logo`
+  // because that asset is byte-uploaded into the sprite store and
+  // isn't always present locally.
   const header = document.createElement('header');
   header.className = 'admin-header';
   header.innerHTML = `
-    <div>
-      <h1>Hive Wars · Admin</h1>
-      <small>Gemini sprite generation · ${state.files.length} file(s) on disk</small>
+    <div class="admin-brand">
+      <img class="admin-brand-logo" src="/units/logo-hivewars.svg" alt="Hive Wars" />
+      <div>
+        <h1>Hive Wars · Admin</h1>
+        <small>Gemini sprite generation · ${state.files.length} file(s) on disk</small>
+      </div>
     </div>
   `;
   const actions = document.createElement('div');
