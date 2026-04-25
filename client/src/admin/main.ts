@@ -727,13 +727,11 @@ async function generateWalkCycle(
   const stripPng = await compositeWalkStrip([a, b]);
 
   onProgress?.(`${kind}: compressing…`);
-  // maxDimension = WALK_STRIP_WIDTH keeps the strip at 256×128. A
-  // touch higher quality than singleton sprites (0.85) because any
-  // leg-pose detail lost to compression spoils the illusion.
+  // Use animation compression settings; fall back to high quality for this strip
   const compressed = await compressBase64Image(stripPng, 'image/png', {
-    format: 'webp',
-    quality: 0.9,
-    maxDimension: WALK_STRIP_WIDTH,
+    format: state.animationCompression.format,
+    quality: Math.max(0.85, state.animationCompression.quality), // minimum 0.85 for animation detail
+    maxDimension: state.animationCompression.maxDim,
   });
 
   onProgress?.(`${kind}: saving…`);
@@ -883,22 +881,14 @@ function renderAnimationsTab(): HTMLElement {
     genBtn.addEventListener('click', async () => {
       if (!spriteOk || !state.animation) return;
       genBtn.disabled = true;
-      const originalText = genBtn.textContent;
       try {
         await generateAnimationFromSprite(kind, (note) => statusToast(note, 'info'));
         await refreshAnimationFiles();
-        const newAnimOk = hasAnimation(kind);
-        status.innerHTML = `
-          Sprite: <span class="status-badge" data-ok="${spriteOk}">✓</span>
-          Animation: <span class="status-badge" data-ok="${newAnimOk}">${newAnimOk ? '✓' : '✗'}</span>
-        `;
-        genBtn.textContent = 'Regenerate';
+        render(); // Re-render animations tab to update status indicators
         statusToast(`${kind} animation saved`, 'success');
       } catch (err) {
         statusToast(`${kind}: ${(err as Error).message}`, 'error');
-      } finally {
-        genBtn.textContent = originalText;
-        genBtn.disabled = !spriteOk;
+        genBtn.disabled = false;
       }
     });
 
