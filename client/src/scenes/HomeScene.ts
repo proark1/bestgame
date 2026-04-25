@@ -1059,9 +1059,11 @@ export class HomeScene extends Phaser.Scene {
     if (this.pickerContainer) return;
 
     const g = this.add.graphics();
-    // Sit just above the background grid but below building sprites
-    // and selection chrome.
-    g.setDepth(DEPTHS.boardOverlay - 2);
+    // Soft brass "+" — readable against the green/dirt tile but never
+    // loud enough to fight the buildings for attention. Set the line
+    // style once, outside the loop, since every "+" uses the same
+    // stroke.
+    g.lineStyle(2, COLOR.brass, 0.55);
 
     let drewAny = false;
     for (let y = 0; y < GRID_H; y++) {
@@ -1069,9 +1071,6 @@ export class HomeScene extends Phaser.Scene {
         if (this.isTileOccupied(x, y, this.layer)) continue;
         const cx = x * TILE + TILE / 2;
         const cy = y * TILE + TILE / 2;
-        // Soft brass "+" — readable against the green/dirt tile but
-        // never loud enough to fight the buildings for attention.
-        g.lineStyle(2, COLOR.brass, 0.55);
         g.lineBetween(cx - 5, cy, cx + 5, cy);
         g.lineBetween(cx, cy - 5, cx, cy + 5);
         drewAny = true;
@@ -1084,6 +1083,12 @@ export class HomeScene extends Phaser.Scene {
     }
 
     this.boardContainer.add(g);
+    // Layering note: container z-order in Phaser is insertion order
+    // (boardContainer doesn't sortChildrenFlag), so the hints render
+    // on top of the grid + building sprites by virtue of being added
+    // last. That's fine — hints only paint on empty tiles, so they
+    // never visually overlap a building, and the brass "+" reads
+    // cleanly over the grid lines underneath.
     this.emptyTileHints = g;
     // Gentle breathing pulse so the affordances feel alive without
     // being distracting (matches CoC's "tap here" subtle hint cadence).
@@ -2722,17 +2727,33 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private isTileOccupied(tx: number, ty: number, layer: Types.Layer): boolean {
-    const buildings = this.serverBase?.buildings ?? [];
-    for (const b of buildings) {
-      const onLayer =
-        b.anchor.layer === layer || b.spans?.includes(layer);
+    if (this.serverBase) {
+      for (const b of this.serverBase.buildings) {
+        const onLayer =
+          b.anchor.layer === layer || b.spans?.includes(layer);
+        if (!onLayer) continue;
+        if (
+          tx >= b.anchor.x &&
+          tx < b.anchor.x + b.footprint.w &&
+          ty >= b.anchor.y &&
+          ty < b.anchor.y + b.footprint.h
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    // Guest-local fallback: serverBase is unavailable so the scene is
+    // rendering STARTER_BUILDINGS instead. They're 1×1 except the
+    // QueenChamber (2×2 spanning both layers), so widen the hit-test
+    // accordingly.
+    for (const b of STARTER_BUILDINGS) {
+      const isQueen = b.kind === 'QueenChamber';
+      const w = isQueen ? 2 : 1;
+      const h = isQueen ? 2 : 1;
+      const onLayer = isQueen || b.layer === layer;
       if (!onLayer) continue;
-      if (
-        tx >= b.anchor.x &&
-        tx < b.anchor.x + b.footprint.w &&
-        ty >= b.anchor.y &&
-        ty < b.anchor.y + b.footprint.h
-      ) {
+      if (tx >= b.x && tx < b.x + w && ty >= b.y && ty < b.y + h) {
         return true;
       }
     }
