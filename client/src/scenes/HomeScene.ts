@@ -84,6 +84,18 @@ export class HomeScene extends Phaser.Scene {
   private sugarText!: Phaser.GameObjects.Text;
   private leafText!: Phaser.GameObjects.Text;
   private milkText!: Phaser.GameObjects.Text;
+  // Per-pill subtitle showing "+X/sec" production rate. Hidden when the
+  // pill has no producers (e.g. AphidMilk in MVP). Lazily-initialized in
+  // drawHud(); update via refreshResourceMeta().
+  private sugarRateText: Phaser.GameObjects.Text | null = null;
+  private leafRateText: Phaser.GameObjects.Text | null = null;
+  private milkRateText: Phaser.GameObjects.Text | null = null;
+  // Storage cap headroom from the server (§6.8). Falls back to no-cap
+  // when the server payload predates the storage feature.
+  private storageCaps: { sugar: number | null; leaf: number | null } = {
+    sugar: null,
+    leaf: null,
+  };
   private incomeAccumulator = 0;
   // If the server handed back a real base snapshot, render that — it
   // may differ from the STARTER_BUILDINGS fallback (e.g. a player who
@@ -111,6 +123,10 @@ export class HomeScene extends Phaser.Scene {
         leafBits: runtime.player.player.leafBits,
         aphidMilk: runtime.player.player.aphidMilk,
       };
+      const storage = runtime.player.player.storage;
+      if (storage) {
+        this.storageCaps = { sugar: storage.sugarCap, leaf: storage.leafCap };
+      }
     }
 
     // Layout: HUD on top, board below.
@@ -206,10 +222,18 @@ export class HomeScene extends Phaser.Scene {
       }
     }
     if (sugar === 0 && leaf === 0) return;
-    this.resources.sugar += sugar;
-    this.resources.leafBits += leaf;
-    this.sugarText.setText(this.resources.sugar.toString());
-    this.leafText.setText(this.resources.leafBits.toString());
+    // Local-side trickle visually clamps to the cap — the server is
+    // doing the same on the next /me, so showing the player numbers
+    // they'll keep rather than ones that snap back is the right call.
+    const sugarCap = this.storageCaps.sugar;
+    const leafCap = this.storageCaps.leaf;
+    this.resources.sugar = sugarCap !== null
+      ? Math.min(sugarCap, this.resources.sugar + sugar)
+      : this.resources.sugar + sugar;
+    this.resources.leafBits = leafCap !== null
+      ? Math.min(leafCap, this.resources.leafBits + leaf)
+      : this.resources.leafBits + leaf;
+    this.refreshResourcePills();
     this.flashResourceGain();
   }
 
@@ -220,6 +244,75 @@ export class HomeScene extends Phaser.Scene {
       duration: 260,
       ease: 'Sine.easeOut',
     });
+  }
+
+  // Formats the inside-pill value text. For sugar / leaf, shows the
+  // storage cap as a fraction so the player can see the headroom at a
+  // glance ("5800 / 7300"). Falls back to the raw value when the server
+  // hasn't sent caps yet (e.g. pre-storage server, or the local guest
+  // path with no /me roundtrip). Milk is always raw — uncapped in MVP.
+  private formatPillValue(kind: 'sugar' | 'leaf' | 'milk'): string {
+    if (kind === 'sugar') {
+      const cap = this.storageCaps.sugar;
+      return cap !== null
+        ? `${this.resources.sugar} / ${cap}`
+        : `${this.resources.sugar}`;
+    }
+    if (kind === 'leaf') {
+      const cap = this.storageCaps.leaf;
+      return cap !== null
+        ? `${this.resources.leafBits} / ${cap}`
+        : `${this.resources.leafBits}`;
+    }
+    return `${this.resources.aphidMilk}`;
+  }
+
+  // Sums the per-second production from the active server base (or the
+  // STARTER_BUILDINGS fallback) for one resource kind. Mirrors the
+  // sim-side scaling: production is paused for hp <= 0 buildings, and
+  // each level multiplies linearly.
+  private computeRate(kind: 'sugar' | 'leaf' | 'milk'): number {
+    if (kind === 'milk') return 0; // no producer in MVP
+    const buildings = this.serverBase ? this.serverBase.buildings : null;
+    let total = 0;
+    if (buildings) {
+      for (const b of buildings) {
+        if (b.hp <= 0) continue;
+        const inc = INCOME_PER_SECOND[b.kind];
+        if (!inc) continue;
+        const mult = Math.max(1, b.level | 0);
+        total += (kind === 'sugar' ? inc.sugar : inc.leafBits) * mult;
+      }
+    } else {
+      for (const b of STARTER_BUILDINGS) {
+        const inc = INCOME_PER_SECOND[b.kind];
+        if (!inc) continue;
+        total += kind === 'sugar' ? inc.sugar : inc.leafBits;
+      }
+    }
+    return total;
+  }
+
+  // Single point of truth for refreshing the HUD pills after any
+  // resource mutation (trickle, raid result, upgrade debit, place /
+  // move building changing the production curve). Keeps the cap
+  // fraction text and per-pill rate subtitle in sync with the wallet.
+  private refreshResourcePills(): void {
+    if (this.sugarText) this.sugarText.setText(this.formatPillValue('sugar'));
+    if (this.leafText) this.leafText.setText(this.formatPillValue('leaf'));
+    if (this.milkText) this.milkText.setText(this.formatPillValue('milk'));
+    if (this.sugarRateText) {
+      const r = this.computeRate('sugar');
+      this.sugarRateText.setText(r > 0 ? `+${r}/sec` : '');
+    }
+    if (this.leafRateText) {
+      const r = this.computeRate('leaf');
+      this.leafRateText.setText(r > 0 ? `+${r}/sec` : '');
+    }
+    if (this.milkRateText) {
+      const r = this.computeRate('milk');
+      this.milkRateText.setText(r > 0 ? `+${r}/sec` : '');
+    }
   }
 
   // Scene-wide ambient: a soft top-to-bottom gradient behind everything,
@@ -389,39 +482,40 @@ export class HomeScene extends Phaser.Scene {
     this.drawAccountChip(tier);
 
     // Resource readouts — gold sugar, green leaf, silver milk.
-    // On phone we hide milk (aphid milk isn't produced yet anyway)
-    // to buy back horizontal room for the first two.
+    // All three are always visible (per GDD §6.9 UI surface map): even
+    // on phone, the milk pill stays in the strip so the player sees the
+    // slot exists. The pill values render as `current/cap` for sugar +
+    // leaf when the server sent storage caps, raw value for milk
+    // (uncapped) and as a fallback when no caps are available.
     const pillFont = tier === 'phone' ? 15 : 17;
     const pillTextStroke = 3;
     this.sugarText = crispText(
       this,
       0,
       0,
-      this.resources.sugar.toString(),
+      this.formatPillValue('sugar'),
       displayTextStyle(pillFont, COLOR.textGold, pillTextStroke),
     ).setOrigin(1, 0.5);
     this.leafText = crispText(
       this,
       0,
       0,
-      this.resources.leafBits.toString(),
+      this.formatPillValue('leaf'),
       displayTextStyle(pillFont, '#c8f2a0', pillTextStroke),
     ).setOrigin(1, 0.5);
     this.milkText = crispText(
       this,
       0,
       0,
-      this.resources.aphidMilk.toString(),
+      this.formatPillValue('milk'),
       displayTextStyle(pillFont, '#dfe8ff', pillTextStroke),
     ).setOrigin(1, 0.5);
-    if (tier === 'phone') this.milkText.setVisible(false);
 
     const badges: Array<{ icon: string; text: Phaser.GameObjects.Text }> = [
       { icon: 'ui-resource-sugar', text: this.sugarText },
       { icon: 'ui-resource-leaf', text: this.leafText },
+      { icon: 'ui-resource-milk', text: this.milkText },
     ];
-    if (tier !== 'phone')
-      badges.push({ icon: 'ui-resource-milk', text: this.milkText });
 
     const PILL_H = tier === 'phone' ? 32 : 36;
     const PILL_PAD_X = tier === 'phone' ? 8 : 12;
@@ -462,6 +556,25 @@ export class HomeScene extends Phaser.Scene {
         e?.stopPropagation?.();
         this.openResourcePopover(kind, pillX + pillW / 2, cy + PILL_H / 2 + 6);
       });
+
+      // Per-pill rate subtitle: "+8/sec" floats just below the pill, so
+      // the player sees their production at a glance without tapping.
+      // Hidden on phone tier (no vertical room) and for resources with
+      // zero income (e.g. AphidMilk in MVP).
+      const rateValue = this.computeRate(kind);
+      if (tier !== 'phone' && rateValue > 0) {
+        const rateText = crispText(
+          this,
+          pillX + pillW - PILL_PAD_X,
+          cy + PILL_H / 2 + 8,
+          `+${rateValue}/sec`,
+          labelTextStyle(10, COLOR.textDim),
+        ).setOrigin(1, 0).setDepth(DEPTHS.hudChrome);
+        if (kind === 'sugar') this.sugarRateText = rateText;
+        else if (kind === 'leaf') this.leafRateText = rateText;
+        else this.milkRateText = rateText;
+      }
+
       void pill;
       void icon;
       x = pillX - PILL_GAP;
@@ -1834,9 +1947,11 @@ export class HomeScene extends Phaser.Scene {
     this.resources.sugar = runtime.player.player.sugar;
     this.resources.leafBits = runtime.player.player.leafBits;
     this.resources.aphidMilk = runtime.player.player.aphidMilk;
-    this.sugarText.setText(String(this.resources.sugar));
-    this.leafText.setText(String(this.resources.leafBits));
-    this.milkText.setText(String(this.resources.aphidMilk));
+    const storage = runtime.player.player.storage;
+    if (storage) {
+      this.storageCaps = { sugar: storage.sugarCap, leaf: storage.leafCap };
+    }
+    this.refreshResourcePills();
   }
 
   // Single-row footer. Seven buttons evenly distributed across the
@@ -1998,9 +2113,7 @@ export class HomeScene extends Phaser.Scene {
       this.resources.sugar = r.resources.sugar;
       this.resources.leafBits = r.resources.leafBits;
       this.resources.aphidMilk = r.resources.aphidMilk;
-      this.sugarText.setText(String(this.resources.sugar));
-      this.leafText.setText(String(this.resources.leafBits));
-      this.milkText.setText(String(this.resources.aphidMilk));
+      this.refreshResourcePills();
       if (runtime.player) {
         if (runtime.player.player.streak) runtime.player.player.streak.comebackPending = false;
       }
@@ -2051,9 +2164,7 @@ export class HomeScene extends Phaser.Scene {
       this.resources.sugar = r.resources.sugar;
       this.resources.leafBits = r.resources.leafBits;
       this.resources.aphidMilk = r.resources.aphidMilk;
-      this.sugarText.setText(String(this.resources.sugar));
-      this.leafText.setText(String(this.resources.leafBits));
-      this.milkText.setText(String(this.resources.aphidMilk));
+      this.refreshResourcePills();
       if (runtime.player?.player.streak) {
         runtime.player.player.streak.lastClaim = r.streakDay;
       }
@@ -3077,8 +3188,9 @@ export class HomeScene extends Phaser.Scene {
         leafBits: res.player.leafBits,
         aphidMilk: res.player.aphidMilk,
       };
-      this.sugarText.setText(this.resources.sugar.toString());
-      this.leafText.setText(this.resources.leafBits.toString());
+      // Placement may change the production curve and storage cap
+      // (e.g. placed a Vault → cap rose), so refresh pill rates too.
+      this.refreshResourcePills();
       // Re-render buildings.
       this.boardContainer.removeAll(true);
       this.drawBoard();

@@ -190,10 +190,14 @@ attacker on raid commit.
 | QueenChamber   | 0          | 0             |
 
 Calibration target: a clean 3★ on a same-tier base should yield
-~1 unit-upgrade's worth of resources at the player's current level.
-A typical Q3 layout (~12–18 buildings) drops **~1500–2200 sugar + ~150
-leaf** when fully wiped — roughly the cost of one L3→L4 SoldierAnt
-(480 sugar / 128 leaf) plus change for a building upgrade.
+~3 unit-upgrades' worth of resources at the player's current level.
+A fully-built Q3 base (3× DewCollector + 3× LarvaNursery + 2× SugarVault
++ ~12 LeafWalls + ~3 MushroomTurrets + assorted defenders) drops
+**1480 sugar + ~240 leaf** when 3-starred — roughly 3× the cost of one
+L3→L4 SoldierAnt (480 sugar / 128 leaf), enough to bankroll a unit
+upgrade and start saving for the next one. Drops are flat per building
+kind (`BUILDING_STATS` does not scale with level), so the loot ceiling
+is set by the defender's quota fill, not their level.
 
 #### 5.3.4 Storage and overflow
 
@@ -515,16 +519,18 @@ and verify it still hits all of these. If any anchor moves more than
 
 | Anchor                                                    | Target  |
 |-----------------------------------------------------------|---------|
-| First raid (Q1 base) loot                                 | ~450 sugar + ~50 leaf (≈ 1.5× a SoldierAnt L1→L2) |
-| Q1 → Q2 upgrade                                           | reachable in first 30-min session via 1 idle hour OR 2 raids |
+| First raid (3★ on Q1 starter base) loot                   | ~660 sugar + ~40 leaf (≈ 4× a SoldierAnt L1→L2 cost: 150 sugar / 40 leaf) |
+| Q1 → Q2 upgrade                                           | reachable in first 30-min session via ~50 minutes of idle income OR 1 clean raid |
 | Q2 → Q3 upgrade                                           | reachable in day-2 session (~1 hour offline + 3 raids) |
 | Q3 → Q4 upgrade                                           | reachable end of week-1 |
 | Q4 → Q5 upgrade                                           | reachable end of week-3 |
 | Median unit at L5, L7 storage maxed                       | week-3 player profile |
 | Time to 3-star a same-trophy base (typical raid)          | 60–80 sim-seconds (180–240 of 2700 ticks idle) |
-| Sum of `dropsSugarOnDestroy` across an L1 economy base    | ~1500 sugar (1× DewC + 1× Vault + 1× Nursery + walls/turrets) |
-| Storage cap at full Q5 economy (5 vaults, 5 collectors @ L10) | ~88,500 sugar / ~40,500 leaf — covers ~3 unit-upgrades headroom |
-| Offline cap (8h) at full Q5 economy                       | ~1.47M sugar / ~430k leaf — clamped by storage cap to one drain-cycle |
+| Sum of `dropsSugarOnDestroy` across a Q1 starter base     | 660 sugar (1× DewC + 1× Vault + 1× Nursery; walls/turrets drop leaf, not sugar) |
+| Sum of `dropsLeafBitsOnDestroy` across a Q1 starter base  | 40 leaf (1× MushroomTurret + 4× LeafWall) |
+| Storage cap at full Q5 economy (3 vaults, 5 collectors, 5 nurseries @ L10) | sugar = 1000 + 1500 × 30 + 200 × 50 = **56,000**; leaf = 500 + 800 × 50 = **40,500** |
+| Storage cap at Q3 mid-game (1 vault L3, 3 collectors L3, 3 nurseries L3) | sugar = 1000 + 1500 × 3 + 200 × 9 = **7,300**; leaf = 500 + 800 × 9 = **7,700** |
+| Offline cap (8h) at full Q5 economy                       | ~1.47M sugar / ~430k leaf raw — clamped by storage cap (above) to one drain-cycle |
 
 ## 7. Combat model
 
