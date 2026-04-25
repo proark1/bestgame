@@ -618,14 +618,21 @@ and verify it still hits all of these. If any anchor moves more than
   seeds the sim with the persisted `host_snapshot`. On match end,
   `POST /api/arena/_result` writes `outcome`, `winner_slot`, `ticks`,
   and `final_state_hash` back into the row.
-- **Today's sim limitation:** the core sim has no per-building
-  ownership, so live matches run on the host's base only — both players
-  deploy against it and the loser is whoever lost their deploy cap
-  first (or whoever dealt less damage at tick 2700). Full symmetric
-  base-vs-base PvP is a sim refactor: add `ownerSlot` to `SimBuilding`
-  and partition the map into left/right halves. The storage + wire
-  shape already carries both snapshots so no further migration will be
-  needed when the sim lands.
+- **Per-building ownership:** every `SimBuilding` carries `owner: 0 |
+  1` (`shared/src/sim/state.ts`). Asynchronous raids stamp every
+  building owner=1 (defender) — no behavior change vs. pre-ownership.
+  When `SimConfig.secondSnapshot` is supplied (live arena PvP path),
+  its buildings ingest as owner=0 with X coordinates flipped via
+  `gridW - x - w` (a horizontal mirror within the full grid). The
+  authored layout reads left-to-right intuitively from the second
+  player's POV — no side-specific authoring contract; bases are
+  exchanged "as if facing each other across the table". Combat filters
+  target acquisition + attack loops by owner so units of side X only
+  fire on buildings/units of side ≠ X. The determinism hash includes
+  the owner field. Today's arena entrypoint still sends a single
+  host-snapshot — wiring the second snapshot through `arena_matches` +
+  the Colyseus room is the next step but no further sim work is
+  needed.
 
 ## 9. Monetization (post-MVP)
 
@@ -681,8 +688,11 @@ loop. Tracked gaps, ordered by player impact:
    column on players (migrations/0016), `colonyRankFromInvested()` +
    `lootCapForRank()` + `clampLootByRank()` in
    `shared/src/sim/colonyRank.ts`, applied on `/raid/submit`.
-4. **Per-building ownership in sim** — needed for symmetric live PvP.
-   See §8.2 for the existing arena workaround (host's-base-only).
+4. ~~**Per-building ownership in sim**~~ — shipped: `owner: 0 | 1`
+   on `SimBuilding`, `SimConfig.secondSnapshot` opt-in mirror, combat
+   targeting filters by owner, hash includes the field. Wiring the
+   actual second-snapshot through the Colyseus arena room is the next
+   integration step (§8.2).
 5. **Clan war season payouts** — clan scaffolding exists, but the
    resource payout for war wins is not yet wired up.
 

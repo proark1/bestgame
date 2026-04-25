@@ -127,6 +127,15 @@ export function combatSystem(
       continue;
     }
     const b = state.buildings[targetIdx]!;
+    // Defensive owner check. In raid mode, every building is owner=1
+    // and every attacker is owner=0 so this is a no-op. In symmetric
+    // arena (SimConfig.secondSnapshot) a stale targetBuildingId could
+    // otherwise point at an ally building; drop and let pheromoneFollow
+    // reacquire on the next tick.
+    if (b.owner === u.owner) {
+      u.targetBuildingId = 0;
+      continue;
+    }
     if (!attackerCanSee(b)) {
       // Target gone or still hidden — drop it, pheromoneFollow will
       // reacquire next tick.
@@ -209,14 +218,17 @@ export function combatSystem(
   // -------------------------------------------------------------------
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
-    if (u.hp <= 0 || u.owner !== 0 || u.attackCooldown > 0) continue;
+    if (u.hp <= 0 || u.attackCooldown > 0) continue;
     const stats = UNIT_STATS[u.kind];
     const rangeSq = mul(stats.attackRange, stats.attackRange);
     let bestIdx = -1;
     let bestD2: Fixed = rangeSq + 1;
     for (let k = 0; k < state.units.length; k++) {
       const t = state.units[k]!;
-      if (t.hp <= 0 || t.owner !== 1) continue;
+      // Same-owner skip (was hardcoded `t.owner !== 1` paired with
+      // outer `u.owner !== 0`). Owner-relative filter generalises to
+      // arena where either side can have units of either owner.
+      if (t.hp <= 0 || t.owner === u.owner) continue;
       if (t.layer !== u.layer) continue;
       const d2 = dist2(u.x, u.y, t.x, t.y);
       if (d2 <= rangeSq && d2 < bestD2) {
@@ -281,7 +293,11 @@ export function combatSystem(
     for (let i = 0; i < state.units.length; i++) {
       const u = state.units[i]!;
       if (u.hp <= 0) continue;
-      if (u.owner !== 0) continue;
+      // Owner filter: a building only fires on units of the OPPOSING
+      // owner. In raid mode (all buildings owner=1) this is identical
+      // to the previous `u.owner !== 0` hardcode. Symmetric arena
+      // makes both sides authoritative without a second branch.
+      if (u.owner === b.owner) continue;
       if (beh?.antiAirOnly && !UNIT_STATS[u.kind].canFly) continue;
       const reachable =
         u.layer === b.layer || (b.spans && b.spans.includes(u.layer));
@@ -320,7 +336,11 @@ export function combatSystem(
       for (let i = 0; i < state.units.length; i++) {
         if (i === bestIdx) continue;
         const u = state.units[i]!;
-        if (u.hp <= 0 || u.owner !== 0) continue;
+        // Owner filter is RELATIVE to the firing building so splash
+        // doesn't friendly-fire allies and works for both sides in
+        // symmetric arena. Hardcoded `u.owner !== 0` would let an
+        // owner=0 splash damage its own owner=0 units.
+        if (u.hp <= 0 || u.owner === b.owner) continue;
         // Splash still respects antiAir (spit only catches flyers
         // for SporeTower + splash variant; AcidSpitter has no
         // antiAirOnly, so this just stays permissive).
@@ -417,86 +437,97 @@ export function combatSystem(
   // This keeps the whole nest branch O(U + B) instead of O(U × B):
   // a previous revision re-scanned state.units inside each nest loop.
   // -------------------------------------------------------------------
-  let anyLiveAttacker = false;
-  const defenderAliveByKind: Partial<Record<UnitKind, number>> = {};
+  // Per-owner alive counts. In raid mode (owner=0 attackers, owner=1
+  // defenders) `liveByOwner[0]` is the original `anyLiveAttacker`
+  // boolean as a count, and `aliveByOwnerKind[1][kind]` is the
+  // original defender bucket. Generalising to per-owner keeps the
+  // SpiderNest spawn loop's "is there an enemy on the field?" + "do I
+  // already have N spawned units alive?" checks correct in symmetric
+  // arena, where either side can host nests.
+  const liveByOwner: [number, number] = [0, 0];
+  const aliveByOwnerKind: [Partial<Record<UnitKind, number>>, Partial<Record<UnitKind, number>>] = [{}, {}];
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
     if (u.hp <= 0) continue;
-    if (u.owner === 0) {
-      anyLiveAttacker = true;
-    } else {
-      defenderAliveByKind[u.kind] = (defenderAliveByKind[u.kind] ?? 0) + 1;
-    }
+    liveByOwner[u.owner]++;
+    const bucket = aliveByOwnerKind[u.owner];
+    bucket[u.kind] = (bucket[u.kind] ?? 0) + 1;
   }
-  // Only spawn while attackers are in play — avoids the nest quietly
+  // Only spawn while an enemy is in play — avoids the nest quietly
   // producing free defenders during the lull between deploy waves when
-  // no attackers exist yet. (Attacker-count is 0 until the first
-  // deploy, so without this the nest would preload defenders.)
-  if (anyLiveAttacker) {
-    for (let j = 0; j < state.buildings.length; j++) {
-      const b = state.buildings[j]!;
-      if (b.hp <= 0) continue;
-      const beh = BUILDING_BEHAVIOR[b.kind];
-      if (!beh?.spawnIntervalTicks || !beh.spawnKind) continue;
+  // no enemy units exist yet. "Enemy" is owner-relative so a symmetric
+  // arena nest on either side fires correctly.
+  // We unconditionally enter the loop and gate per-nest on
+  // `liveByOwner[1 - b.owner] > 0` so a single base with no enemies
+  // (the pre-deploy phase) keeps the original "preload" guard.
+  for (let j = 0; j < state.buildings.length; j++) {
+    const b = state.buildings[j]!;
+    if (b.hp <= 0) continue;
+    const beh = BUILDING_BEHAVIOR[b.kind];
+    if (!beh?.spawnIntervalTicks || !beh.spawnKind) continue;
+    if (liveByOwner[1 - b.owner] === 0) continue;
 
-      if (b.spawnCooldown === undefined) b.spawnCooldown = 0;
-      if (b.spawnCooldown > 0) {
-        b.spawnCooldown--;
-        continue;
-      }
-
-      // Player-authored AI `extraSpawn` effect: if this nest has
-      // banked bonus spawns, allow alive-count to temporarily exceed
-      // maxAlive by consuming one. This is what makes "on low hp,
-      // spit out one more defender" rules actually matter in the
-      // fight. bonus spawns do NOT re-arm the spawn cooldown — they
-      // fire immediately and exit.
-      const maxAlive = beh.spawnMaxAlive ?? 999;
-      const aliveCount = defenderAliveByKind[beh.spawnKind] ?? 0;
-      const bonus = b.bonusSpawnsRemaining ?? 0;
-      if (aliveCount >= maxAlive && bonus <= 0) {
-        // Don't reset cooldown — we'll retry every tick until a defender
-        // dies, which matches CoC-style clan castle urgency.
-        continue;
-      }
-      if (bonus > 0) {
-        b.bonusSpawnsRemaining = bonus - 1;
-      }
-
-      // Stagger successive spawns on x so multiple defenders from the
-      // same nest don't pixel-stack (hurts visual read AND pointer hit
-      // detection for any click-to-inspect UI). Deterministic offset
-      // based on the current alive count + max-alive keeps replays
-      // bit-identical.
-      const spawnStats = UNIT_STATS[beh.spawnKind];
-      const spacing = fromFloat(0.25);
-      const offsetSlot = aliveCount - ((maxAlive - 1) >> 1);
-      const offset: Fixed = mul(fromInt(offsetSlot), spacing);
-      const spawnX = add(buildingCenterX(b), offset);
-      const spawnY = buildingCenterY(b);
-      const newUnit: Unit & { lifespanTicks?: number } = {
-        id: state.nextUnitId++,
-        kind: beh.spawnKind,
-        owner: 1,
-        layer: b.layer,
-        x: spawnX,
-        y: spawnY,
-        hp: spawnStats.hpMax,
-        hpMax: spawnStats.hpMax,
-        pathId: -1,
-        pathProgress: 0,
-        attackCooldown: 0,
-        targetBuildingId: 0,
-      };
-      if (beh.spawnLifetimeTicks) {
-        newUnit.lifespanTicks = beh.spawnLifetimeTicks;
-      }
-      state.units.push(newUnit);
-      // Reflect the new defender in the cached count so two nests
-      // spawning in the same tick respect each other's max-alive gate.
-      defenderAliveByKind[beh.spawnKind] = aliveCount + 1;
-      b.spawnCooldown = beh.spawnIntervalTicks;
+    if (b.spawnCooldown === undefined) b.spawnCooldown = 0;
+    if (b.spawnCooldown > 0) {
+      b.spawnCooldown--;
+      continue;
     }
+
+    // Player-authored AI `extraSpawn` effect: if this nest has
+    // banked bonus spawns, allow alive-count to temporarily exceed
+    // maxAlive by consuming one. This is what makes "on low hp,
+    // spit out one more defender" rules actually matter in the
+    // fight. bonus spawns do NOT re-arm the spawn cooldown — they
+    // fire immediately and exit.
+    const maxAlive = beh.spawnMaxAlive ?? 999;
+    const aliveCount = aliveByOwnerKind[b.owner][beh.spawnKind] ?? 0;
+    const bonus = b.bonusSpawnsRemaining ?? 0;
+    if (aliveCount >= maxAlive && bonus <= 0) {
+      // Don't reset cooldown — we'll retry every tick until a defender
+      // dies, which matches CoC-style clan castle urgency.
+      continue;
+    }
+    if (bonus > 0) {
+      b.bonusSpawnsRemaining = bonus - 1;
+    }
+
+    // Stagger successive spawns on x so multiple defenders from the
+    // same nest don't pixel-stack (hurts visual read AND pointer hit
+    // detection for any click-to-inspect UI). Deterministic offset
+    // based on the current alive count + max-alive keeps replays
+    // bit-identical.
+    const spawnStats = UNIT_STATS[beh.spawnKind];
+    const spacing = fromFloat(0.25);
+    const offsetSlot = aliveCount - ((maxAlive - 1) >> 1);
+    const offset: Fixed = mul(fromInt(offsetSlot), spacing);
+    const spawnX = add(buildingCenterX(b), offset);
+    const spawnY = buildingCenterY(b);
+    const newUnit: Unit & { lifespanTicks?: number } = {
+      id: state.nextUnitId++,
+      kind: beh.spawnKind,
+      // Defender spawn inherits the nest's owner so symmetric arena
+      // produces NestSpiders on the right side for an owner=1 nest
+      // and on the left for an owner=0 nest. Raid mode (only owner=1
+      // nests exist) preserves the original `owner: 1` behavior.
+      owner: b.owner,
+      layer: b.layer,
+      x: spawnX,
+      y: spawnY,
+      hp: spawnStats.hpMax,
+      hpMax: spawnStats.hpMax,
+      pathId: -1,
+      pathProgress: 0,
+      attackCooldown: 0,
+      targetBuildingId: 0,
+    };
+    if (beh.spawnLifetimeTicks) {
+      newUnit.lifespanTicks = beh.spawnLifetimeTicks;
+    }
+    state.units.push(newUnit);
+    // Reflect the new defender in the cached count so two nests
+    // spawning in the same tick respect each other's max-alive gate.
+    aliveByOwnerKind[b.owner][beh.spawnKind] = aliveCount + 1;
+    b.spawnCooldown = beh.spawnIntervalTicks;
   }
 
   // -------------------------------------------------------------------
