@@ -498,9 +498,9 @@
           <span class="pill-tag">ID</span>
         </a>
         <div class="unit-cluster">
-          <img class="unit" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" />
-          <img class="unit lead" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" />
-          <img class="unit" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" />
+          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" />
         </div>
       </div>
     </section>
@@ -508,9 +508,9 @@
     <section class="promo-section">
       <div class="promo-card">
         <div class="unit-cluster">
-          <img class="unit" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" />
-          <img class="unit lead" src="/units/unit-Scarab.svg" alt="Scarab" width="128" height="128" />
-          <img class="unit" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-FireAnt" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" />
+          <img class="unit lead" data-sprite-key="unit-Scarab" src="/units/unit-Scarab.svg" alt="Scarab" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" />
         </div>
         <h2 class="display display-md promo-title">Season Pass<br />Stamp Card</h2>
         <p class="promo-copy">
@@ -634,6 +634,35 @@
           });
         }
       } catch (e) { /* ignore storage errors */ }
+
+      // Upgrade unit thumbnails to the same Gemini-generated / admin-
+      // uploaded sprites the in-game BootScene uses, when the deployed
+      // server has them. Page paints with the SVG fallbacks first; if
+      // /api/sprites/manifest advertises a real sprite for a given
+      // key, we probe-load it and swap the <img>'s src on success.
+      // Mirrors the behavior of client/src/scenes/BootScene.ts so the
+      // landing page and the game show the same art.
+      (() => {
+        const imgs = document.querySelectorAll('img[data-sprite-key]');
+        if (!imgs.length) return;
+        fetch('/api/sprites/manifest', { credentials: 'omit' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((manifest) => {
+            if (!manifest || !Array.isArray(manifest.images)) return;
+            const byKey = Object.create(null);
+            manifest.images.forEach((entry) => { byKey[entry.key] = entry; });
+            const version = manifest.updatedAt ? `?v=${manifest.updatedAt}` : '';
+            imgs.forEach((img) => {
+              const entry = byKey[img.dataset.spriteKey];
+              if (!entry || !entry.ext) return;
+              const url = `/assets/sprites/${entry.key}.${entry.ext}${version}`;
+              const probe = new Image();
+              probe.onload = () => { img.src = url; };
+              probe.src = url;
+            });
+          })
+          .catch(() => { /* keep SVG fallbacks */ });
+      })();
     </script>
   </body>
 </html>
