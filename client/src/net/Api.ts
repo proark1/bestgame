@@ -77,6 +77,13 @@ export interface PlayerState {
   // pre-storage server still loads (HUD falls back to "no cap").
   storage?: { sugarCap: number; leafCap: number };
   incomePerSecond?: { sugar: number; leafBits: number; aphidMilk: number };
+  // Colony Rank meta-progression (GDD §6.7). Optional so older servers
+  // keep working — client treats missing field as rank 0 + uncapped.
+  colony?: {
+    totalInvested: number;
+    rank: number;
+    lootCap: { sugar: number; leafBits: number };
+  };
 }
 
 export interface DailyQuestState {
@@ -975,6 +982,17 @@ export interface RaidSubmitResponse {
     sugarLooted: number;
     leafBitsLooted: number;
     tickEnded: number;
+  };
+  // Loot summary post-Colony-Rank cap. Optional so older servers
+  // (pre-#colony-rank-loot-cap) still parse; client falls back to
+  // result.sugarLooted / leafBitsLooted in that case.
+  loot?: {
+    sugar: number;
+    leafBits: number;
+    rawSugar: number;
+    rawLeaf: number;
+    capped: boolean;
+    colonyRank: number;
   };
   player: {
     trophies: number;
