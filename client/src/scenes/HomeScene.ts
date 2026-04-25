@@ -31,13 +31,17 @@ const BOARD_W = TILE * GRID_W;
 const BOARD_H = TILE * GRID_H;
 const HUD_H = 56;
 
+// Buildings that have separate horizontal + vertical sprite variants.
+// When rotated, we swap to the V variant instead of spinning the H sprite.
+const KINDS_WITH_V_VARIANTS: ReadonlySet<Types.BuildingKind> = new Set(['LeafWall', 'ThornHedge']);
+
 // Walls have hand-tuned horizontal + vertical sprites. When a wall is
 // rotated, instead of spinning the H sprite (whose weave bands then
 // run sideways and look broken) we swap to the V variant so weave
 // stays perpendicular to the long axis. Even rotation values (0, 2)
 // render horizontal; odd values (1, 3) render vertical.
 function buildingTextureKey(kind: Types.BuildingKind, rotation: 0 | 1 | 2 | 3 = 0): string {
-  if ((kind === 'LeafWall' || kind === 'ThornHedge') && rotation % 2 === 1) {
+  if (KINDS_WITH_V_VARIANTS.has(kind) && rotation % 2 === 1) {
     return `building-${kind}V`;
   }
   return `building-${kind}`;
@@ -1178,7 +1182,7 @@ export class HomeScene extends Phaser.Scene {
     // LeafWallV). For any other rotatable kind we'd still map the 90°
     // step to a Phaser transform, but currently only walls rotate so
     // this branch is effectively dead — kept for forward-compat.
-    if (rot !== 0 && b.kind !== 'LeafWall' && b.kind !== 'ThornHedge') {
+    if (rot !== 0 && !KINDS_WITH_V_VARIANTS.has(b.kind)) {
       spr.setRotation((rot * Math.PI) / 2);
     }
     this.tweens.add({
@@ -1646,7 +1650,7 @@ export class HomeScene extends Phaser.Scene {
       const spr = this.homeBuildingSprites.get(buildingId);
       if (spr) {
         const rot = (updated.rotation ?? 0) as 0 | 1 | 2 | 3;
-        if (updated.kind === 'LeafWall' || updated.kind === 'ThornHedge') {
+        if (KINDS_WITH_V_VARIANTS.has(updated.kind)) {
           spr.setTexture(buildingTextureKey(updated.kind, rot));
           spr.setRotation(0);
         } else {

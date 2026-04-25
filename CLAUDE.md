@@ -80,7 +80,7 @@ When creating or updating:
 - Renderer in `HomeScene.ts` uses `buildingTextureKey(kind, rotation)` to swap based on rotation parity
 - Don't rotate a single sprite; use the texture swap instead
 
-See `client/src/scenes/HomeScene.ts:32–40` for the helper function.
+See `client/src/scenes/HomeScene.ts:39–48` for the helper function and constant.
 
 ### Color Tokens
 
