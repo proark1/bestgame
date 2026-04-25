@@ -59,10 +59,10 @@ interface AdminState {
   files: SpriteFile[];
   cards: SpriteCard[];
   compression: Compression;
-  animationCompression: Compression;
   progressEl: HTMLDivElement | null;
   animation: AnimationSettings | null;
   uiOverrides: UiOverrideSettings | null;
+  activeCategory: SpriteCategory;
 }
 
 const state: AdminState = {
@@ -70,10 +70,10 @@ const state: AdminState = {
   files: [],
   cards: [],
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
-  animationCompression: { format: 'webp', quality: 0.9, maxDim: 256 },
   progressEl: null,
   animation: null,
   uiOverrides: null,
+  activeCategory: 'units',
 };
 
 const root = document.getElementById('admin-root') as HTMLDivElement;
@@ -158,15 +158,27 @@ async function bootstrap(): Promise<void> {
 // (not the URL hash) because the admin is a single-page tool and we
 // don't have routing; localStorage matches the existing token-stash
 // pattern on this page.
-type AdminTab = 'sprites' | 'animations' | 'users' | 'preview';
+type AdminTab = 'sprites' | 'users' | 'preview';
 const TAB_STORAGE_KEY = 'hive.adminTab';
 function readActiveTab(): AdminTab {
   const v = localStorage.getItem(TAB_STORAGE_KEY);
-  if (v === 'animations' || v === 'users' || v === 'preview' || v === 'sprites') return v;
+  if (v === 'users' || v === 'preview' || v === 'sprites') return v;
   return 'sprites';
 }
 function writeActiveTab(tab: AdminTab): void {
   localStorage.setItem(TAB_STORAGE_KEY, tab);
+}
+
+// Active sprite category filter — persisted for convenience
+type SpriteCategory = 'units' | 'ui' | 'branding';
+const CATEGORY_STORAGE_KEY = 'hive.spriteCategory';
+function readActiveCategory(): SpriteCategory {
+  const v = localStorage.getItem(CATEGORY_STORAGE_KEY);
+  if (v === 'ui' || v === 'branding') return v;
+  return 'units';
+}
+function writeActiveCategory(cat: SpriteCategory): void {
+  localStorage.setItem(CATEGORY_STORAGE_KEY, cat);
 }
 
 function render(): void {
@@ -213,18 +225,16 @@ function render(): void {
   root.append(header);
 
   // -- Tabs -----------------------------------------------------------------
-  // Sprites / Animations / Users / Preview. Sprites is the sprite grid +
-  // UI override flags; Animations owns unit walk-cycle generation with
-  // global format/quality/maxDim settings; Users owns login-account CRUD;
-  // Preview groups the UI overrides by the scene they affect.
+  // Sprites / Users / Preview. Sprites shows the sprite grid with category
+  // filters and inline animation generation; Users owns login-account CRUD;
+  // Preview groups UI overrides by the scene they affect.
   const activeTab = readActiveTab();
   const tabBar = document.createElement('nav');
   tabBar.className = 'admin-tabs';
   const tabDefs: ReadonlyArray<{ id: AdminTab; label: string }> = [
-    { id: 'sprites',    label: 'Sprites' },
-    { id: 'animations', label: 'Animations' },
-    { id: 'users',      label: 'Users' },
-    { id: 'preview',    label: 'Preview' },
+    { id: 'sprites', label: 'Sprites' },
+    { id: 'users',   label: 'Users' },
+    { id: 'preview', label: 'Preview' },
   ];
   for (const def of tabDefs) {
     const btn = document.createElement('button');
@@ -269,15 +279,9 @@ function render(): void {
     );
     return;
   }
-  if (activeTab === 'animations') {
-    root.append(renderAnimationsTab());
-    return;
-  }
 
-  // Sprites tab (default).
-  root.append(renderGuide());
-  root.append(renderAnimationPanel());
-  root.append(renderUiOverridesPanel());
+  // Sprites tab (default) — sprite grid with categories + inline animation
+  root.append(renderSpritesTab());
 
   // -- Toolbar --------------------------------------------------------------
   const toolbar = document.createElement('div');
@@ -665,16 +669,16 @@ async function generateAnimationFromSprite(
 
   onProgress?.(`${kind}: compressing…`);
   const compressed = await compressBase64Image(stripPng, 'image/png', {
-    format: state.animationCompression.format,
-    quality: state.animationCompression.quality,
-    maxDimension: state.animationCompression.maxDim,
+    format: state.compression.format,
+    quality: Math.max(0.85, state.compression.quality), // minimum 0.85 for animation clarity
+    maxDimension: state.compression.maxDim,
   });
 
   onProgress?.(`${kind}: saving…`);
   const res = await saveSprite({
     key: `unit-${kind}-walk`,
     data: compressed.base64,
-    format: state.animationCompression.format,
+    format: state.compression.format,
     frames: 2,
   });
   return res;
@@ -727,11 +731,11 @@ async function generateWalkCycle(
   const stripPng = await compositeWalkStrip([a, b]);
 
   onProgress?.(`${kind}: compressing…`);
-  // Use animation compression settings; fall back to high quality for this strip
+  // Use global sprite compression settings; ensure quality high enough for animation detail
   const compressed = await compressBase64Image(stripPng, 'image/png', {
-    format: state.animationCompression.format,
-    quality: Math.max(0.85, state.animationCompression.quality), // minimum 0.85 for animation detail
-    maxDimension: state.animationCompression.maxDim,
+    format: state.compression.format,
+    quality: Math.max(0.85, state.compression.quality), // minimum 0.85 for leg/wing movement clarity
+    maxDimension: state.compression.maxDim,
   });
 
   onProgress?.(`${kind}: saving…`);
@@ -745,25 +749,41 @@ async function generateWalkCycle(
 }
 
 // Animation toggle + generation panel. One row per animated unit kind:
-// Dedicated Animations tab. Reuses generated sprites + creates variations
-// to build animation frames. Global compression settings (format/quality/
-// maxDim) apply to all animations unless per-unit overrides are added later.
-function renderAnimationsTab(): HTMLElement {
+// Sprites tab with category filtering and inline animation generation.
+// Renders the sprite grid for the selected category (Units, UI, Logo/Branding).
+function renderSpritesTab(): HTMLElement {
   const root = document.createElement('div');
-  root.className = 'animations-tab';
+  root.className = 'sprites-tab-wrapper';
 
-  // Header with intro text
-  const intro = document.createElement('section');
-  intro.className = 'animations-intro';
-  intro.innerHTML = `
-    <h2>Unit Animations</h2>
-    <p>Generate frame-based animations for units. Reuses existing sprites as frame 1, generates variations for additional frames, then composites them into animation strips.</p>
-  `;
-  root.append(intro);
+  // Category selector
+  const categoryBar = document.createElement('div');
+  categoryBar.className = 'category-bar';
+  const categories: Array<{ id: SpriteCategory; label: string }> = [
+    { id: 'units', label: 'Units' },
+    { id: 'ui', label: 'UI Elements' },
+    { id: 'branding', label: 'Logo & Branding' },
+  ];
+  for (const cat of categories) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'category-btn' + (cat.id === state.activeCategory ? ' is-active' : '');
+    btn.textContent = cat.label;
+    btn.addEventListener('click', () => {
+      state.activeCategory = cat.id;
+      writeActiveCategory(cat.id);
+      render();
+    });
+    categoryBar.append(btn);
+  }
+  root.append(categoryBar);
 
-  // Global animation compression toolbar
+  root.append(renderGuide());
+  root.append(renderAnimationPanel());
+  root.append(renderUiOverridesPanel());
+
+  // -- Toolbar for global sprite compression settings
   const toolbar = document.createElement('div');
-  toolbar.className = 'toolbar animations-toolbar';
+  toolbar.className = 'toolbar';
 
   const fmtLabel = document.createElement('label');
   fmtLabel.innerHTML = `<span>format</span>`;
@@ -774,9 +794,9 @@ function renderAnimationsTab(): HTMLElement {
     opt.textContent = f.toUpperCase();
     fmtSel.append(opt);
   }
-  fmtSel.value = state.animationCompression.format;
+  fmtSel.value = state.compression.format;
   fmtSel.addEventListener('change', () => {
-    state.animationCompression.format = fmtSel.value as 'webp' | 'png';
+    state.compression.format = fmtSel.value as 'webp' | 'png';
   });
   fmtLabel.append(fmtSel);
 
@@ -787,11 +807,11 @@ function renderAnimationsTab(): HTMLElement {
   qInput.min = '0.4';
   qInput.max = '1';
   qInput.step = '0.05';
-  qInput.value = String(state.animationCompression.quality);
+  qInput.value = String(state.compression.quality);
   const qVal = document.createElement('span');
   qVal.textContent = qInput.value;
   qInput.addEventListener('input', () => {
-    state.animationCompression.quality = Number(qInput.value);
+    state.compression.quality = Number(qInput.value);
     qVal.textContent = qInput.value;
   });
   qLabel.append(qInput, qVal);
@@ -803,32 +823,20 @@ function renderAnimationsTab(): HTMLElement {
   dInput.min = '64';
   dInput.max = '1024';
   dInput.step = '32';
-  dInput.value = String(state.animationCompression.maxDim);
+  dInput.value = String(state.compression.maxDim);
   dInput.addEventListener('change', () => {
-    state.animationCompression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
-    dInput.value = String(state.animationCompression.maxDim);
+    state.compression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
+    dInput.value = String(state.compression.maxDim);
   });
   dLabel.append(dInput);
 
-  const summary = document.createElement('label');
-  summary.style.marginLeft = 'auto';
-  summary.innerHTML = `<span style="color: var(--text)">Global settings — apply to all unit animations</span>`;
-
-  toolbar.append(fmtLabel, qLabel, dLabel, summary);
+  toolbar.append(fmtLabel, qLabel, dLabel);
   root.append(toolbar);
 
-  // Units list with animation generation controls
-  const settings = state.animation;
-  if (!settings) {
-    const msg = document.createElement('p');
-    msg.style.padding = '20px';
-    msg.textContent = 'Animation settings unreachable. Check the API/DB is up, then reload the admin.';
-    root.append(msg);
-    return root;
-  }
-
-  const list = document.createElement('div');
-  list.className = 'animations-list';
+  // -- Sprite grid
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  state.cards = [];
 
   const fileByKey = new Map<string, SpriteFile>();
   for (const f of state.files) {
@@ -836,68 +844,66 @@ function renderAnimationsTab(): HTMLElement {
     fileByKey.set(base, f);
   }
 
-  const hasSprite = (kind: string): boolean => fileByKey.has(`unit-${kind}`);
-  const hasAnimation = (kind: string): boolean =>
-    state.files.some(f => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`);
-
-  const refreshAnimationFiles = async (): Promise<void> => {
-    try {
-      const s = await fetchStatus();
-      state.files = s.files;
-    } catch {
-      // ignore
-    }
+  const mk = (
+    kind: 'unit' | 'building' | 'menuUi',
+    baseName: string,
+  ): SpriteCard => {
+    const key = kind === 'menuUi' ? baseName : `${kind}-${baseName}`;
+    const file = fileByKey.get(key);
+    const ext = file ? (file.name.endsWith('.webp') ? 'webp' : 'png') : null;
+    const bucket =
+      kind === 'unit'
+        ? 'units'
+        : kind === 'building'
+          ? 'buildings'
+          : 'menuUi';
+    const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
+    return new SpriteCard({
+      key,
+      initialPrompt,
+      fileMeta: {
+        exists: !!file,
+        size: file?.size ?? 0,
+        ext,
+      },
+      composePrompt: (desc) => composePrompt(desc, kind, key),
+      getCompression: () => state.compression,
+      onPromptSave: async (value) => {
+        await updatePrompt({ category: bucket, key: baseName, value });
+        if (state.prompts) {
+          if (!state.prompts[bucket]) state.prompts[bucket] = {};
+          state.prompts[bucket]![baseName] = value;
+        }
+      },
+      onSaved: () => {},
+      showStatus: statusToast,
+    });
   };
 
-  for (const kind of settings.kinds) {
-    const row = document.createElement('div');
-    row.className = 'animations-row';
-
-    const info = document.createElement('div');
-    info.className = 'animations-info';
-    const name = document.createElement('div');
-    name.className = 'animations-name';
-    name.textContent = kind;
-    const status = document.createElement('div');
-    status.className = 'animations-status';
-    const spriteOk = hasSprite(kind);
-    const animOk = hasAnimation(kind);
-    status.innerHTML = `
-      Sprite: <span class="status-badge" data-ok="${spriteOk}">${spriteOk ? '✓' : '✗'}</span>
-      Animation: <span class="status-badge" data-ok="${animOk}">${animOk ? '✓' : '✗'}</span>
-    `;
-    info.append(name, status);
-
-    const actions = document.createElement('div');
-    actions.className = 'animations-actions';
-
-    const genBtn = document.createElement('button');
-    genBtn.className = 'btn';
-    genBtn.textContent = animOk ? 'Regenerate' : 'Generate';
-    genBtn.disabled = !spriteOk || !state.animation;
-    if (!spriteOk) {
-      genBtn.title = 'Generate the sprite first in the Sprites tab';
+  // Render sprites for active category
+  if (state.activeCategory === 'units') {
+    for (const u of UNIT_KEYS) {
+      const card = mk('unit', u);
+      state.cards.push(card);
+      grid.append(card.root);
     }
-    genBtn.addEventListener('click', async () => {
-      if (!spriteOk || !state.animation) return;
-      genBtn.disabled = true;
-      try {
-        await generateAnimationFromSprite(kind, (note) => statusToast(note, 'info'));
-        await refreshAnimationFiles();
-        render(); // Re-render animations tab to update status indicators
-        statusToast(`${kind} animation saved`, 'success');
-      } catch (err) {
-        statusToast(`${kind}: ${(err as Error).message}`, 'error');
-        genBtn.disabled = false;
-      }
-    });
-
-    actions.append(genBtn);
-    row.append(info, actions);
-    list.append(row);
+  } else if (state.activeCategory === 'ui') {
+    for (const u of MENU_UI_KEYS.filter(k => !k.startsWith('landing-') && !k.startsWith('queen-'))) {
+      const card = mk('menuUi', u);
+      state.cards.push(card);
+      grid.append(card.root);
+    }
+  } else if (state.activeCategory === 'branding') {
+    // Logo and branding: landing-hero + queen skins
+    const brandingKeys = MENU_UI_KEYS.filter(k => k.startsWith('landing-') || k.startsWith('queen-'));
+    for (const k of brandingKeys) {
+      const card = mk('menuUi', k);
+      state.cards.push(card);
+      grid.append(card.root);
+    }
   }
 
-  root.append(list);
+  root.append(grid);
   return root;
 }
 
