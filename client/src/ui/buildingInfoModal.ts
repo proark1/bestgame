@@ -36,7 +36,7 @@ const MAX_BUILDING_LEVEL = 10;
 // long axis so spinning the sprite 90° produces a visibly different
 // vertical section. Bunkers / towers are rounded and don't read as
 // "oriented" so rotating them looks broken; we keep them off the list.
-const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.BuildingKind>([
+export const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.BuildingKind>([
   'LeafWall',
   'ThornHedge',
 ]);

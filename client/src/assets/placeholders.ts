@@ -385,17 +385,40 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.fillRoundedRect(cx - 6, s - 72, 12, 20, 2);
   },
   'building-LeafWall': (g, s) => {
+    // Horizontal fence panel — long axis runs left-to-right across the
+    // tile so rotating the asset 90° produces a clearly different
+    // vertical wall. The shape is a flat woven panel, not stacked
+    // triangles, so the player sees a real "wall" that lines up edge-
+    // to-edge with neighbours like Clash of Clans walls.
     const cx = s / 2;
+    const cy = s / 2;
+    const panelW = s - 24;       // long axis: spans almost the whole tile
+    const panelH = Math.round(s * 0.42); // short axis: ~42% so a clear horizontal/vertical read
+    const x0 = cx - panelW / 2;
+    const y0 = cy - panelH / 2;
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    // Base panel — solid green woven body
+    g.fillStyle(PALETTE.leaf.belly, 1);
+    g.fillRoundedRect(x0, y0, panelW, panelH, 10);
+    g.strokeRoundedRect(x0, y0, panelW, panelH, 10);
+    // Vertical weave bands across the panel — gives a clear horizontal
+    // "fence" read because the bands run perpendicular to the long axis
     g.fillStyle(PALETTE.leaf.body, 1);
-    // stacked leaves
-    for (let i = 0; i < 3; i++) {
-      const y = s - 30 - i * 38;
-      g.fillTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
-      g.strokeTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
+    const bandCount = 5;
+    const bandW = Math.floor(panelW / (bandCount * 2 + 1));
+    for (let i = 0; i < bandCount; i++) {
+      const bx = x0 + bandW + i * (bandW * 2);
+      g.fillRect(bx, y0 + 6, bandW, panelH - 12);
     }
+    // Horizontal leaf-edge accent rails (top + bottom) — mark the long
+    // axis explicitly so the eye reads "horizontal panel"
     g.fillStyle(PALETTE.leaf.accent, 1);
-    g.lineBetween(cx, s - 30, cx, s - 150);
+    g.fillRect(x0 + 4, y0 + 4, panelW - 8, 5);
+    g.fillRect(x0 + 4, y0 + panelH - 9, panelW - 8, 5);
+    // Center seam — single bright leaf vein along the long axis
+    g.lineStyle(2, PALETTE.leaf.accent, 1);
+    g.lineBetween(x0 + 6, cy, x0 + panelW - 6, cy);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
   },
   'building-PebbleBunker': (g, s) => {
     const cx = s / 2;
