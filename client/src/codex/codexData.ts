@@ -495,6 +495,20 @@ export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {
       'Higher HP than a Leaf Wall and lays a burn on any melee ' +
       'attacker. Gates the path; punishes the push.',
   },
+  AphidFarm: {
+    kind: 'AphidFarm',
+    name: 'Aphid Farm',
+    role: 'Premium producer',
+    faction: 'Ants',
+    spriteKey: 'building-AphidFarm',
+    story:
+      'A herd of aphids tended in the dark. Tickle their backs and ' +
+      'they weep a pearl-thick milk that no rival colony can fake.',
+    power:
+      'Slowly mints Aphid Milk — the rare currency. Burrowed in the ' +
+      'underground next to the vault; raiders who breach the tunnels ' +
+      'will set this on the priority list.',
+  },
 };
 
 // Stable ordering for Codex navigation. Matches the deck order in

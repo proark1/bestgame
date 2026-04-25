@@ -101,7 +101,7 @@ of the deck picker and upgrade catalog by `ROSTER_HIDDEN_UNITS`.
 Balance target: any 3-role army should reach 1★ on a same-trophy base.
 No "solved" comp should reach 3★ without hard counters.
 
-### 5.2 Buildings (14 player-placeable + Queen)
+### 5.2 Buildings (15 player-placeable + Queen)
 
 All stats in `shared/src/sim/stats.ts::BUILDING_STATS`.
 Placement/costs in `server/api/src/game/buildingCosts.ts`.
@@ -115,11 +115,12 @@ Unlock quotas in `server/api/src/game/buildingRules.ts::QUOTA_BY_TIER`.
 | Defense T2 | PebbleBunker, AcidSpitter, SporeTower | Q2          |
 | Defense T3 | RootSnare, HiddenStinger              | Q3          |
 | Defense T4 | SpiderNest, ThornHedge                | Q4          |
+| Premium economy | AphidFarm                        | Q4          |
 | Utility    | TunnelJunction (layer transitions)    | Q2          |
 
 Layer rules (`ALLOWED_LAYERS`):
 - **Surface only:** MushroomTurret, LeafWall, PebbleBunker, DewCollector, AcidSpitter, SporeTower, HiddenStinger, ThornHedge.
-- **Underground only:** LarvaNursery, SugarVault, SpiderNest.
+- **Underground only:** LarvaNursery, SugarVault, SpiderNest, AphidFarm.
 - **Both layers:** QueenChamber, TunnelJunction, DungeonTrap, RootSnare.
 
 Max buildings per base: 60 (`MAX_BUILDINGS_PER_BASE`).
@@ -133,7 +134,7 @@ and one is reserved (AphidMilk) for the post-MVP monetization tier.
 |------------|--------------|----------|-------------------------------------------------|-----------------------------------------------------|
 | Sugar      | gold pill    | yes      | DewCollector (8/sec), SugarVault (2/sec), raid loot | Unit upgrades, building placement, Queen upgrades |
 | LeafBits   | green pill   | yes      | LarvaNursery (3/sec), raid loot                 | Unit upgrades, building placement, Queen upgrades   |
-| AphidMilk  | silver pill  | reserved | (future) premium producer                       | (future) prestige unlocks, builder time-skip        |
+| AphidMilk  | silver pill  | yes      | AphidFarm (0.2/sec)                             | (future) prestige unlocks, builder time-skip        |
 
 #### 5.3.1 Per-second production
 
@@ -142,11 +143,12 @@ hp ≤ 0 (destroyed buildings don't produce). Canonical table:
 `server/api/src/routes/player.ts::INCOME_PER_SECOND` (mirrored to the
 client via the `/player/building/catalog` endpoint).
 
-| Building     | Sugar/sec | LeafBits/sec | Layer       |
-|--------------|-----------|--------------|-------------|
-| DewCollector | 8 × level | —            | surface     |
-| LarvaNursery | —         | 3 × level    | underground |
-| SugarVault   | 2 × level | —            | underground |
+| Building     | Sugar/sec | LeafBits/sec | AphidMilk/sec | Layer       |
+|--------------|-----------|--------------|---------------|-------------|
+| DewCollector | 8 × level | —            | —             | surface     |
+| LarvaNursery | —         | 3 × level    | —             | underground |
+| SugarVault   | 2 × level | —            | —             | underground |
+| AphidFarm    | —         | —            | 0.2 × level   | underground |
 
 A starter base (1× DewCollector L1, 1× LarvaNursery L1, 1× SugarVault L1)
 produces **10 sugar/sec + 3 leaf/sec** — about 36k sugar / 10.8k leaf
@@ -227,6 +229,7 @@ Source: `BUILDING_PLACEMENT_COSTS` (`server/api/src/game/buildingCosts.ts`),
 | HiddenStinger  | 900      | 260     | 220  | 10 dmg @ 18t, r2.5 (cloaked) | 0 / 18 | Q3 | 0·0·1·2·3 |
 | SpiderNest     | 1200     | 320     | 260  | spawns 3× NestSpider, 4s cd | 0 / 20 | Q4 | 0·0·0·1·2 |
 | ThornHedge     | 220      | 110     | 1100 | reflects 1 burn/tick on melee | 0 / 12 | Q4 | 0·0·0·4·8 |
+| AphidFarm      | 1500     | 400     | 320  | — (0.2 milk/s × level)      | 0 / 25    | Q4      | 0·0·0·1·2     |
 
 Cooldown notation: `t = ticks @ 30 Hz`. `r = attack range in tiles`.
 
@@ -272,7 +275,7 @@ Source: `QUEEN_UPGRADE_COST` (`server/api/src/game/buildingRules.ts`).
 |-----------------|--------|----------|---------------------------------------------------------------|----------------------|
 | Q1 → Q2         | 500    | 200      | PebbleBunker, DungeonTrap, TunnelJunction, AcidSpitter, SporeTower | FireAnt          |
 | Q2 → Q3         | 1500   | 600      | RootSnare, HiddenStinger, AI-rules editor (4 rules / base)    | Termite, Dragonfly   |
-| Q3 → Q4         | 4000   | 1500     | SpiderNest, ThornHedge (8 AI rules / base)                    | Mantis               |
+| Q3 → Q4         | 4000   | 1500     | SpiderNest, ThornHedge, AphidFarm (8 AI rules / base)         | Mantis               |
 | Q4 → Q5         | 10000  | 3500     | (cap raised on existing kinds; 12 AI rules / base)            | Scarab               |
 
 Cumulative cost Q1→Q5: **16,000 sugar + 5,800 leaf**. At a Q3 economy
@@ -632,9 +635,9 @@ loop. Tracked gaps, ordered by player impact:
    The `buildTime(L)` formula is specified but no `builders` table or
    queue UI exists yet (`BuilderQueueScene` is a placeholder). This is
    also the planned AphidMilk monetization hook (skip-time IAP).
-2. **AphidMilk producers** — no source exists in MVP. Currency is
-   surfaced in the HUD pill (always visible) so players see the slot;
-   the actual income hook lands with builders.
+2. ~~**AphidMilk producers**~~ — shipped: AphidFarm (§5.4) produces
+   milk at 0.2/sec × level, gated to Q4+. Sinks (builder time-skip,
+   prestige cosmetics) still pending.
 3. **Colony Rank loot cap (§6.7)** — formula specified, not yet on
    `/api/raid/submit`. Storage cap (§6.8) is shipped instead and
    handles the inflation problem from a different angle.

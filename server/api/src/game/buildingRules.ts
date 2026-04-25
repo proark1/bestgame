@@ -40,6 +40,8 @@ export const ALLOWED_LAYERS: Record<Types.BuildingKind, readonly Types.Layer[]> 
   HiddenStinger: [0],
   SpiderNest: [1],
   ThornHedge: [0],
+  // Premium producer hides underground next to vault + nursery.
+  AphidFarm: [1],
 };
 
 // Maximum count per kind at queen level N (1..MAX_QUEEN_LEVEL).
@@ -67,6 +69,10 @@ export const QUOTA_BY_TIER: Record<Types.BuildingKind, readonly number[]> = {
   HiddenStinger:  [0, 0, 1, 2, 3],
   SpiderNest:     [0, 0, 0, 1, 2],
   ThornHedge:     [0, 0, 0, 4, 8],
+  // Aphid farm is a late-game economy unlock — Q4 grants the first
+  // slot, Q5 a second. Single farm at first so the milk economy
+  // ramps slowly even after the player can build one.
+  AphidFarm:      [0, 0, 0, 1, 2],
 };
 
 // Cost to upgrade the Queen from level N to N+1. Index = fromLevel-1,

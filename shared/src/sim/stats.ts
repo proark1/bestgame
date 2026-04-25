@@ -401,6 +401,19 @@ export const BUILDING_STATS: Record<BuildingKind, BuildingStats> = {
     dropsSugarOnDestroy: 0,
     dropsLeafBitsOnDestroy: 12,
   },
+  // Premium producer. Doesn't attack, modest hp (it's a glass cannon
+  // for raiders — destroying one nets a chunky leaf payout). Drops a
+  // bit of leaf on destruction so attacking it isn't pure spoils-of-
+  // currency-the-attacker-can't-bank.
+  AphidFarm: {
+    hpMax: 320,
+    canAttack: false,
+    attackRange: 0,
+    attackDamage: 0,
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 25,
+  },
 };
 
 // Extended per-building behavior. Same pattern as UNIT_BEHAVIOR:

@@ -57,7 +57,7 @@ const QUEEN_UNLOCKS_BY_TIER: Record<number, { buildings: Types.BuildingKind[]; u
     units: ['Termite', 'Dragonfly'],
   },
   4: {
-    buildings: ['SpiderNest', 'ThornHedge'],
+    buildings: ['SpiderNest', 'ThornHedge', 'AphidFarm'],
     units: ['Mantis'],
   },
   5: {
@@ -98,6 +98,7 @@ const KIND_LABELS: Partial<Record<Types.BuildingKind, string>> = {
   HiddenStinger: 'Hidden Stinger',
   SpiderNest: 'Spider Nest',
   ThornHedge: 'Thorn Hedge',
+  AphidFarm: 'Aphid Farm',
 };
 
 // Per-second production table — pulled from the server's catalog
@@ -110,6 +111,7 @@ const INCOME_FALLBACK: Partial<
   DewCollector: { sugar: 8, leafBits: 0, aphidMilk: 0 },
   LarvaNursery: { sugar: 0, leafBits: 3, aphidMilk: 0 },
   SugarVault: { sugar: 2, leafBits: 0, aphidMilk: 0 },
+  AphidFarm: { sugar: 0, leafBits: 0, aphidMilk: 0.2 },
 };
 
 // Computed stats at a given level — UI-side mirror of the shared sim's
@@ -352,6 +354,17 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
           'Leaf / sec',
           `+${income.leafBits * levelMult}`,
           showNextStats ? `+${income.leafBits * nextLevelMult}` : undefined,
+        );
+      }
+      if (income.aphidMilk > 0) {
+        // Milk rate is fractional (0.2/sec at L1) so render with one
+        // decimal place. The server's offline trickle floors per call,
+        // so the player banks exactly the rounded number per second
+        // they spent producing.
+        addStat(
+          'Milk / sec',
+          `+${(income.aphidMilk * levelMult).toFixed(1)}`,
+          showNextStats ? `+${(income.aphidMilk * nextLevelMult).toFixed(1)}` : undefined,
         );
       }
     }

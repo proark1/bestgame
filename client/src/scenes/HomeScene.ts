@@ -69,10 +69,11 @@ const STARTER_BUILDINGS: Array<{
 // Per-second income by building kind. Trickles into the HUD resource
 // counters while the player is on the home scene — gives the colony a
 // sense of liveness even without a raid in progress.
-const INCOME_PER_SECOND: Partial<Record<Types.BuildingKind, { sugar: number; leafBits: number }>> = {
-  DewCollector: { sugar: 8, leafBits: 0 },
-  LarvaNursery: { sugar: 0, leafBits: 3 },
-  SugarVault: { sugar: 2, leafBits: 0 },
+const INCOME_PER_SECOND: Partial<Record<Types.BuildingKind, { sugar: number; leafBits: number; aphidMilk: number }>> = {
+  DewCollector: { sugar: 8, leafBits: 0, aphidMilk: 0 },
+  LarvaNursery: { sugar: 0, leafBits: 3, aphidMilk: 0 },
+  SugarVault: { sugar: 2, leafBits: 0, aphidMilk: 0 },
+  AphidFarm: { sugar: 0, leafBits: 0, aphidMilk: 0.2 },
 };
 
 export class HomeScene extends Phaser.Scene {
@@ -205,13 +206,16 @@ export class HomeScene extends Phaser.Scene {
 
     let sugar = 0;
     let leaf = 0;
+    let milk = 0;
     if (this.serverBase) {
       for (const b of this.serverBase.buildings) {
         if (b.hp <= 0) continue;
         const inc = INCOME_PER_SECOND[b.kind];
         if (!inc) continue;
-        sugar += inc.sugar * seconds;
-        leaf += inc.leafBits * seconds;
+        const lvl = Math.max(1, b.level | 0);
+        sugar += inc.sugar * lvl * seconds;
+        leaf += inc.leafBits * lvl * seconds;
+        milk += inc.aphidMilk * lvl * seconds;
       }
     } else {
       for (const b of STARTER_BUILDINGS) {
@@ -219,9 +223,13 @@ export class HomeScene extends Phaser.Scene {
         if (!inc) continue;
         sugar += inc.sugar * seconds;
         leaf += inc.leafBits * seconds;
+        milk += inc.aphidMilk * seconds;
       }
     }
-    if (sugar === 0 && leaf === 0) return;
+    // Floor milk to integer (matches server flooring) so the local
+    // visual stays in sync with what /me will write.
+    milk = Math.floor(milk);
+    if (sugar === 0 && leaf === 0 && milk === 0) return;
     // Local-side trickle visually clamps to the cap — the server is
     // doing the same on the next /me, so showing the player numbers
     // they'll keep rather than ones that snap back is the right call.
@@ -233,6 +241,8 @@ export class HomeScene extends Phaser.Scene {
     this.resources.leafBits = leafCap !== null
       ? Math.min(leafCap, this.resources.leafBits + leaf)
       : this.resources.leafBits + leaf;
+    // AphidMilk has no storage cap in MVP — same model as the server.
+    this.resources.aphidMilk += milk;
     this.refreshResourcePills();
     this.flashResourceGain();
   }
@@ -270,9 +280,9 @@ export class HomeScene extends Phaser.Scene {
   // Sums the per-second production from the active server base (or the
   // STARTER_BUILDINGS fallback) for one resource kind. Mirrors the
   // sim-side scaling: production is paused for hp <= 0 buildings, and
-  // each level multiplies linearly.
+  // each level multiplies linearly. Returns a fractional value so the
+  // milk pill (0.2/sec at L1) can render "+0.2/sec".
   private computeRate(kind: 'sugar' | 'leaf' | 'milk'): number {
-    if (kind === 'milk') return 0; // no producer in MVP
     const buildings = this.serverBase ? this.serverBase.buildings : null;
     let total = 0;
     if (buildings) {
@@ -281,13 +291,20 @@ export class HomeScene extends Phaser.Scene {
         const inc = INCOME_PER_SECOND[b.kind];
         if (!inc) continue;
         const mult = Math.max(1, b.level | 0);
-        total += (kind === 'sugar' ? inc.sugar : inc.leafBits) * mult;
+        const r =
+          kind === 'sugar' ? inc.sugar :
+          kind === 'leaf' ? inc.leafBits :
+          inc.aphidMilk;
+        total += r * mult;
       }
     } else {
       for (const b of STARTER_BUILDINGS) {
         const inc = INCOME_PER_SECOND[b.kind];
         if (!inc) continue;
-        total += kind === 'sugar' ? inc.sugar : inc.leafBits;
+        total +=
+          kind === 'sugar' ? inc.sugar :
+          kind === 'leaf' ? inc.leafBits :
+          inc.aphidMilk;
       }
     }
     return total;
@@ -303,15 +320,15 @@ export class HomeScene extends Phaser.Scene {
     if (this.milkText) this.milkText.setText(this.formatPillValue('milk'));
     if (this.sugarRateText) {
       const r = this.computeRate('sugar');
-      this.sugarRateText.setText(r > 0 ? `+${r}/sec` : '');
+      this.sugarRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
     }
     if (this.leafRateText) {
       const r = this.computeRate('leaf');
-      this.leafRateText.setText(r > 0 ? `+${r}/sec` : '');
+      this.leafRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
     }
     if (this.milkRateText) {
       const r = this.computeRate('milk');
-      this.milkRateText.setText(r > 0 ? `+${r}/sec` : '');
+      this.milkRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
     }
   }
 
@@ -567,7 +584,7 @@ export class HomeScene extends Phaser.Scene {
           this,
           pillX + pillW - PILL_PAD_X,
           cy + PILL_H / 2 + 8,
-          `+${rateValue}/sec`,
+          `+${formatRate(rateValue)}/sec`,
           labelTextStyle(10, COLOR.textDim),
         ).setOrigin(1, 0).setDepth(DEPTHS.hudChrome);
         if (kind === 'sugar') this.sugarRateText = rateText;
@@ -3289,4 +3306,12 @@ export class HomeScene extends Phaser.Scene {
       },
     });
   }
+}
+
+// "+8/sec" for integer rates, "+0.2/sec" for fractional ones (only the
+// AphidFarm L1 baseline at the moment). Drops the trailing ".0" so a
+// freshly-upgraded farm doesn't read "+0.2/sec → +0.4/sec → +0.6/sec".
+function formatRate(rate: number): string {
+  if (Number.isInteger(rate)) return String(rate);
+  return rate.toFixed(1);
 }

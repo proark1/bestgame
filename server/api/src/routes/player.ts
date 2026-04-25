@@ -74,6 +74,11 @@ const INCOME_PER_SECOND: Partial<
   DewCollector: { sugar: 8, leafBits: 0, aphidMilk: 0 },
   LarvaNursery: { sugar: 0, leafBits: 3, aphidMilk: 0 },
   SugarVault: { sugar: 2, leafBits: 0, aphidMilk: 0 },
+  // AphidFarm: slow milk producer. 1 milk every 5 sec at L1 → 0.2/sec
+  // baseline. Linear scale with level matches the other producers.
+  // At Q5 with 2 farms at L10, that's 4 milk/sec — about 8 hours of
+  // idle for a 100-milk skip-token at the planned monetization scale.
+  AphidFarm: { sugar: 0, leafBits: 0, aphidMilk: 0.2 },
 };
 // Cap offline earnings at 8h so leaving the game tab open for weeks
 // doesn't flood the economy.
@@ -178,9 +183,17 @@ export function registerPlayer(app: FastifyInstance): void {
         ),
       );
       const tick = incomePerSecond(base.snapshot);
-      const rawGainedSugar = tick.sugar * elapsedSec;
-      const rawGainedLeaf = tick.leafBits * elapsedSec;
-      const gainedMilk = tick.aphidMilk * elapsedSec;
+      // Floor each so a fractional rate (e.g. AphidFarm at 0.2 milk/sec
+      // at L1) banks integer credits, never partial. Known limitation:
+      // last_seen_at is rewritten on every /me, so the sub-integer
+      // fractional remainder is lost between calls. In practice a milk
+      // farm at L1 just means "1 milk every 5 idle seconds and a bit
+      // of waste on quick re-polls" — acceptable for MVP. If we add
+      // a polling-heavy client, switch this to track a residual on the
+      // player row instead of flooring.
+      const rawGainedSugar = Math.floor(tick.sugar * elapsedSec);
+      const rawGainedLeaf = Math.floor(tick.leafBits * elapsedSec);
+      const gainedMilk = Math.floor(tick.aphidMilk * elapsedSec);
 
       // Storage cap clamp. Production-style trickle stops at cap; loot
       // (raid credit) bypasses this. See docs/GAME_DESIGN.md §6.8.
