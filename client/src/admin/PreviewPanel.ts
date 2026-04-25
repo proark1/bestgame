@@ -322,8 +322,9 @@ function buildLivePreview(scene: PreviewScene): LivePreviewHandle {
   const buildSrc = (): string => {
     // Cache-buster ensures scene changes + sprite reloads are visible.
     // Timestamp + scene.id combo means every scene change gets a fresh load.
+    // Use /play.html (the game) not / (the landing page).
     const bust = `${scene.id}-${Date.now()}`;
-    return `/?previewScene=${encodeURIComponent(scene.id)}&previewBust=${bust}`;
+    return `/play.html?previewScene=${encodeURIComponent(scene.id)}&previewBust=${bust}`;
   };
   iframe.src = buildSrc();
 
