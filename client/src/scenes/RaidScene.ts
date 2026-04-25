@@ -200,12 +200,8 @@ export class RaidScene extends Phaser.Scene {
   private animationEnabled: Record<string, boolean> = {};
   private trailEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private attackerQueenLevel = 1;
-  // Track unit entry animations: which units have already been animated
-  // in from their spawn edge. Each unit is animated once on creation.
-  private unitAnimationStarted = new Set<number>();
-  private deploymentEdges = new Map<number, SpawnEdge>(); // tick → spawn edge
-  // Track how many units have been spawned in each (tick, ownerSlot) deployment
-  // to enable staggering. Maps "tick:ownerSlot" to count.
+  // Track deployment unit counts for stagger indexing: unit count per (tick, ownerSlot).
+  // Entries are cleared after each tick to prevent memory leaks in long sessions.
   private deploymentUnitCounts = new Map<string, number>();
 
   // Trail drawing state.
@@ -291,8 +287,6 @@ export class RaidScene extends Phaser.Scene {
     this.unitSprites.clear();
     this.unitLastHp.clear();
     this.unitLastPos.clear();
-    this.unitAnimationStarted.clear();
-    this.deploymentEdges.clear();
     this.deploymentUnitCounts.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
@@ -522,23 +516,23 @@ export class RaidScene extends Phaser.Scene {
 
     this.spawnZoneGraphics = this.add.graphics().setDepth(2);
 
-    // Left spawn zone (2 tiles wide)
+    // Left spawn zone (2 tiles wide, full height)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
     this.spawnZoneGraphics.fillRect(0, 0, SPAWN_ZONE_W, BOARD_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
     this.spawnZoneGraphics.strokeRect(0, 0, SPAWN_ZONE_W, BOARD_H);
 
-    // Top spawn zone (full width, 2 tiles tall)
+    // Top spawn zone (excluding corner covered by left)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
-    this.spawnZoneGraphics.fillRect(0, 0, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
-    this.spawnZoneGraphics.strokeRect(0, 0, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
 
-    // Bottom spawn zone (full width, 2 tiles tall)
+    // Bottom spawn zone (excluding corner covered by left)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
-    this.spawnZoneGraphics.fillRect(0, BOARD_H - SPAWN_ZONE_H, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
-    this.spawnZoneGraphics.strokeRect(0, BOARD_H - SPAWN_ZONE_H, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
 
     // Chevron indicators for each edge
     const leftChevrons = [0, 1, 2].map((i) =>
@@ -804,9 +798,6 @@ export class RaidScene extends Phaser.Scene {
         },
       };
       this.pendingInputs.push(input);
-      // Record which spawn edge this deployment came from, so units
-      // spawned on this tick can be animated from that edge.
-      this.deploymentEdges.set(this.state.tick + 1, this.lastSpawnEdge);
       // Replay timeline for server submission — every deploy the player
       // commits is recorded. Defeat/timeout endings submit this list
       // via /api/raid/submit, where the shared sim re-runs it to verify
@@ -1120,6 +1111,9 @@ export class RaidScene extends Phaser.Scene {
       `loot: ${this.state.attackerSugarLooted} sugar · ${this.state.attackerLeafBitsLooted} leaf`,
     );
 
+    // Clear per-tick deployment counters to prevent memory leaks in long sessions.
+    this.deploymentUnitCounts.clear();
+
     // Buildings: update HP bars and fade destroyed ones.
     for (const b of this.state.buildings) {
       const spr = this.buildingSprites.get(b.id);
@@ -1207,15 +1201,13 @@ export class RaidScene extends Phaser.Scene {
         spr = this.makeUnitSprite(u.kind, x, y);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
-        // Entry animation: units slide in from their spawn edge over 300ms.
-        // Mark as animated so we don't repeat it if the sprite persists.
-        if (!this.unitAnimationStarted.has(u.id)) {
-          this.unitAnimationStarted.add(u.id);
-          // Track deployment unit count for staggering.
+        // Entry animation: only animate attacker units sliding in from their
+        // spawn edge. Defender units (spawned by buildings) don't animate.
+        if (u.owner === 0) {
           const key = `${this.state.tick}:0`;
-          const staggerIndex = (this.deploymentUnitCounts.get(key) ?? 0);
+          const staggerIndex = this.deploymentUnitCounts.get(key) ?? 0;
           this.deploymentUnitCounts.set(key, staggerIndex + 1);
-          this.applyUnitEntryAnimation(spr, x, y, staggerIndex);
+          this.applyUnitEntryAnimation(spr, u, x, y, staggerIndex);
         }
       } else {
         spr.setPosition(x, y);
@@ -1396,13 +1388,25 @@ export class RaidScene extends Phaser.Scene {
 
   private applyUnitEntryAnimation(
     spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+    u: Types.Unit,
     targetX: number,
     targetY: number,
     staggerIndex: number = 0,
   ): void {
-    // Determine spawn edge: check deploymentEdges for the current tick,
-    // fall back to lastSpawnEdge. If no edge found, skip animation.
-    const edge = this.deploymentEdges.get(this.state.tick) ?? this.lastSpawnEdge;
+    // Determine spawn edge from the unit's path to support Replay mode
+    // and ensure correctness if frames are dropped.
+    const path = this.state.paths.find((p) => p.pathId === u.pathId);
+    const firstPoint = path?.points[0];
+    let edge: SpawnEdge | null = null;
+    if (firstPoint) {
+      const px = Sim.toFloat(firstPoint.x) * TILE;
+      const py = Sim.toFloat(firstPoint.y) * TILE;
+      if (px <= SPAWN_ZONE_W) edge = 'left';
+      else if (py <= SPAWN_ZONE_H) edge = 'top';
+      else if (py >= BOARD_H - SPAWN_ZONE_H) edge = 'bottom';
+    }
+    // Fall back to lastSpawnEdge if path point is ambiguous.
+    edge = edge ?? this.lastSpawnEdge;
     if (!edge) return;
 
     // Calculate starting position off-screen based on spawn edge.
@@ -1417,10 +1421,10 @@ export class RaidScene extends Phaser.Scene {
         startX = targetX - offset;
         break;
       case 'top':
-        startY = targetY - offset;
+        startY = targetY - SPAWN_ZONE_H;
         break;
       case 'bottom':
-        startY = targetY + offset;
+        startY = targetY + SPAWN_ZONE_H;
         break;
     }
 
