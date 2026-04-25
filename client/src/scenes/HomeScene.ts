@@ -5,7 +5,7 @@ import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
-import { openBuildingInfoModal } from '../ui/buildingInfoModal.js';
+import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
@@ -888,18 +888,24 @@ export class HomeScene extends Phaser.Scene {
     const boardTileKey = 'ui-board-tile-surface';
     const useTile = isUiOverrideActive(this, boardTileKey);
     if (useTile) {
-      // Previously we painted the board with a repeating TileSprite
-      // at the texture's native 128×128 size. Because the generated
-      // images often include a faint transparent border, every tile
-      // seam showed as a thin dark line — "gaps between the board
-      // tiles." Stretching a single Image across the full board
-      // eliminates the seams entirely; we trade the tileable
-      // moss-pattern effect for a clean flat backdrop, which is
-      // what the user asked for. Detail loss from the stretch is
-      // minimal because the generated asset is already hand-painted
-      // soft / seamless.
-      const bg2 = this.add.image(0, 0, boardTileKey).setOrigin(0, 0);
-      bg2.setDisplaySize(BOARD_W, BOARD_H);
+      // Repeating TileSprite: the same tile texture is drawn over and
+      // over to form one continuous map (Clash-of-Clans style). Each
+      // repeat covers TILE_REPEAT × TILE_REPEAT pixels so the texture
+      // shows real detail instead of being stretched to BOARD_W × BOARD_H.
+      // The basePad layer underneath fills any sub-pixel seams that
+      // bilinear filtering might leave between repeats, so the player
+      // never sees gaps.
+      const TILE_REPEAT = TILE * 2; // 96px — two grid cells per pattern repeat
+      const bg2 = this.add
+        .tileSprite(0, 0, BOARD_W, BOARD_H, boardTileKey)
+        .setOrigin(0, 0);
+      // Scale the source texture down so each repeat occupies TILE_REPEAT.
+      // Phaser's tileScale multiplies the source-pixel size before tiling.
+      const tex = this.textures.get(boardTileKey);
+      const srcW = tex.getSourceImage().width || TILE_REPEAT;
+      const srcH = tex.getSourceImage().height || TILE_REPEAT;
+      bg2.tileScaleX = TILE_REPEAT / srcW;
+      bg2.tileScaleY = TILE_REPEAT / srcH;
       this.boardContainer.add(bg2);
     } else {
       // Vertical gradient fake via stacked bands. `fillGradientStyle`
@@ -1472,12 +1478,35 @@ export class HomeScene extends Phaser.Scene {
         labelTextStyle(10, COLOR.textGold),
       ),
     );
+    const hintText = ROTATABLE_KINDS.has(b.kind)
+      ? 'Drag or use arrows to position. Tap Rotate to flip wall orientation.'
+      : 'Drag the building or tap the arrow buttons to move it.';
     banner.add(
       crispText(this, bannerX + 16, bannerY + 28,
-        'Drag the building or tap the arrow buttons to move it.',
+        hintText,
         bodyTextStyle(12, COLOR.textPrimary),
       ),
     );
+    // Rotate button for walls — lives on the move banner so the
+    // player can rotate without leaving move mode (Clash-of-Clans
+    // edit-mode parity). Calls the same /rotate API the info modal
+    // uses, then updates the sprite + serverBase in place so move
+    // mode stays continuous.
+    const canRotate = ROTATABLE_KINDS.has(b.kind);
+    if (canRotate) {
+      const rotateBtn = makeHiveButton(this, {
+        x: bannerX + bannerW - 170,
+        y: bannerY + bannerH / 2,
+        width: 92,
+        height: 36,
+        label: 'Rotate',
+        variant: 'primary',
+        fontSize: 12,
+        onPress: () => void this.rotateInMoveMode(b.id),
+      });
+      rotateBtn.container.setDepth(DEPTHS.drawer);
+      banner.add(rotateBtn.container);
+    }
     const cancelBtn = makeHiveButton(this, {
       x: bannerX + bannerW - 70,
       y: bannerY + bannerH / 2,
@@ -1508,6 +1537,41 @@ export class HomeScene extends Phaser.Scene {
       keyListener,
       dragOrigin: null,
     };
+  }
+
+  // In-place rotate while move mode is active. Calls the rotate API
+  // and applies the new rotation to the existing sprite without
+  // tearing down move mode (so the player keeps their drag handles,
+  // arrow nudges, and the green/red overlay remains).
+  private async rotateInMoveMode(buildingId: string): Promise<void> {
+    if (!this.moveMode) return;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const r = await runtime.api.rotateBuilding({ buildingId });
+      if (runtime.player) runtime.player.base = r.base;
+      this.serverBase = r.base;
+      const updated = r.base.buildings.find((x) => x.id === buildingId);
+      if (!updated) return;
+      // Update the sprite's rotation directly — much smoother than
+      // destroy+recreate (which would also kill the dragstart/drag
+      // handlers move mode set up in enterMoveMode).
+      const spr = this.homeBuildingSprites.get(buildingId);
+      if (spr) {
+        const rot = updated.rotation ?? 0;
+        spr.setRotation((rot * Math.PI) / 2);
+      }
+      // The footprint stayed the same (rotation is cosmetic), but
+      // refresh overlays in case anything depends on the latest
+      // serverBase snapshot.
+      this.moveMode.paintOverlay();
+      this.moveMode.paintArrows();
+    } catch (err) {
+      // Surface the failure but stay in move mode; the player can
+      // retry or exit.
+      // eslint-disable-next-line no-console
+      console.warn('rotateBuilding failed:', err);
+    }
   }
 
   private exitMoveMode(): void {
@@ -2558,6 +2622,34 @@ export class HomeScene extends Phaser.Scene {
       if (this.isTileOccupied(tx, ty, this.layer)) return;
       this.openPicker(tx, ty);
     });
+
+    // Safety net: if a touch is interrupted (pointer leaves the game,
+    // browser context menu, OS gesture, multi-touch glitch) the
+    // matching pointerup never fires and our tap-state flags stay
+    // stuck. The next tap then either drops silently or gets
+    // misinterpreted as a drag/pan, which presents to the player as
+    // "clicks stop working until I refresh." Resetting on the
+    // strand-edge events makes the next gesture clean.
+    const resetTapState = (): void => {
+      this.tapDownPos = null;
+      this.panAnchor = null;
+      this.isPanningBoard = false;
+      this.tapStartedInsidePicker = false;
+    };
+    this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, resetTapState);
+    this.input.on(Phaser.Input.Events.GAME_OUT, resetTapState);
+    // Some browsers fire a generic pointercancel on the underlying
+    // canvas without a Phaser-level translation. Bridge it through.
+    const canvas = this.game.canvas;
+    if (canvas) {
+      const onCancel = (): void => resetTapState();
+      canvas.addEventListener('pointercancel', onCancel);
+      canvas.addEventListener('lostpointercapture', onCancel);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        canvas.removeEventListener('pointercancel', onCancel);
+        canvas.removeEventListener('lostpointercapture', onCancel);
+      });
+    }
   }
 
   private isTileOccupied(tx: number, ty: number, layer: Types.Layer): boolean {
