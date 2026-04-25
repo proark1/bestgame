@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { Sim } from '@hive/shared';
 import type { Types } from '@hive/shared';
+import { clampLootByRank, colonyRankFromInvested } from '@hive/shared/sim';
 import { validateReplay } from '../replay/validator.js';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
@@ -108,9 +109,10 @@ export function registerRaid(app: FastifyInstance): void {
         daily_quests: unknown;
         season_id: string;
         season_xp: number;
+        total_invested: string;
       }>(
         `SELECT p.unit_levels, p.trophies, b.snapshot AS attacker_base,
-                p.daily_quests, p.season_id, p.season_xp
+                p.daily_quests, p.season_id, p.season_xp, p.total_invested
            FROM players p
            LEFT JOIN bases b ON b.player_id = p.id
           WHERE p.id = $1`,
@@ -118,6 +120,7 @@ export function registerRaid(app: FastifyInstance): void {
       );
       const attackerUnitLevels = lv.rows[0]?.unit_levels ?? {};
       const attackerTrophies = lv.rows[0]?.trophies ?? 0;
+      const attackerTotalInvested = lv.rows[0]?.total_invested ?? '0';
 
       // Gate unit kinds against the attacker's own queen level. A
       // player can't deploy a unit they haven't unlocked — this is the
@@ -160,8 +163,19 @@ export function registerRaid(app: FastifyInstance): void {
       // small race between match and submit is within sampling noise.
       const defenderTrophies = Number(baseSnapshot.trophies ?? 0);
       const delta = trophyDelta({ stars, attackerTrophies, defenderTrophies });
-      const sugarLooted = Math.max(0, result.sugarLooted);
-      const leafLooted = Math.max(0, result.leafBitsLooted);
+      // Apply the Colony Rank loot ceiling (§6.7): the attacker's
+      // running total_invested derives a rank, and that rank caps the
+      // per-raid sugar / leaf payout. Prevents a maxed late-game
+      // player from farming starter bases for runaway loot. The sim
+      // result is the upper bound; we clamp to the attacker's cap and
+      // surface whether the cap fired so the client can hint at it.
+      const colonyRank = colonyRankFromInvested(attackerTotalInvested);
+      const rawSugar = Math.max(0, result.sugarLooted);
+      const rawLeaf = Math.max(0, result.leafBitsLooted);
+      const clamped = clampLootByRank(colonyRank, { sugar: rawSugar, leafBits: rawLeaf });
+      const sugarLooted = clamped.sugar;
+      const leafLooted = clamped.leafBits;
+      const lootCapped = clamped.capped;
 
       // Retention-loop book-keeping computed from the raid result +
       // input timeline. The sim is single-source-of-truth; we only
@@ -331,6 +345,18 @@ export function registerRaid(app: FastifyInstance): void {
         replayId: raidId,
         replayName,
         result,
+        // Loot summary surfaces the colony-rank-capped totals (what the
+        // attacker actually banks) plus a hint on whether the cap fired
+        // so the client can render "Loot capped at colony rank N" copy
+        // on the raid result panel.
+        loot: {
+          sugar: sugarLooted,
+          leafBits: leafLooted,
+          rawSugar,
+          rawLeaf,
+          capped: lootCapped,
+          colonyRank,
+        },
         player: {
           trophies: att.trophies,
           // BIGINT-from-DB → Number narrowing. Safe for the first ~9

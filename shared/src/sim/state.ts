@@ -9,6 +9,14 @@ import type { PheromonePath } from '../types/pheromone.js';
 export interface SimBuilding {
   id: number;
   kind: BuildingKind;
+  // 0 = attacker-owned, 1 = defender-owned. Async raids only use 1
+  // (the entire base belongs to the defender), so the value is always
+  // 1 for replay fidelity. Live arena PvP can ingest a second base
+  // via SimConfig.secondSnapshot — those buildings are stamped 0 and
+  // partitioned to the left half of the grid. Combat filters target
+  // selection by owner (a unit of owner X only fires on buildings of
+  // owner ≠ X) so the same combat code drives both modes.
+  owner: 0 | 1;
   layer: Layer;
   anchorX: number;
   anchorY: number;
@@ -124,4 +132,11 @@ export interface SimConfig {
   // default to level 1 (baseline stats). Must be identical on client
   // and server to keep the sim deterministic across environments.
   attackerUnitLevels?: Partial<Record<import('../types/units.js').UnitKind, number>>;
+  // Optional second base for symmetric live PvP (arena). When present,
+  // its buildings are ingested as owner=0 and mirrored onto the LEFT
+  // half of the grid; the original `initialSnapshot` stays on the
+  // right half as owner=1. Combat targeting filters by owner so the
+  // sim runs base-vs-base instead of attacker-vs-defender. Absent for
+  // async raids (the default) — only one base, all owner=1.
+  secondSnapshot?: Base;
 }

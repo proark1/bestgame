@@ -8,4 +8,5 @@ export * from './step.js';
 export * from './progression.js';
 export * from './storage.js';
 export * from './builderGates.js';
+export * from './colonyRank.js';
 export * from './ai_rules.js';
