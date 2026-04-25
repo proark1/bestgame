@@ -458,28 +458,7 @@
         line-height: 1.5;
       }
 
-      /* ---------- Black footer with grass strip ---------- */
-      .grass {
-        height: 180px;
-        background:
-          linear-gradient(180deg, transparent 0%, transparent 30%, var(--grass-deep) 100%),
-          linear-gradient(180deg, #87ceeb 0%, #b9e3f0 60%, var(--grass) 100%);
-        position: relative;
-        overflow: hidden;
-      }
-      .grass::before {
-        /* Simple round bushes / hills via stacked radial gradients. */
-        content: "";
-        position: absolute;
-        inset: 0;
-        background-image:
-          radial-gradient(60px 50px at 12% 80%, var(--grass-deep) 0%, var(--grass-deep) 60%, transparent 62%),
-          radial-gradient(80px 60px at 35% 75%, var(--grass) 0%, var(--grass) 60%, transparent 62%),
-          radial-gradient(90px 70px at 60% 78%, var(--grass-deep) 0%, var(--grass-deep) 60%, transparent 62%),
-          radial-gradient(70px 55px at 85% 82%, var(--grass) 0%, var(--grass) 60%, transparent 62%),
-          radial-gradient(55px 45px at 22% 70%, var(--grass-deep) 0%, var(--grass-deep) 60%, transparent 62%),
-          radial-gradient(65px 50px at 75% 70%, var(--grass) 0%, var(--grass) 60%, transparent 62%);
-      }
+      /* ---------- Black footer ---------- */
       .foot {
         background: var(--foot-bg);
         color: rgba(255, 255, 255, 0.65);
@@ -705,15 +684,22 @@
         <h3 class="colony-subtitle">Your army</h3>
         <div class="unit-cluster">
           <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="unit-DirtDigger" src="/units/unit-DirtDigger.svg" alt="Dirt Digger" width="128" height="128" loading="lazy" decoding="async" />
           <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="unit-ShieldBeetle" src="/units/unit-ShieldBeetle.svg" alt="Shield Beetle" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" loading="lazy" decoding="async" />
           <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" loading="lazy" decoding="async" />
         </div>
         <h3 class="colony-subtitle">Your buildings</h3>
         <div class="building-cluster">
+          <img class="building" data-sprite-key="building-DewCollector" src="/units/building-DewCollector.svg" alt="Dew Collector" width="192" height="192" loading="lazy" decoding="async" />
           <img class="building" data-sprite-key="building-QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" loading="lazy" decoding="async" />
           <img class="building" data-sprite-key="building-MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-PebbleBunker" src="/units/building-PebbleBunker.svg" alt="Pebble Bunker" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-LarvaNursery" src="/units/building-LarvaNursery.svg" alt="Larva Nursery" width="192" height="192" loading="lazy" decoding="async" />
           <img class="building" data-sprite-key="building-SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" loading="lazy" decoding="async" />
           <img class="building" data-sprite-key="building-AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-TunnelJunction" src="/units/building-TunnelJunction.svg" alt="Tunnel Junction" width="192" height="192" loading="lazy" decoding="async" />
         </div>
       </div>
     </section>
@@ -732,8 +718,6 @@
         towards your next Store Bonus.
       </p>
     </section>
-
-    <div class="grass" aria-hidden="true"></div>
 
     <footer class="foot">
       <div class="foot-inner">
