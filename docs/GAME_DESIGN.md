@@ -442,18 +442,50 @@ Minimum guarantees (so any 3★ win feels rewarded):
 
 Canonical implementation: `server/api/src/game/progression.ts::trophyDelta()`.
 
-### 6.6 Time gates (future work)
+### 6.6 Time gates (active)
 
-Currently upgrades are instant. A future "builder slot" system will add
-time gates as the second dimension of progression (alongside cost):
+Building upgrades are time-gated. When a player queues an upgrade, the
+cost is debited up-front and a `pendingCompletesAt` timestamp is stamped
+on the building. The level bump itself is delayed until the timer
+elapses; `/player/me` lazily promotes any completed pending on next
+read. Players can pay AphidMilk to skip the remaining time — the
+intended monetization hook (§9).
 
 ```
-buildTime(L) = clamp(baseTime × mult[L] × 0.3, 10s, 48h)
+buildTime(L) = clamp(baseTime × LEVEL_COST_MULT[L] × 12, 10s, 48h)
 ```
 
-With baseTime = 30s, L1 upgrade takes 10s (floor), L9 upgrade takes ~26h
-(capped at 48h). Players can pay AphidMilk to skip timers — this is the
-planned monetization hook.
+With `baseTime = 30s` and `BUILD_CURVE_FACTOR = 12`:
+
+| Upgrade | LEVEL_COST_MULT | Build time |
+|---------|-----------------|------------|
+| L1→L2   | 0.5             | 3 minutes  |
+| L3→L4   | 1.6             | ~10 minutes |
+| L5→L6   | 4.2             | ~25 minutes |
+| L7→L8   | 11.0            | ~66 minutes |
+| L9→L10  | 28.8            | ~2.9 hours |
+
+```
+skipCostMilk(remainingMs) = max(1, ceil(remainingMs / 36_000))
+```
+
+That's roughly 100 milk per hour skipped. With a single AphidFarm L1
+producing 720 milk/hour, a player gets ~7 hours of skip per online
+hour — generous for the free path, leaving meaningful headroom for
+future IAP packs to dwarf.
+
+Constraints:
+- One pending job per building. The route returns 409 if the player
+  tries to queue while one is in flight.
+- Cost is taken at queue, not at completion. Cancellation refunds are
+  not yet supported.
+- Unit upgrades (`/upgrade-unit`) and Queen upgrades stay instant for
+  MVP. Only building upgrades are gated.
+
+Canonical implementation: `shared/src/sim/builderGates.ts`. The route
+handlers live in `server/api/src/routes/player.ts` (`/upgrade-building`
++ `/builder/skip`). The client renders a live countdown + skip CTA in
+`buildingInfoModal.ts` while a job is in flight.
 
 ### 6.7 Colony Rank (active)
 
@@ -677,13 +709,17 @@ See [`GLOSSARY.md`](./GLOSSARY.md) for vocabulary and tag conventions.
 The MVP economy is feature-complete for the build → raid → upgrade
 loop. Tracked gaps, ordered by player impact:
 
-1. **Builder time gates (§6.6)** — currently upgrades resolve instantly.
-   The `buildTime(L)` formula is specified but no `builders` table or
-   queue UI exists yet (`BuilderQueueScene` is a placeholder). This is
-   also the planned AphidMilk monetization hook (skip-time IAP).
-2. ~~**AphidMilk producers**~~ — shipped: AphidFarm (§5.4) produces
-   milk at 0.2/sec × level, gated to Q4+. Sinks (builder time-skip,
-   prestige cosmetics) still pending.
+1. ~~**Builder time gates (§6.6)**~~ — shipped: pending
+   {`pendingCompletesAt`, `pendingToLevel`} fields on `Types.Building`,
+   `buildTimeMs()` + `skipCostMilk()` in `shared/src/sim/builderGates.ts`,
+   `/player/upgrade-building` queues + debits, `/me` lazily promotes,
+   `/player/builder/skip` consumes AphidMilk to short-circuit. Builder
+   slots (multi-job parallelism cap) still pending — single-pending-
+   per-building is the v1 simplification.
+2. ~~**AphidMilk producers / sinks**~~ — both shipped. AphidFarm (§5.4)
+   produces milk at 0.2/sec × level, gated to Q4+. Builder time-gate
+   skip is the first sink (§6.6). IAP packs + prestige cosmetics still
+   pending.
 3. ~~**Colony Rank loot cap (§6.7)**~~ — shipped: `total_invested`
    column on players (migrations/0016), `colonyRankFromInvested()` +
    `lootCapForRank()` + `clampLootByRank()` in
