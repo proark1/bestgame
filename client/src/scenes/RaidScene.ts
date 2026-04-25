@@ -204,6 +204,9 @@ export class RaidScene extends Phaser.Scene {
   // in from their spawn edge. Each unit is animated once on creation.
   private unitAnimationStarted = new Set<number>();
   private deploymentEdges = new Map<number, SpawnEdge>(); // tick → spawn edge
+  // Track how many units have been spawned in each (tick, ownerSlot) deployment
+  // to enable staggering. Maps "tick:ownerSlot" to count.
+  private deploymentUnitCounts = new Map<string, number>();
 
   // Trail drawing state.
   private selectedDeckIdx = 0;
@@ -290,6 +293,7 @@ export class RaidScene extends Phaser.Scene {
     this.unitLastPos.clear();
     this.unitAnimationStarted.clear();
     this.deploymentEdges.clear();
+    this.deploymentUnitCounts.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
     // first unit spawns (usually a couple of ticks in), the settings
@@ -1207,7 +1211,11 @@ export class RaidScene extends Phaser.Scene {
         // Mark as animated so we don't repeat it if the sprite persists.
         if (!this.unitAnimationStarted.has(u.id)) {
           this.unitAnimationStarted.add(u.id);
-          this.applyUnitEntryAnimation(spr, x, y);
+          // Track deployment unit count for staggering.
+          const key = `${this.state.tick}:0`;
+          const staggerIndex = (this.deploymentUnitCounts.get(key) ?? 0);
+          this.deploymentUnitCounts.set(key, staggerIndex + 1);
+          this.applyUnitEntryAnimation(spr, x, y, staggerIndex);
         }
       } else {
         spr.setPosition(x, y);
@@ -1390,6 +1398,7 @@ export class RaidScene extends Phaser.Scene {
     spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
     targetX: number,
     targetY: number,
+    staggerIndex: number = 0,
   ): void {
     // Determine spawn edge: check deploymentEdges for the current tick,
     // fall back to lastSpawnEdge. If no edge found, skip animation.
@@ -1418,14 +1427,20 @@ export class RaidScene extends Phaser.Scene {
     // Start the sprite at the off-screen position.
     spr.setPosition(startX, startY);
 
+    // Burst staggering: delay animation based on unit index in the deployment.
+    // With 40ms stagger and max 5 units per burst, wave effect spans ~160ms.
+    const STAGGER_MS = 40;
+    const delay = staggerIndex * STAGGER_MS;
+
     // Tween to the actual position over 300ms with Power2.easeOut for
     // a snappy, satisfying entry feel. Matches Clash of Clans troop
-    // deployment animation style.
+    // deployment animation style. Delay is staggered for wave effect.
     this.tweens.add({
       targets: spr,
       x: targetX,
       y: targetY,
       duration: 300,
+      delay,
       ease: 'Power2.easeOut',
     });
   }
