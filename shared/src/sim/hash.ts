@@ -62,6 +62,7 @@ export function hashSimState(s: SimState): number {
   for (let i = 0; i < s.buildings.length; i++) {
     const b = s.buildings[i]!;
     h = mixU32(h, b.id);
+    h = mixU32(h, b.owner);
     h = mixU32(h, b.layer);
     h = mixU32(h, b.anchorX);
     h = mixU32(h, b.anchorY);

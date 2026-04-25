@@ -127,6 +127,15 @@ export function combatSystem(
       continue;
     }
     const b = state.buildings[targetIdx]!;
+    // Defensive owner check. In raid mode, every building is owner=1
+    // and every attacker is owner=0 so this is a no-op. In symmetric
+    // arena (SimConfig.secondSnapshot) a stale targetBuildingId could
+    // otherwise point at an ally building; drop and let pheromoneFollow
+    // reacquire on the next tick.
+    if (b.owner === u.owner) {
+      u.targetBuildingId = 0;
+      continue;
+    }
     if (!attackerCanSee(b)) {
       // Target gone or still hidden — drop it, pheromoneFollow will
       // reacquire next tick.
@@ -281,7 +290,11 @@ export function combatSystem(
     for (let i = 0; i < state.units.length; i++) {
       const u = state.units[i]!;
       if (u.hp <= 0) continue;
-      if (u.owner !== 0) continue;
+      // Owner filter: a building only fires on units of the OPPOSING
+      // owner. In raid mode (all buildings owner=1) this is identical
+      // to the previous `u.owner !== 0` hardcode. Symmetric arena
+      // makes both sides authoritative without a second branch.
+      if (u.owner === b.owner) continue;
       if (beh?.antiAirOnly && !UNIT_STATS[u.kind].canFly) continue;
       const reachable =
         u.layer === b.layer || (b.spans && b.spans.includes(u.layer));

@@ -92,6 +92,9 @@ export function pheromoneFollowSystem(state: SimState): void {
       for (let j = 0; j < state.buildings.length; j++) {
         const b = state.buildings[j]!;
         if (b.hp <= 0) continue;
+        // Owner filter for symmetric arena. Single-base raid mode
+        // stamps every building owner=1 so this is a no-op there.
+        if (b.owner === u.owner) continue;
         // Hidden stealth buildings (HiddenStinger pre-reveal) are
         // invisible to target acquisition. Reveal happens inside combat
         // when the building first fires.
