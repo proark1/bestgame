@@ -95,6 +95,10 @@ interface PlayerRow {
   unit_levels: Record<string, number>;
   last_seen_at: Date;
   created_at: Date;
+  // Fractional milk that hasn't yet rolled over into a whole credit.
+  // See migrations/0015. Always read + written together with aphid_milk
+  // so frequent /me polling can't flush sub-integer progress.
+  aphid_milk_residual: number;
   // Retention-loop columns (migrations/0011). `shield_expires_at` is
   // nullable; the rest default on the DB side so existing players
   // backfill without a data migration.
@@ -183,17 +187,18 @@ export function registerPlayer(app: FastifyInstance): void {
         ),
       );
       const tick = incomePerSecond(base.snapshot);
-      // Floor each so a fractional rate (e.g. AphidFarm at 0.2 milk/sec
-      // at L1) banks integer credits, never partial. Known limitation:
-      // last_seen_at is rewritten on every /me, so the sub-integer
-      // fractional remainder is lost between calls. In practice a milk
-      // farm at L1 just means "1 milk every 5 idle seconds and a bit
-      // of waste on quick re-polls" — acceptable for MVP. If we add
-      // a polling-heavy client, switch this to track a residual on the
-      // player row instead of flooring.
-      const rawGainedSugar = Math.floor(tick.sugar * elapsedSec);
-      const rawGainedLeaf = Math.floor(tick.leafBits * elapsedSec);
-      const gainedMilk = Math.floor(tick.aphidMilk * elapsedSec);
+      // Sugar + leaf are integer rates × integer elapsedSec, so they
+      // bank cleanly with no flooring needed. Milk is fractional
+      // (AphidFarm at 0.2 × level / sec), so we add the previously-
+      // unbanked residual, floor for the integer credit, and write the
+      // new residual back. This means polling cadence does not affect
+      // total milk earned over time — every fraction eventually rolls
+      // over into a whole credit on a future /me.
+      const rawGainedSugar = tick.sugar * elapsedSec;
+      const rawGainedLeaf = tick.leafBits * elapsedSec;
+      const milkProduced = tick.aphidMilk * elapsedSec + (player.aphid_milk_residual ?? 0);
+      const gainedMilk = Math.floor(milkProduced);
+      const newMilkResidual = milkProduced - gainedMilk;
 
       // Storage cap clamp. Production-style trickle stops at cap; loot
       // (raid credit) bypasses this. See docs/GAME_DESIGN.md §6.8.
@@ -253,6 +258,7 @@ export function registerPlayer(app: FastifyInstance): void {
              SET sugar = $2,
                  leaf_bits = $3,
                  aphid_milk = $4,
+                 aphid_milk_residual = $9,
                  last_seen_at = NOW(),
                  streak_count = $5,
                  streak_last_day = $6,
@@ -268,6 +274,7 @@ export function registerPlayer(app: FastifyInstance): void {
             resolved.lastDay,
             resolved.comebackPending,
             ownedList,
+            newMilkResidual,
           ],
         );
       }

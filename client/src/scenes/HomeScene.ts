@@ -226,9 +226,10 @@ export class HomeScene extends Phaser.Scene {
         milk += inc.aphidMilk * seconds;
       }
     }
-    // Floor milk to integer (matches server flooring) so the local
-    // visual stays in sync with what /me will write.
-    milk = Math.floor(milk);
+    // Accumulate fractional milk locally so the HUD eventually ticks up;
+    // the server tracks an aphid_milk_residual column and floors per
+    // request, so a float bank value here stays in sync once /me runs
+    // (which overwrites this.resources.aphidMilk with the integer total).
     if (sugar === 0 && leaf === 0 && milk === 0) return;
     // Local-side trickle visually clamps to the cap — the server is
     // doing the same on the next /me, so showing the player numbers
@@ -248,8 +249,10 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private flashResourceGain(): void {
+    // Milk is now also produced (AphidFarm at Q4+), so pulse its pill
+    // alongside sugar + leaf when the local trickle credits anything.
     this.tweens.add({
-      targets: [this.sugarText, this.leafText],
+      targets: [this.sugarText, this.leafText, this.milkText],
       alpha: { from: 0.5, to: 1 },
       duration: 260,
       ease: 'Sine.easeOut',
@@ -274,7 +277,10 @@ export class HomeScene extends Phaser.Scene {
         ? `${this.resources.leafBits} / ${cap}`
         : `${this.resources.leafBits}`;
     }
-    return `${this.resources.aphidMilk}`;
+    // aphidMilk accumulates fractional locally (see update() trickle); we
+    // floor for display so the HUD pill stays integer-clean and matches
+    // what the server has banked at the last /me roundtrip.
+    return `${Math.floor(this.resources.aphidMilk)}`;
   }
 
   // Sums the per-second production from the active server base (or the

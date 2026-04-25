@@ -357,14 +357,15 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         );
       }
       if (income.aphidMilk > 0) {
-        // Milk rate is fractional (0.2/sec at L1) so render with one
-        // decimal place. The server's offline trickle floors per call,
-        // so the player banks exactly the rounded number per second
-        // they spent producing.
+        // Milk rate is fractional at L1 (0.2/sec) but lands on whole
+        // numbers at higher levels (e.g. L5 → 1.0). Wrap in Number()
+        // after toFixed(1) to drop trailing ".0" so the display reads
+        // "+1" / "+2" once the curve hits integer territory — matches
+        // the HUD's formatRate logic.
         addStat(
           'Milk / sec',
-          `+${(income.aphidMilk * levelMult).toFixed(1)}`,
-          showNextStats ? `+${(income.aphidMilk * nextLevelMult).toFixed(1)}` : undefined,
+          `+${Number((income.aphidMilk * levelMult).toFixed(1))}`,
+          showNextStats ? `+${Number((income.aphidMilk * nextLevelMult).toFixed(1))}` : undefined,
         );
       }
     }
