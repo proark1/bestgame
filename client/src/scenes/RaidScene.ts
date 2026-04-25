@@ -219,6 +219,7 @@ export class RaidScene extends Phaser.Scene {
   private deckTrayBg!: Phaser.GameObjects.Graphics;
   private deckSelectedIcon!: Phaser.GameObjects.Image;
   private deckSelectedText!: Phaser.GameObjects.Text;
+  private deckUnitCountText!: Phaser.GameObjects.Text;
   private deckHintText!: Phaser.GameObjects.Text;
   private deckUnlockText!: Phaser.GameObjects.Text;
   private boardGuide!: Phaser.GameObjects.Container;
@@ -828,6 +829,15 @@ export class RaidScene extends Phaser.Scene {
       .text(0, 0, '', displayTextStyle(15, '#ffd98a', 3))
       .setOrigin(0.5, 0)
       .setDepth(31);
+    this.deckUnitCountText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '28px',
+        fontStyle: 'bold',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(31);
     this.deckHintText = this.add
       .text(
         0,
@@ -943,6 +953,19 @@ export class RaidScene extends Phaser.Scene {
     this.deckSelectedText.setText(
       `${entry.label}${roleStr} (${status})${entry.count > 0 ? ` • deploys ${burst}` : ''}`,
     );
+
+    // Unit count display: shows current/max count, color-coded by readiness
+    const totalCount = ALL_DECK.find((d) => d.kind === entry.kind)?.count ?? 0;
+    const countStr = `${entry.count}/${totalCount}`;
+    let countColor = '#c3e8b0'; // green default
+    if (entry.count === 0) {
+      countColor = '#d98080'; // red if depleted
+    } else if (entry.count <= totalCount / 2) {
+      countColor = '#ffd98a'; // gold if caution (half or less)
+    }
+    this.deckUnitCountText.setText(countStr);
+    this.deckUnitCountText.setColor(countColor);
+
     this.deckHintText.setText(
       entry.count > 0
         ? (unitCodex?.power
@@ -1805,6 +1828,8 @@ export class RaidScene extends Phaser.Scene {
     this.deckSelectedText
       .setWordWrapWidth(220)
       .setPosition(this.scale.width / 2 + 12, trayTop + 10);
+    this.deckUnitCountText
+      .setPosition(this.scale.width / 2 + 82, trayTop + 24);
     this.deckHintText
       .setWordWrapWidth(this.scale.width - 56)
       .setPosition(this.scale.width / 2, trayTop + 28);
