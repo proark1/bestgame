@@ -200,6 +200,10 @@ export class RaidScene extends Phaser.Scene {
   private animationEnabled: Record<string, boolean> = {};
   private trailEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private attackerQueenLevel = 1;
+  // Track unit entry animations: which units have already been animated
+  // in from their spawn edge. Each unit is animated once on creation.
+  private unitAnimationStarted = new Set<number>();
+  private deploymentEdges = new Map<number, SpawnEdge>(); // tick → spawn edge
 
   // Trail drawing state.
   private selectedDeckIdx = 0;
@@ -284,6 +288,8 @@ export class RaidScene extends Phaser.Scene {
     this.unitSprites.clear();
     this.unitLastHp.clear();
     this.unitLastPos.clear();
+    this.unitAnimationStarted.clear();
+    this.deploymentEdges.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
     // first unit spawns (usually a couple of ticks in), the settings
@@ -794,6 +800,9 @@ export class RaidScene extends Phaser.Scene {
         },
       };
       this.pendingInputs.push(input);
+      // Record which spawn edge this deployment came from, so units
+      // spawned on this tick can be animated from that edge.
+      this.deploymentEdges.set(this.state.tick + 1, this.lastSpawnEdge);
       // Replay timeline for server submission — every deploy the player
       // commits is recorded. Defeat/timeout endings submit this list
       // via /api/raid/submit, where the shared sim re-runs it to verify
@@ -1194,6 +1203,12 @@ export class RaidScene extends Phaser.Scene {
         spr = this.makeUnitSprite(u.kind, x, y);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
+        // Entry animation: units slide in from their spawn edge over 300ms.
+        // Mark as animated so we don't repeat it if the sprite persists.
+        if (!this.unitAnimationStarted.has(u.id)) {
+          this.unitAnimationStarted.add(u.id);
+          this.applyUnitEntryAnimation(spr, x, y);
+        }
       } else {
         spr.setPosition(x, y);
       }
@@ -1369,6 +1384,50 @@ export class RaidScene extends Phaser.Scene {
     }
     const pct = total === 0 ? 0 : destroyed / total;
     return queenDead && pct >= 0.9 ? 3 : queenDead || pct >= 0.5 ? 2 : pct > 0 ? 1 : 0;
+  }
+
+  private applyUnitEntryAnimation(
+    spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+    targetX: number,
+    targetY: number,
+  ): void {
+    // Determine spawn edge: check deploymentEdges for the current tick,
+    // fall back to lastSpawnEdge. If no edge found, skip animation.
+    const edge = this.deploymentEdges.get(this.state.tick) ?? this.lastSpawnEdge;
+    if (!edge) return;
+
+    // Calculate starting position off-screen based on spawn edge.
+    // Units slide in from ~2 tiles away (SPAWN_ZONE_W/H) in the direction
+    // they entered.
+    let startX = targetX;
+    let startY = targetY;
+    const offset = SPAWN_ZONE_W; // Same as spawn zone width
+
+    switch (edge) {
+      case 'left':
+        startX = targetX - offset;
+        break;
+      case 'top':
+        startY = targetY - offset;
+        break;
+      case 'bottom':
+        startY = targetY + offset;
+        break;
+    }
+
+    // Start the sprite at the off-screen position.
+    spr.setPosition(startX, startY);
+
+    // Tween to the actual position over 300ms with Power2.easeOut for
+    // a snappy, satisfying entry feel. Matches Clash of Clans troop
+    // deployment animation style.
+    this.tweens.add({
+      targets: spr,
+      x: targetX,
+      y: targetY,
+      duration: 300,
+      ease: 'Power2.easeOut',
+    });
   }
 
   // Pulls a real opponent from /api/match. If the attacker has no
