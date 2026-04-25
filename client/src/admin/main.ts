@@ -778,7 +778,6 @@ function renderSpritesTab(): HTMLElement {
   root.append(categoryBar);
 
   root.append(renderGuide());
-  root.append(renderAnimationPanel());
   root.append(renderUiOverridesPanel());
 
   // -- Toolbar for global sprite compression settings
@@ -844,6 +843,11 @@ function renderSpritesTab(): HTMLElement {
     fileByKey.set(base, f);
   }
 
+  const hasAnimationFile = (kind: string): boolean =>
+    state.files.some(
+      (f) => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`,
+    );
+
   const mk = (
     kind: 'unit' | 'building' | 'menuUi',
     baseName: string,
@@ -858,7 +862,7 @@ function renderSpritesTab(): HTMLElement {
           ? 'buildings'
           : 'menuUi';
     const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
-    return new SpriteCard({
+    const opts: import('./SpriteCard.js').SpriteCardOptions = {
       key,
       initialPrompt,
       fileMeta: {
@@ -877,7 +881,25 @@ function renderSpritesTab(): HTMLElement {
       },
       onSaved: () => {},
       showStatus: statusToast,
-    });
+    };
+    // Only unit sprites get inline animation support — buildings,
+    // UI elements, and branding don't animate.
+    if (kind === 'unit') {
+      opts.animation = {
+        hasAnimation: () => hasAnimationFile(baseName),
+        onGenerate: async (onProgress: (note: string) => void) => {
+          await generateAnimationFromSprite(baseName, onProgress);
+          // Refresh files so the status badge updates
+          try {
+            const s = await fetchStatus();
+            state.files = s.files;
+          } catch {
+            // ignore — cosmetic
+          }
+        },
+      };
+    }
+    return new SpriteCard(opts);
   };
 
   // Render sprites for active category
