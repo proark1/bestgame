@@ -420,6 +420,40 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.lineBetween(x0 + 6, cy, x0 + panelW - 6, cy);
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
   },
+  'building-LeafWallV': (g, s) => {
+    // Vertical fence panel — same material as LeafWall but the long
+    // axis runs top-to-bottom. Drawn as its own asset (rather than just
+    // rotating the H sprite at runtime) so the weave bands stay
+    // perpendicular to the long axis and read as an upright wall
+    // section. Lines up edge-to-edge with vertical neighbours the way
+    // CoC walls do at corners.
+    const cx = s / 2;
+    const cy = s / 2;
+    const panelH = s - 24;       // long axis: spans almost the whole tile vertically
+    const panelW = Math.round(s * 0.42); // short axis: ~42% for clear vertical read
+    const x0 = cx - panelW / 2;
+    const y0 = cy - panelH / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillStyle(PALETTE.leaf.belly, 1);
+    g.fillRoundedRect(x0, y0, panelW, panelH, 10);
+    g.strokeRoundedRect(x0, y0, panelW, panelH, 10);
+    // Horizontal weave bands across the panel (perpendicular to long axis)
+    g.fillStyle(PALETTE.leaf.body, 1);
+    const bandCount = 5;
+    const bandH = Math.floor(panelH / (bandCount * 2 + 1));
+    for (let i = 0; i < bandCount; i++) {
+      const by = y0 + bandH + i * (bandH * 2);
+      g.fillRect(x0 + 6, by, panelW - 12, bandH);
+    }
+    // Vertical leaf-edge accent rails (left + right) — mark the long axis
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    g.fillRect(x0 + 4, y0 + 4, 5, panelH - 8);
+    g.fillRect(x0 + panelW - 9, y0 + 4, 5, panelH - 8);
+    // Center seam — single bright leaf vein along the long axis
+    g.lineStyle(2, PALETTE.leaf.accent, 1);
+    g.lineBetween(cx, y0 + 6, cx, y0 + panelH - 6);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+  },
   'building-PebbleBunker': (g, s) => {
     const cx = s / 2;
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
@@ -580,21 +614,78 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.fillCircle(cx + 5, s - 82, 2);
   },
   'building-ThornHedge': (g, s) => {
+    // Horizontal reinforced blocker — long axis runs left-to-right.
+    // Bramble panel with sharp spikes jutting out the top and bottom
+    // edges so the eye reads "spiky horizontal wall" not "spiky bush".
     const cx = s / 2;
+    const cy = s / 2;
+    const panelW = s - 24;
+    const panelH = Math.round(s * 0.46);
+    const x0 = cx - panelW / 2;
+    const y0 = cy - panelH / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    // Dense bramble base
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    g.fillRoundedRect(x0, y0, panelW, panelH, 8);
+    g.strokeRoundedRect(x0, y0, panelW, panelH, 8);
+    // Tangle texture — diagonal twigs across the panel
+    g.lineStyle(3, OUTLINE, 0.8);
+    for (let i = 0; i < 5; i++) {
+      const tx = x0 + 12 + i * Math.floor((panelW - 24) / 4);
+      g.lineBetween(tx, y0 + 6, tx + 14, y0 + panelH - 6);
+    }
+    // Spikes along top and bottom edges — the threat read
+    g.fillStyle(PALETTE.leaf.body, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    const spikeCount = 5;
+    const spikeW = 16;
+    const spikeStep = (panelW - spikeW) / (spikeCount - 1);
+    for (let i = 0; i < spikeCount; i++) {
+      const sx = x0 + i * spikeStep;
+      // top spikes (point up)
+      g.fillTriangle(sx, y0 + 4, sx + spikeW, y0 + 4, sx + spikeW / 2, y0 - 22);
+      g.strokeTriangle(sx, y0 + 4, sx + spikeW, y0 + 4, sx + spikeW / 2, y0 - 22);
+      // bottom spikes (point down)
+      g.fillTriangle(sx, y0 + panelH - 4, sx + spikeW, y0 + panelH - 4, sx + spikeW / 2, y0 + panelH + 22);
+      g.strokeTriangle(sx, y0 + panelH - 4, sx + spikeW, y0 + panelH - 4, sx + spikeW / 2, y0 + panelH + 22);
+    }
+  },
+  'building-ThornHedgeV': (g, s) => {
+    // Vertical reinforced blocker — same material as ThornHedge with
+    // long axis running top-to-bottom. Spikes jut out left and right
+    // edges so the eye reads "spiky vertical wall" lining up with
+    // its neighbour pieces at a corner.
+    const cx = s / 2;
+    const cy = s / 2;
+    const panelH = s - 24;
+    const panelW = Math.round(s * 0.46);
+    const x0 = cx - panelW / 2;
+    const y0 = cy - panelH / 2;
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
     g.fillStyle(PALETTE.leaf.accent, 1);
-    // denser, darker than LeafWall; thorns jut out
-    for (let i = 0; i < 3; i++) {
-      const y = s - 30 - i * 38;
-      g.fillTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
-      g.strokeTriangle(cx - 66, y, cx + 66, y, cx, y - 46);
+    g.fillRoundedRect(x0, y0, panelW, panelH, 8);
+    g.strokeRoundedRect(x0, y0, panelW, panelH, 8);
+    // Tangle texture — diagonal twigs running along the long axis
+    g.lineStyle(3, OUTLINE, 0.8);
+    for (let i = 0; i < 5; i++) {
+      const ty = y0 + 12 + i * Math.floor((panelH - 24) / 4);
+      g.lineBetween(x0 + 6, ty, x0 + panelW - 6, ty + 14);
     }
-    // thorns
-    g.lineStyle(4, OUTLINE, 1);
-    g.lineBetween(cx - 58, s - 40, cx - 74, s - 54);
-    g.lineBetween(cx + 58, s - 40, cx + 74, s - 54);
-    g.lineBetween(cx - 40, s - 78, cx - 60, s - 92);
-    g.lineBetween(cx + 40, s - 78, cx + 60, s - 92);
+    // Spikes along left and right edges
+    g.fillStyle(PALETTE.leaf.body, 1);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    const spikeCount = 5;
+    const spikeH = 16;
+    const spikeStep = (panelH - spikeH) / (spikeCount - 1);
+    for (let i = 0; i < spikeCount; i++) {
+      const sy = y0 + i * spikeStep;
+      // left spikes (point left)
+      g.fillTriangle(x0 + 4, sy, x0 + 4, sy + spikeH, x0 - 22, sy + spikeH / 2);
+      g.strokeTriangle(x0 + 4, sy, x0 + 4, sy + spikeH, x0 - 22, sy + spikeH / 2);
+      // right spikes (point right)
+      g.fillTriangle(x0 + panelW - 4, sy, x0 + panelW - 4, sy + spikeH, x0 + panelW + 22, sy + spikeH / 2);
+      g.strokeTriangle(x0 + panelW - 4, sy, x0 + panelW - 4, sy + spikeH, x0 + panelW + 22, sy + spikeH / 2);
+    }
   },
   default: (g, s) => {
     const cx = s / 2;
