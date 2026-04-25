@@ -529,7 +529,7 @@ export class SpriteCard {
       previewImg.addEventListener('error', () => {
         // Fallback if webp doesn't exist (e.g., first generation saved as png)
         previewImg.src = `/assets/sprites/unit-${kind}-walk.png?t=${Date.now()}`;
-      });
+      }, { once: true });
       previewBox.append(previewImg);
       panel.append(previewBox);
     }

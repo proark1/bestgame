@@ -738,19 +738,26 @@ async function generateWalkCycle(
   const b = imgsB[0];
   if (!b) throw new Error('Gemini returned no image for pose B');
 
-  // Automatically remove background and near-white zones from pose B
-  // to match the cleaned state of pose A.
+  // Automatically remove background and near-white zones from both poses
+  // to ensure a clean, consistent animation strip.
+  onProgress?.(`${kind}: cleaning pose A (removing background)…`);
+  const aCleaned = await removeBackground(a.data, a.mimeType);
+
+  onProgress?.(`${kind}: cleaning pose A (removing gray filler)…`);
+  const aCleanedZones = await removeNearWhite(aCleaned.base64, aCleaned.mimeType);
+
   onProgress?.(`${kind}: cleaning pose B (removing background)…`);
   const bCleaned = await removeBackground(b.data, b.mimeType);
 
   onProgress?.(`${kind}: cleaning pose B (removing gray filler)…`);
   const bCleanedZones = await removeNearWhite(bCleaned.base64, bCleaned.mimeType);
 
-  // Convert pose B to GeminiImage format with cleaned data
+  // Convert both poses to GeminiImage format with cleaned data
+  const aFrame: typeof a = { mimeType: 'image/png', data: aCleanedZones.base64 };
   const bFrame: typeof b = { mimeType: 'image/png', data: bCleanedZones.base64 };
 
   onProgress?.(`${kind}: compositing strip…`);
-  const stripPng = await compositeWalkStrip([a, bFrame]);
+  const stripPng = await compositeWalkStrip([aFrame, bFrame]);
 
   onProgress?.(`${kind}: compressing…`);
   // Use global sprite compression settings; ensure quality high enough for animation detail
