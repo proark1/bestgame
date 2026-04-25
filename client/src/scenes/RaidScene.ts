@@ -537,21 +537,16 @@ export class RaidScene extends Phaser.Scene {
 
   private drawBoard(): void {
     const bg = this.add.graphics();
-    // gradient-ish tiled ground
-    bg.fillStyle(0x1d3a1a, 1);
+    // Single clean grass surface (no checkerboard noise)
+    bg.fillStyle(0x2c5a23, 1);
     bg.fillRect(0, 0, BOARD_W, BOARD_H);
-    bg.fillStyle(0x244a21, 1);
-    for (let y = 0; y < GRID_H; y++) {
-      for (let x = 0; x < GRID_W; x++) {
-        if ((x + y) % 2 === 0) bg.fillRect(x * TILE, y * TILE, TILE, TILE);
-      }
-    }
     // edge vignette
     bg.fillStyle(0x000000, 0.28);
     bg.fillRect(0, 0, BOARD_W, 20);
     bg.fillRect(0, BOARD_H - 20, BOARD_W, 20);
 
-    const grid = this.add.graphics({ lineStyle: { width: 1, color: 0x2c5a23, alpha: 0.5 } });
+    // Minimal grid - very subtle for alignment only
+    const grid = this.add.graphics({ lineStyle: { width: 0.5, color: 0x1d3a1a, alpha: 0.15 } });
     for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
     for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
 
