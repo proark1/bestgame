@@ -32,6 +32,9 @@ const DECK_GRID_GAP = 12;
 const TICK_HZ = 30;
 const RAID_SECONDS = 90;
 const SPAWN_ZONE_W = TILE * 2;
+const SPAWN_ZONE_H = TILE * 2;
+
+type SpawnEdge = 'left' | 'top' | 'bottom';
 
 interface DeckEntry {
   kind: Types.UnitKind;
@@ -207,6 +210,7 @@ export class RaidScene extends Phaser.Scene {
   private drawingPoints: Array<{ x: number; y: number }> = [];
   private trailGraphics!: Phaser.GameObjects.Graphics;
   private isDrawing = false;
+  private lastSpawnEdge: SpawnEdge = 'left';
 
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
@@ -506,11 +510,27 @@ export class RaidScene extends Phaser.Scene {
     for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
 
     this.spawnZoneGraphics = this.add.graphics().setDepth(2);
+
+    // Left spawn zone (2 tiles wide)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
     this.spawnZoneGraphics.fillRect(0, 0, SPAWN_ZONE_W, BOARD_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
     this.spawnZoneGraphics.strokeRect(0, 0, SPAWN_ZONE_W, BOARD_H);
-    const chevrons = [0, 1, 2].map((i) =>
+
+    // Top spawn zone (full width, 2 tiles tall)
+    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillRect(0, 0, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.strokeRect(0, 0, BOARD_W, SPAWN_ZONE_H);
+
+    // Bottom spawn zone (full width, 2 tiles tall)
+    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillRect(0, BOARD_H - SPAWN_ZONE_H, BOARD_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.strokeRect(0, BOARD_H - SPAWN_ZONE_H, BOARD_W, SPAWN_ZONE_H);
+
+    // Chevron indicators for each edge
+    const leftChevrons = [0, 1, 2].map((i) =>
       this.add
         .text(SPAWN_ZONE_W / 2, 140 + i * 120, '>>>', {
           fontFamily: 'ui-monospace, monospace',
@@ -520,6 +540,29 @@ export class RaidScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setAlpha(0.28),
     );
+
+    const topChevrons = [0, 1, 2].map((i) =>
+      this.add
+        .text(140 + i * 120, SPAWN_ZONE_H / 2, 'vvv', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '22px',
+          color: '#c3e8b0',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0.28),
+    );
+
+    const bottomChevrons = [0, 1, 2].map((i) =>
+      this.add
+        .text(140 + i * 120, BOARD_H - SPAWN_ZONE_H / 2, '^^^', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '22px',
+          color: '#c3e8b0',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0.28),
+    );
+
     this.spawnZoneLabel = this.add
       .text(SPAWN_ZONE_W / 2, BOARD_H / 2, 'SPAWN\nEDGE', {
         fontFamily: 'ui-monospace, monospace',
@@ -530,14 +573,15 @@ export class RaidScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setAlpha(0.75)
       .setDepth(3);
-    this.spawnZoneCue = this.add.container(0, 0, chevrons);
+
+    const allChevrons = [...leftChevrons, ...topChevrons, ...bottomChevrons];
+    this.spawnZoneCue = this.add.container(0, 0, allChevrons);
     this.spawnZoneCue.setDepth(3);
     this.tweens.add({
-      targets: chevrons,
-      x: `+=10`,
+      targets: allChevrons,
       alpha: { from: 0.18, to: 0.55 },
       duration: 900,
-      stagger: 120,
+      stagger: 60,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
@@ -669,19 +713,27 @@ export class RaidScene extends Phaser.Scene {
         y: Phaser.Math.Clamp((py - this.boardContainer.y) / scale, 0, BOARD_H),
       };
     };
-    const withinSpawnZone = (px: number, py: number): boolean => {
+    const determineSpawnEdge = (px: number, py: number): SpawnEdge | null => {
       const local = toBoardLocal(px, py);
-      return local.x <= SPAWN_ZONE_W;
+      // Left edge: x <= 2 tiles
+      if (local.x <= SPAWN_ZONE_W) return 'left';
+      // Top edge: y <= 2 tiles (excluding corners covered by left)
+      if (local.y <= SPAWN_ZONE_H && local.x > SPAWN_ZONE_W) return 'top';
+      // Bottom edge: y >= height - 2 tiles (excluding corners covered by left)
+      if (local.y >= BOARD_H - SPAWN_ZONE_H && local.x > SPAWN_ZONE_W) return 'bottom';
+      return null;
     };
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!withinBoard(p.x, p.y)) return;
       if (this.state.outcome !== 'ongoing') return;
       if (this.currentDeckEntry().count <= 0) return;
-      if (!withinSpawnZone(p.x, p.y)) {
-        this.deckHintText.setText('Start your drag from the glowing spawn edge on the left.');
+      const edge = determineSpawnEdge(p.x, p.y);
+      if (!edge) {
+        this.deckHintText.setText('Start your drag from a glowing spawn edge (left, top, or bottom).');
         return;
       }
+      this.lastSpawnEdge = edge;
       const local = toBoardLocal(p.x, p.y);
       this.isDrawing = true;
       this.drawingPoints = [local];
