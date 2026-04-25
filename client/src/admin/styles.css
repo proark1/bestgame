@@ -1003,6 +1003,24 @@ button {
   color: var(--text-dim);
   line-height: 1.45;
 }
+.sprite-card-animation-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 120px;
+  margin: 8px 0;
+}
+.sprite-card-animation-preview img {
+  max-width: 100%;
+  max-height: 96px;
+  height: auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
 .sprite-card-animation-actions {
   display: flex;
   gap: 8px;

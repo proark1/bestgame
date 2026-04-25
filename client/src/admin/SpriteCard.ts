@@ -515,6 +515,25 @@ export class SpriteCard {
       : 'Generate a moving variation: legs walk if it has legs, wings flap if flying, both if both. Uses this sprite as reference.';
     panel.append(note);
 
+    // Animation preview — only shown when animation exists
+    if (animOk) {
+      const previewBox = document.createElement('div');
+      previewBox.className = 'sprite-card-animation-preview';
+      const previewImg = document.createElement('img');
+      // Extract kind from this.key (e.g., "unit-ant" -> "ant")
+      const kind = this.key.replace(/^unit-/, '');
+      // Load animation strip with cache-bust. Animation files are named:
+      // unit-{kind}-walk.{ext} and contain two frames composited into 256×128
+      previewImg.src = `/assets/sprites/unit-${kind}-walk.webp?t=${Date.now()}`;
+      previewImg.alt = 'Walk cycle animation';
+      previewImg.addEventListener('error', () => {
+        // Fallback if webp doesn't exist (e.g., first generation saved as png)
+        previewImg.src = `/assets/sprites/unit-${kind}-walk.png?t=${Date.now()}`;
+      });
+      previewBox.append(previewImg);
+      panel.append(previewBox);
+    }
+
     const actions = document.createElement('div');
     actions.className = 'sprite-card-animation-actions';
 
