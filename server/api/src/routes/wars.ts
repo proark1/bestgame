@@ -26,10 +26,25 @@ interface StartWarBody { opponentClanId: string }
 interface AttackBody   { defenderPlayerId: string; stars: 0 | 1 | 2 | 3 }
 interface EndWarBody   { warId: string }
 
-// Bonus trophies awarded to the winning clan's members per-member.
-// Modest — the ladder is ELO-based, clan wars are a side objective.
-const WAR_WIN_TROPHY_BONUS = 25;
-const WAR_DRAW_TROPHY_BONUS = 5;
+// Per-member payout structure on war end. Trophies are the existing
+// ELO-flavored side bonus; sugar + leaf are the resource payout that
+// makes a war session feel like a meaningful resource event (~3 unit
+// upgrades' worth of sugar on a clean win). Losers get a small
+// consolation pot so a losing war isn't fully wasted — encourages
+// participation in mismatched matchups. AphidMilk is reserved for a
+// future season-pass tier.
+//
+// Calibration anchors (cf. docs/GAME_DESIGN.md §6.10):
+//   - Win sugar = ~10× a SoldierAnt L1→L2 (150 sugar) → meaningful
+//     contribution to next tier upgrade.
+//   - Loss sugar = ~3× same → still feels like a reward, not a slap.
+const WAR_PAYOUT = {
+  win:  { trophies: 25, sugar: 5000, leafBits: 1500 },
+  draw: { trophies: 5,  sugar: 1000, leafBits: 300 },
+  loss: { trophies: 0,  sugar: 500,  leafBits: 100 },
+} as const;
+
+type WarOutcome = 'win' | 'draw' | 'loss';
 
 export function registerWars(app: FastifyInstance): void {
   // -- Start -----------------------------------------------------------------
@@ -461,6 +476,14 @@ export function registerWars(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Caller's clan — used to surface their side's outcome + payout
+      // in the response (no DB cost vs the existing flow; the row is
+      // also referenced inside the payout loop below). Tolerates a
+      // caller who's no longer in either clan: myOutcome will be null.
+      const me = await client.query<{ clan_id: string }>(
+        'SELECT clan_id FROM clan_members WHERE player_id = $1',
+        [playerId],
+      );
       // Pull `has_ended` from Postgres itself rather than comparing
       // `ends_at` against the API node's `Date.now()` — the app and
       // DB clocks can drift, especially across deploys, and the
@@ -508,28 +531,49 @@ export function registerWars(app: FastifyInstance): void {
         return { error: 'war has not ended yet', endsAt: w.ends_at.toISOString() };
       }
 
-      // Winner: higher star total. Tie → both get a small bonus.
+      // Determine outcome per side. Tie → both sides "draw"; otherwise
+      // the higher-star clan "wins" and the other "loses". This is a
+      // per-clan label so member payouts can differ between the two
+      // sides without a second pass.
       let winningClanId: string | null = null;
-      let bonus = WAR_DRAW_TROPHY_BONUS;
+      const sideOutcome: Record<string, WarOutcome> = {};
       if (w.stars_a > w.stars_b) {
         winningClanId = w.clan_a_id;
-        bonus = WAR_WIN_TROPHY_BONUS;
+        sideOutcome[w.clan_a_id] = 'win';
+        sideOutcome[w.clan_b_id] = 'loss';
       } else if (w.stars_b > w.stars_a) {
         winningClanId = w.clan_b_id;
-        bonus = WAR_WIN_TROPHY_BONUS;
+        sideOutcome[w.clan_a_id] = 'loss';
+        sideOutcome[w.clan_b_id] = 'win';
+      } else {
+        sideOutcome[w.clan_a_id] = 'draw';
+        sideOutcome[w.clan_b_id] = 'draw';
       }
 
-      // Pay out trophy bonus to every member of the winning clan
-      // (or both clans on a tie).
-      const recipientClans = winningClanId
-        ? [winningClanId]
-        : [w.clan_a_id, w.clan_b_id];
-      for (const cid of recipientClans) {
+      // Pay out trophies + sugar + leaf to every member of each clan
+      // according to that clan's outcome. Resources bypass the storage
+      // cap (consistent with raid loot) — the storage-full HUD warning
+      // nudges the player to spend, but war-end payouts are never
+      // forfeited. Losing clans still bank the consolation pot so a
+      // losing war isn't fully wasted.
+      for (const cid of [w.clan_a_id, w.clan_b_id]) {
+        const outcome = sideOutcome[cid]!;
+        const payout = WAR_PAYOUT[outcome];
+        // FROM-clause join is more idiomatic than the equivalent
+        // `WHERE id IN (SELECT …)` and lets Postgres plan a hash join
+        // straight from clan_members → players. Functionally identical
+        // for this volume (one row per clan member, ~30 max), but it's
+        // the correct shape if a clan ever scales up + reads stay
+        // grep-friendly for the next person paginating clan_members.
         await client.query(
-          `UPDATE players
-              SET trophies = trophies + $2
-            WHERE id IN (SELECT player_id FROM clan_members WHERE clan_id = $1)`,
-          [cid, bonus],
+          `UPDATE players p
+              SET trophies  = p.trophies + $2,
+                  sugar     = p.sugar + $3,
+                  leaf_bits = p.leaf_bits + $4
+             FROM clan_members cm
+            WHERE cm.player_id = p.id
+              AND cm.clan_id = $1`,
+          [cid, payout.trophies, payout.sugar, payout.leafBits],
         );
       }
 
@@ -542,12 +586,33 @@ export function registerWars(app: FastifyInstance): void {
         [w.id, winningClanId],
       );
       await client.query('COMMIT');
+      // Caller's perspective: which payout did MY side receive? The
+      // client can render a "Your clan won — +5000 sugar, +1500 leaf,
+      // +25 trophies" toast directly off this response.
+      const callerClanId = me.rows[0]?.clan_id;
+      const callerOutcome: WarOutcome | null = callerClanId
+        ? (sideOutcome[callerClanId] ?? null)
+        : null;
+      const callerPayout = callerOutcome ? WAR_PAYOUT[callerOutcome] : null;
       return {
         ok: true,
         winningClanId,
         starsA: w.stars_a,
         starsB: w.stars_b,
-        bonusPerMember: bonus,
+        // Multi-resource payout summary. Per-side totals so a clan-info
+        // panel can render "we got X / they got Y" without recomputing.
+        payouts: {
+          [w.clan_a_id]: {
+            outcome: sideOutcome[w.clan_a_id]!,
+            ...WAR_PAYOUT[sideOutcome[w.clan_a_id]!],
+          },
+          [w.clan_b_id]: {
+            outcome: sideOutcome[w.clan_b_id]!,
+            ...WAR_PAYOUT[sideOutcome[w.clan_b_id]!],
+          },
+        },
+        myOutcome: callerOutcome,
+        myPayout: callerPayout,
       };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);
