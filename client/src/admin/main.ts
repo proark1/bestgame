@@ -843,10 +843,11 @@ function renderSpritesTab(): HTMLElement {
     fileByKey.set(base, f);
   }
 
+  // O(1) lookup via the prebuilt fileByKey map (keys are the base
+  // filename without extension). state.files.some() would be O(N)
+  // and is called once per unit card on every render.
   const hasAnimationFile = (kind: string): boolean =>
-    state.files.some(
-      (f) => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`,
-    );
+    fileByKey.has(`unit-${kind}-walk`);
 
   const mk = (
     kind: 'unit' | 'building' | 'menuUi',
@@ -879,7 +880,16 @@ function renderSpritesTab(): HTMLElement {
           state.prompts[bucket]![baseName] = value;
         }
       },
-      onSaved: () => {},
+      onSaved: async () => {
+        // Refresh the global file list so hasAnimationFile() (and any
+        // other status indicator) reflects the just-saved sprite.
+        try {
+          const s = await fetchStatus();
+          state.files = s.files;
+        } catch {
+          // ignore — non-fatal, the next render will refetch
+        }
+      },
       showStatus: statusToast,
     };
     // Only unit sprites get inline animation support — buildings,

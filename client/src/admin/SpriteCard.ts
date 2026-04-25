@@ -64,6 +64,7 @@ export class SpriteCard {
   private variantsSelect!: HTMLSelectElement;
   private compressionPanel?: HTMLDivElement;
   private compressionToggle?: HTMLButtonElement;
+  private animationPanel?: HTMLDivElement;
 
   constructor(opts: SpriteCardOptions) {
     this.key = opts.key;
@@ -483,10 +484,16 @@ export class SpriteCard {
   }
 
   private renderAnimationPanel(): void {
+    // Mirror renderCompressionPanel pattern: clean up any prior instance,
+    // then build fresh. Stored as a class property so refreshThumb (or
+    // any future state change) can re-render reliably without depending
+    // on a captured closure variable.
+    this.animationPanel?.remove();
     if (!this.opts.animation) return;
     const anim = this.opts.animation;
     const panel = document.createElement('div');
     panel.className = 'sprite-card-animation';
+    this.animationPanel = panel;
 
     const header = document.createElement('div');
     header.className = 'sprite-card-animation-head';
@@ -526,8 +533,7 @@ export class SpriteCard {
       try {
         await anim.onGenerate((msg) => this.opts.showStatus(msg, 'info'));
         this.opts.showStatus(`Animation saved for ${this.key}`, 'success');
-        // Re-render the panel to update the status badge
-        panel.remove();
+        // Re-render via the stored reference path
         this.renderAnimationPanel();
       } catch (err) {
         this.opts.showStatus(
@@ -753,6 +759,12 @@ export class SpriteCard {
       this.metaEl.classList.add('warn');
       // No sprite → no history to browse.
       this.historyBtn.disabled = true;
+      // Keep fileMeta in sync so the animation panel's enable/disable
+      // logic and any other readers see the current truth.
+      this.opts.fileMeta.exists = false;
+      this.opts.fileMeta.ext = null;
+      this.opts.fileMeta.size = 0;
+      this.renderAnimationPanel();
       return;
     }
     const img = document.createElement('img');
@@ -767,6 +779,12 @@ export class SpriteCard {
     // (the list endpoint handles that case with a "no history yet"
     // status toast).
     this.historyBtn.disabled = false;
+    // Sync fileMeta and re-render the animation panel so its
+    // "Generate animation" button enables immediately after a save.
+    this.opts.fileMeta.exists = true;
+    this.opts.fileMeta.ext = path.endsWith('.webp') ? 'webp' : 'png';
+    this.opts.fileMeta.size = this.compressed?.sizeBytes ?? this.opts.fileMeta.size;
+    this.renderAnimationPanel();
   }
 
   private setBusy(b: boolean): void {
