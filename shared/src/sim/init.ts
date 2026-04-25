@@ -57,9 +57,15 @@ export function createInitialState(cfg: SimConfig): SimState {
       // id and applies damage to the first matching instance — both
       // copies get marked destroyed when hp hits 0.
       if (spans && spans.length > 0) {
+        // Cross-layer buildings (Queen Chamber etc.) share a SINGLE id
+        // across both layers — combat looks up the first id match, so
+        // damage applied to one copy is mirrored to the other. Assign
+        // the id once before the layer loop; allocating per-layer
+        // would silently break the linkage.
+        const sharedId = nextId++;
         for (const layer of spans) {
           buildings.push({
-            id: nextId++,
+            id: sharedId,
             kind: b.kind,
             owner,
             layer,

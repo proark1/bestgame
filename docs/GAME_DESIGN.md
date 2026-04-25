@@ -583,13 +583,17 @@ and verify it still hits all of these. If any anchor moves more than
   1` (`shared/src/sim/state.ts`). Asynchronous raids stamp every
   building owner=1 (defender) — no behavior change vs. pre-ownership.
   When `SimConfig.secondSnapshot` is supplied (live arena PvP path),
-  its buildings ingest as owner=0 mirrored onto the LEFT half of the
-  grid. Combat filters target acquisition + attack loops by owner so
-  units of side X only fire on buildings/units of side ≠ X. The
-  determinism hash includes the owner field. Today's arena entrypoint
-  still sends a single host-snapshot — wiring the second snapshot
-  through `arena_matches` + the Colyseus room is the next step but no
-  further sim work is needed.
+  its buildings ingest as owner=0 with X coordinates flipped via
+  `gridW - x - w` (a horizontal mirror within the full grid). The
+  authored layout reads left-to-right intuitively from the second
+  player's POV — no side-specific authoring contract; bases are
+  exchanged "as if facing each other across the table". Combat filters
+  target acquisition + attack loops by owner so units of side X only
+  fire on buildings/units of side ≠ X. The determinism hash includes
+  the owner field. Today's arena entrypoint still sends a single
+  host-snapshot — wiring the second snapshot through `arena_matches` +
+  the Colyseus room is the next step but no further sim work is
+  needed.
 
 ## 9. Monetization (post-MVP)
 

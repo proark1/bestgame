@@ -59,12 +59,24 @@ describe('symmetric per-building ownership', () => {
     expect(owner0.every((b) => b.anchorX === 12)).toBe(true);
   });
 
-  it('id allocator stays globally unique across both bases', () => {
+  it('cross-layer buildings share an id; bases never collide', () => {
     const s = createInitialState(
       cfgFor({ secondSnapshot: fakeBase('att', 2) }),
     );
-    const ids = s.buildings.map((b) => b.id);
-    const set = new Set(ids);
-    expect(set.size).toBe(ids.length);
+    // Each base contributes 1 cross-layer Queen → 2 SimBuilding rows
+    // sharing one id. Total rows = 4, total unique ids = 2.
+    expect(s.buildings.length).toBe(4);
+    const uniqueIds = new Set(s.buildings.map((b) => b.id));
+    expect(uniqueIds.size).toBe(2);
+
+    // Sanity: each unique id maps to exactly one owner (the same
+    // cross-layer building doesn't accidentally split sides) and
+    // covers both layers.
+    for (const id of uniqueIds) {
+      const rows = s.buildings.filter((b) => b.id === id);
+      expect(rows.length).toBe(2);
+      expect(new Set(rows.map((r) => r.owner)).size).toBe(1);
+      expect(new Set(rows.map((r) => r.layer))).toEqual(new Set([0, 1]));
+    }
   });
 });

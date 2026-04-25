@@ -84,9 +84,14 @@ export function pheromoneFollowSystem(state: SimState): void {
     }
 
     // Once the unit finishes its path, acquire nearest enemy building.
-    // Only attackers (owner=0) target buildings — defender AI units run
-    // in combat.ts and target attacker units instead.
-    if (u.pathId < 0 && u.owner === 0) {
+    // Both sides run this scan in symmetric arena. The inner-loop
+    // owner-mismatch filter (`b.owner === u.owner` continue) does the
+    // actual side filtering, so in raid mode where every building is
+    // owner=1 and every attacker is owner=0 we keep the original
+    // behavior; defender-side units (NestSpiders) still skip via
+    // pheromone_follow because they have no path id (handled in
+    // combat.ts).
+    if (u.pathId < 0) {
       let bestId = 0;
       let bestDist2: Fixed = fromInt(9999);
       for (let j = 0; j < state.buildings.length; j++) {
