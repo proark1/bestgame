@@ -148,6 +148,40 @@ function incomePerSecond(base: Types.Base): { sugar: number; leafBits: number; a
   return { sugar, leafBits, aphidMilk };
 }
 
+// Promote a single building's pending upgrade in place. Mutates the
+// passed building object (sets level / hpMax / hp; clears pending
+// fields) and returns true if anything actually changed. Reused by:
+//  - /player/me lazy finalize (every elapsed pending is auto-promoted)
+//  - /player/builder/skip immediate finalize (after milk debit)
+//
+// HP re-scale uses the same proportional-damage rule as the previous
+// instant upgrades: a perfect-HP building stays perfect; a damaged
+// building keeps the same absolute damage taken (capped at 1 HP min).
+function finalizePendingUpgrade(b: Types.Building): boolean {
+  if (!b.pendingCompletesAt || !b.pendingToLevel) return false;
+  const oldLevel = b.level ?? 1;
+  const newLevel = b.pendingToLevel;
+  if (newLevel <= oldLevel) {
+    // Defensive: pending pointed below current. Clear without touching
+    // level so a corrupt state doesn't make the building weaker.
+    delete b.pendingCompletesAt;
+    delete b.pendingToLevel;
+    return true;
+  }
+  const oldPct = levelStatPercent(oldLevel) / 100;
+  const newPct = levelStatPercent(newLevel) / 100;
+  const oldHpMax = b.hpMax ?? b.hp;
+  const baseMax = oldHpMax / oldPct;
+  const newHpMax = Math.round(baseMax * newPct);
+  const damageTaken = oldHpMax - b.hp;
+  b.level = newLevel;
+  b.hpMax = newHpMax;
+  b.hp = Math.max(1, newHpMax - damageTaken);
+  delete b.pendingCompletesAt;
+  delete b.pendingToLevel;
+  return true;
+}
+
 export function registerPlayer(app: FastifyInstance): void {
   app.get('/player/me', async (req, reply) => {
     const playerId = requirePlayer(req, reply);
@@ -170,8 +204,14 @@ export function registerPlayer(app: FastifyInstance): void {
         reply.code(404);
         return { error: 'player not found' };
       }
+      // FOR UPDATE on the base row — /me does a read-modify-write on
+      // bases.snapshot when a pending upgrade has elapsed (lazy
+      // finalize below). Without the lock, a concurrent /me or
+      // /upgrade-building from the same player could overwrite our
+      // changes (or vice versa). The TX commits at the end of the
+      // handler so the lock duration is bounded.
       const bRes = await client.query<BaseRow>(
-        'SELECT * FROM bases WHERE player_id = $1',
+        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
         [playerId],
       );
       if (bRes.rows.length === 0) {
@@ -193,27 +233,7 @@ export function registerPlayer(app: FastifyInstance): void {
       for (const b of base.snapshot.buildings) {
         if (!b.pendingCompletesAt || !b.pendingToLevel) continue;
         if (Date.parse(b.pendingCompletesAt) > nowMs) continue;
-        const oldLevel = b.level ?? 1;
-        const newLevel = b.pendingToLevel;
-        if (newLevel <= oldLevel) {
-          // Defensive: pending pointed below current. Just clear.
-          delete b.pendingCompletesAt;
-          delete b.pendingToLevel;
-          snapshotMutated = true;
-          continue;
-        }
-        const oldPct = levelStatPercent(oldLevel) / 100;
-        const newPct = levelStatPercent(newLevel) / 100;
-        const oldHpMax = b.hpMax ?? b.hp;
-        const baseMax = oldHpMax / oldPct;
-        const newHpMax = Math.round(baseMax * newPct);
-        const damageTaken = oldHpMax - b.hp;
-        b.level = newLevel;
-        b.hpMax = newHpMax;
-        b.hp = Math.max(1, newHpMax - damageTaken);
-        delete b.pendingCompletesAt;
-        delete b.pendingToLevel;
-        snapshotMutated = true;
+        if (finalizePendingUpgrade(b)) snapshotMutated = true;
       }
       if (snapshotMutated) {
         base.snapshot = {
@@ -2011,28 +2031,18 @@ export function registerPlayer(app: FastifyInstance): void {
           return { error: 'insufficient aphid milk', cost };
         }
 
-        // Promote the pending bump immediately. Same proportional-
-        // damage HP rule as /me's lazy finalize.
-        const oldLevel = target.level ?? 1;
-        const newLevel = target.pendingToLevel;
-        const oldPct = levelStatPercent(oldLevel) / 100;
-        const newPct = levelStatPercent(newLevel) / 100;
-        const oldHpMax = target.hpMax ?? target.hp;
-        const baseMax = oldHpMax / oldPct;
-        const newHpMax = Math.round(baseMax * newPct);
-        const damageTaken = oldHpMax - target.hp;
-        const updatedBuildings = base.buildings.map((b) => {
-          if (b.id !== body.buildingId) return b;
-          const next: Types.Building = {
-            ...b,
-            level: newLevel,
-            hp: Math.max(1, newHpMax - damageTaken),
-            hpMax: newHpMax,
-          };
-          delete next.pendingCompletesAt;
-          delete next.pendingToLevel;
-          return next;
-        });
+        // Promote the pending bump immediately via the shared helper.
+        // We spread the target into a fresh object so the mutation
+        // doesn't reach back into the array slot we still hold a
+        // reference to via base.buildings — finalizePendingUpgrade
+        // mutates in place and the spread keeps the swap-by-id contract
+        // below safe.
+        const promoted: Types.Building = { ...target };
+        finalizePendingUpgrade(promoted);
+        const newLevel = promoted.level;
+        const updatedBuildings = base.buildings.map((b) =>
+          b.id === body.buildingId ? promoted : b,
+        );
         const updated: Types.Base = {
           ...base,
           buildings: updatedBuildings,

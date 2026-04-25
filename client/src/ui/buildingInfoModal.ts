@@ -209,6 +209,13 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
   });
 
   const close = (): void => {
+    // Stop the countdown ticker before tearing down — it holds a
+    // reference into bodyContainer's children that would otherwise
+    // keep firing after destroy.
+    if (activeCountdownTicker) {
+      activeCountdownTicker.remove();
+      activeCountdownTicker = null;
+    }
     root.destroy(true);
   };
   // Only close if the click actually fell through to the backdrop
@@ -228,8 +235,21 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
   const bodyContainer = scene.add.container(cx, cy);
   root.add(bodyContainer);
 
+  // Closure-level ticker handle. The pending-upgrade branch in
+  // renderBody starts a 1Hz ticker to drive the live countdown.
+  // renderBody can be re-invoked (catalog load, post-upgrade refresh,
+  // post-skip refresh) — without this, each call would leak a fresh
+  // ticker. Hoisting + disposing here keeps exactly one ticker alive.
+  let activeCountdownTicker: Phaser.Time.TimerEvent | null = null;
+
   const renderBody = (b: Types.Building): void => {
     bodyContainer.removeAll(true);
+    // Dispose any prior countdown ticker before re-rendering. Whether
+    // or not the new render starts a new one, the old one is dead.
+    if (activeCountdownTicker) {
+      activeCountdownTicker.remove();
+      activeCountdownTicker = null;
+    }
 
     const title = KIND_LABELS[b.kind] ?? b.kind;
     const level = b.level ?? 1;
@@ -605,40 +625,31 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         },
       });
       bodyContainer.add(skipBtn.container);
-      // 1 Hz countdown ticker. Re-renders the body whenever the timer
-      // hits zero so the player sees the post-finalize state without
-      // closing + reopening the modal.
-      const ticker = scene.time.addEvent({
+      // 1 Hz countdown ticker. Updates the button label in place via
+      // HiveButton.setLabel (encapsulation-safe — no child iteration).
+      // Stored on the outer closure so a subsequent renderBody can
+      // dispose it before starting its own; outer onClose cleanup
+      // also drops it so a closed modal doesn't keep ticking.
+      activeCountdownTicker = scene.time.addEvent({
         delay: 1000,
         loop: true,
         callback: () => {
           const r = remaining();
           if (r <= 0) {
-            ticker.remove();
-            // The next /me will lazily promote — defer rendering by
-            // tapping the existing onUpdated path via a no-op route.
-            // Cheaper: just close + reopen would lose the modal, so
-            // we just blank the label until the next refresh.
-            skipBtn.container.list.forEach((child) => {
-              if (
-                child instanceof Phaser.GameObjects.Text &&
-                child.text.toLowerCase().includes('skip')
-              ) {
-                child.setText('Finalizing…');
-              }
-            });
+            // Timer elapsed — stop ticking and signal "finalizing" until
+            // the next /me promotes the level. Subsequent renderBody
+            // (triggered by upstream refresh) will paint the post-bump
+            // stats. Closing + reopening would also work but loses UX.
+            if (activeCountdownTicker) {
+              activeCountdownTicker.remove();
+              activeCountdownTicker = null;
+            }
+            skipBtn.setLabel('Finalizing…');
             return;
           }
-          // Update button label in place.
-          skipBtn.container.list.forEach((child) => {
-            if (child instanceof Phaser.GameObjects.Text) {
-              child.setText(skipLabel());
-            }
-          });
+          skipBtn.setLabel(skipLabel());
         },
       });
-      // Clean up the ticker when the modal closes.
-      bodyContainer.once(Phaser.GameObjects.Events.DESTROY, () => ticker.remove());
     } else {
       const upgradeLabel = atMax
         ? 'Max level'
