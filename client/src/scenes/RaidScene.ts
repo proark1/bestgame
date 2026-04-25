@@ -483,6 +483,47 @@ export class RaidScene extends Phaser.Scene {
         color: '#c3e8b0',
       })
       .setOrigin(1, 0.5);
+
+    // Pre-raid loot preview — sums every defender building's
+    // drops-on-destroy so the player sees the upper bound of what they
+    // can carry out of this raid. Sits just under the timer; centered
+    // so it reads as a "stake" rather than a status counter. The live
+    // `lootText` above ticks up during the raid and represents what
+    // they've actually banked at this point.
+    const lootable = this.computeLootableTotal();
+    if (lootable.sugar > 0 || lootable.leafBits > 0) {
+      this.add
+        .text(
+          this.scale.width / 2,
+          HUD_H + 6,
+          `LOOTABLE  ${lootable.sugar} sugar · ${lootable.leafBits} leaf`,
+          {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '11px',
+            color: '#c3e8b0',
+          },
+        )
+        .setOrigin(0.5, 0)
+        .setAlpha(0.85);
+    }
+  }
+
+  // Sums dropsSugarOnDestroy / dropsLeafBitsOnDestroy across every
+  // alive building in the defender base. The deterministic sim credits
+  // these at the moment a building hits hp <= 0, so this preview is the
+  // hard ceiling on the raid's loot — what the player can possibly
+  // come away with assuming a 100% wipe.
+  private computeLootableTotal(): { sugar: number; leafBits: number } {
+    let sugar = 0;
+    let leafBits = 0;
+    for (const b of this.state.buildings) {
+      if (b.hp <= 0) continue;
+      const stats = Sim.BUILDING_STATS[b.kind];
+      if (!stats) continue;
+      sugar += stats.dropsSugarOnDestroy;
+      leafBits += stats.dropsLeafBitsOnDestroy;
+    }
+    return { sugar, leafBits };
   }
 
   private drawBoard(): void {

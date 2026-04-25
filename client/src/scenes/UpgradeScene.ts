@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { Types } from '@hive/shared';
+import { Sim, type Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { UnitUpgradeEntry } from '../net/Api.js';
 import { makeHiveButton } from '../ui/button.js';
@@ -367,11 +367,27 @@ export class UpgradeScene extends Phaser.Scene {
           labelTextStyle(12, maxed ? COLOR.textGold : COLOR.textDim),
         ).setOrigin(0, 0),
       );
+      // Stat delta preview — what the upgrade actually buys, in concrete
+      // numbers (HP + DMG). Suppressed when locked (player hasn't reached
+      // the unlock tier — irrelevant noise) or maxed (no next stat). Per
+      // GDD §6.9, players should never spend without seeing the gain.
+      const statDelta = !maxed && !locked ? this.formatStatDelta(u.kind, u.level) : null;
+      if (statDelta) {
+        this.rowContainer.add(
+          crispText(
+            this,
+            originX + 92,
+            y + 60,
+            statDelta,
+            labelTextStyle(11, COLOR.textGold),
+          ).setOrigin(0, 0),
+        );
+      }
       this.rowContainer.add(
         crispText(
           this,
           originX + 92,
-          y + 62,
+          y + (statDelta ? 78 : 62),
           status,
           bodyTextStyle(
             12,
@@ -517,6 +533,25 @@ export class UpgradeScene extends Phaser.Scene {
         bodyTextStyle(12, COLOR.textError),
       ).setOrigin(0.5);
     }
+  }
+
+  // "HP 40→47 · DMG 6.0→7.0" — concrete preview of what the next level
+  // buys. Stats use Sim.UNIT_STATS (base) × Sim.levelStatPercent (per-
+  // level multiplier) so the numbers match what the deterministic sim
+  // will use at deploy time. Returns null when the unit isn't in
+  // UNIT_STATS (defensive guard for hidden / unlisted kinds).
+  private formatStatDelta(kind: Types.UnitKind, level: number): string | null {
+    const stats = Sim.UNIT_STATS[kind];
+    if (!stats) return null;
+    const curMult = Sim.levelStatPercent(level) / 100;
+    const nextMult = Sim.levelStatPercent(level + 1) / 100;
+    const baseHp = Sim.toFloat(stats.hpMax);
+    const baseDmg = Sim.toFloat(stats.attackDamage);
+    const curHp = Math.round(baseHp * curMult);
+    const nextHp = Math.round(baseHp * nextMult);
+    const curDmg = baseDmg * curMult;
+    const nextDmg = baseDmg * nextMult;
+    return `HP ${curHp}→${nextHp} · DMG ${curDmg.toFixed(1)}→${nextDmg.toFixed(1)}`;
   }
 }
 

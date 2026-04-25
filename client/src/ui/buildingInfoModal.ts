@@ -41,6 +41,44 @@ export const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.Bu
   'ThornHedge',
 ]);
 
+// What unlocks at each Queen Chamber level. Mirrors the server-side
+// QUOTA_BY_TIER (server/api/src/game/buildingRules.ts) — a kind
+// "unlocks" at the lowest Queen level whose quota[level-1] is > 0.
+// Units mirror UNIT_UNLOCK_QUEEN_LEVEL. Used by the Queen Chamber
+// info modal to render "Upgrades to Q+1 unlocks: …" so the player
+// sees the reward before paying the cost (GDD §6.9).
+const QUEEN_UNLOCKS_BY_TIER: Record<number, { buildings: Types.BuildingKind[]; units: Types.UnitKind[] }> = {
+  2: {
+    buildings: ['PebbleBunker', 'DungeonTrap', 'TunnelJunction', 'AcidSpitter', 'SporeTower'],
+    units: ['FireAnt'],
+  },
+  3: {
+    buildings: ['RootSnare', 'HiddenStinger'],
+    units: ['Termite', 'Dragonfly'],
+  },
+  4: {
+    buildings: ['SpiderNest', 'ThornHedge'],
+    units: ['Mantis'],
+  },
+  5: {
+    buildings: [],
+    units: ['Scarab'],
+  },
+};
+
+// Pretty-print labels for the unit kinds we surface in unlock previews.
+// We keep the table tight to the kinds that can actually appear in
+// QUEEN_UNLOCKS_BY_TIER values; a missing entry falls back to the raw
+// kind id which is acceptable for any future addition before a label
+// gets curated.
+const UNIT_LABELS: Partial<Record<Types.UnitKind, string>> = {
+  FireAnt: 'Fire Ant',
+  Termite: 'Termite',
+  Dragonfly: 'Dragonfly',
+  Mantis: 'Mantis',
+  Scarab: 'Scarab',
+};
+
 // Friendly human-readable labels for each building kind. Keeps the
 // codex's marketing-blurb names out of the modal — here we want a
 // short noun that fits in a header.
@@ -238,24 +276,55 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     // ---- Stats list ----------------------------------------------------
     const stats = Sim.BUILDING_STATS[b.kind];
     const mult = statMultiplier(level);
-    const addStat = (label: string, value: string): void => {
+    // Per-level multiplier at the *next* level — used to render a
+    // side-by-side "current → next" preview so the player knows what
+    // each upgrade buys before they spend the cost (GDD §6.9).
+    const isQueenForPreview = b.kind === 'QueenChamber';
+    const queenMaxForPreview = catalog?.maxQueenLevel ?? 5;
+    const buildingMax = isQueenForPreview ? queenMaxForPreview : MAX_BUILDING_LEVEL;
+    const showNextStats = level < buildingMax;
+    const nextMult = showNextStats ? statMultiplier(level + 1) : mult;
+    const addStat = (label: string, value: string, next?: string): void => {
       bodyContainer.add(
         crispText(scene, 22, sy, label, labelTextStyle(11, COLOR.textMuted)),
       );
-      bodyContainer.add(
-        crispText(scene, MODAL_W - 22, sy, value, bodyTextStyle(13, COLOR.textPrimary))
-          .setOrigin(1, 0),
-      );
+      const valueText = crispText(
+        scene,
+        MODAL_W - 22,
+        sy,
+        value,
+        bodyTextStyle(13, COLOR.textPrimary),
+      ).setOrigin(1, 0);
+      bodyContainer.add(valueText);
+      // Dim "→ next" suffix sits to the LEFT of the value text — uses
+      // the value's measured width to anchor itself so the right-edge
+      // alignment of the value column stays clean across rows.
+      if (next && next !== value) {
+        const nextX = MODAL_W - 22 - valueText.width - 6;
+        bodyContainer.add(
+          crispText(scene, nextX, sy + 1, `→ ${next}`, labelTextStyle(11, COLOR.textGold))
+            .setOrigin(1, 0),
+        );
+      }
       sy += 20;
     };
     if (stats) {
       const hpMax = b.hpMax ?? Math.round(stats.hpMax * mult);
       const hp = b.hp ?? hpMax;
-      addStat('Hit points', `${hp} / ${hpMax}`);
+      const nextHpMax = showNextStats ? Math.round(stats.hpMax * nextMult) : null;
+      addStat('Hit points', `${hp} / ${hpMax}`,
+        nextHpMax !== null ? `${nextHpMax} / ${nextHpMax}` : undefined);
       if (stats.canAttack) {
         const dmgPerHit = Sim.toFloat(stats.attackDamage) * mult;
         const attacksPerSec = 30 / stats.attackCooldownTicks;
-        addStat('Damage per hit', dmgPerHit.toFixed(1));
+        const nextDmg = showNextStats
+          ? (Sim.toFloat(stats.attackDamage) * nextMult).toFixed(1)
+          : undefined;
+        addStat('Damage per hit', dmgPerHit.toFixed(1), nextDmg);
+        // Attacks / sec doesn't scale with level (cooldown is fixed by
+        // sim) so we render no preview — keeping the row consistent
+        // with the others' "→ next" pattern, just blank when nothing
+        // would change.
         addStat('Attacks / sec', attacksPerSec.toFixed(2));
         addStat('Range (tiles)', Sim.toFloat(stats.attackRange).toFixed(1));
       }
@@ -270,8 +339,21 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     const income = incomeMap[b.kind];
     if (income) {
       const levelMult = Math.max(1, level);
-      if (income.sugar > 0) addStat('Sugar / sec', `+${income.sugar * levelMult}`);
-      if (income.leafBits > 0) addStat('Leaf / sec', `+${income.leafBits * levelMult}`);
+      const nextLevelMult = showNextStats ? level + 1 : levelMult;
+      if (income.sugar > 0) {
+        addStat(
+          'Sugar / sec',
+          `+${income.sugar * levelMult}`,
+          showNextStats ? `+${income.sugar * nextLevelMult}` : undefined,
+        );
+      }
+      if (income.leafBits > 0) {
+        addStat(
+          'Leaf / sec',
+          `+${income.leafBits * levelMult}`,
+          showNextStats ? `+${income.leafBits * nextLevelMult}` : undefined,
+        );
+      }
     }
 
     // ---- Actions -------------------------------------------------------
@@ -314,6 +396,29 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       // more)" when unaffordable, secondary+"Upgrade Queen" when
       // ready. Clicks are gated so a disabled button is also
       // functionally inert.
+      // Unlock preview — what new buildings + units appear at the next
+      // tier. Renders before the cost line so the player sees the
+      // reward, then the price. Suppressed at max (nothing more to
+      // unlock).
+      const nextTierUnlocks = !queenAtMax ? QUEEN_UNLOCKS_BY_TIER[level + 1] : null;
+      const unlocksY = actionsStartY - actionBtnH / 2 - 88;
+      if (nextTierUnlocks) {
+        const items: string[] = [];
+        for (const kind of nextTierUnlocks.buildings) {
+          items.push(KIND_LABELS[kind] ?? kind);
+        }
+        for (const kind of nextTierUnlocks.units) {
+          items.push(UNIT_LABELS[kind] ?? kind);
+        }
+        if (items.length > 0) {
+          bodyContainer.add(
+            crispText(scene, 22, unlocksY,
+              `L${level + 1} unlocks: ${items.join(', ')}`,
+              bodyTextStyle(11, COLOR.textGold),
+            ).setWordWrapWidth(MODAL_W - 44, true),
+          );
+        }
+      }
       bodyContainer.add(
         crispText(scene, 22, actionsStartY - actionBtnH / 2 - 46,
           'Queen upgrades unlock new building slots and tiers.',
