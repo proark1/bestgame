@@ -778,7 +778,6 @@ function renderSpritesTab(): HTMLElement {
   root.append(categoryBar);
 
   root.append(renderGuide());
-  root.append(renderAnimationPanel());
   root.append(renderUiOverridesPanel());
 
   // -- Toolbar for global sprite compression settings
@@ -844,6 +843,12 @@ function renderSpritesTab(): HTMLElement {
     fileByKey.set(base, f);
   }
 
+  // O(1) lookup via the prebuilt fileByKey map (keys are the base
+  // filename without extension). state.files.some() would be O(N)
+  // and is called once per unit card on every render.
+  const hasAnimationFile = (kind: string): boolean =>
+    fileByKey.has(`unit-${kind}-walk`);
+
   const mk = (
     kind: 'unit' | 'building' | 'menuUi',
     baseName: string,
@@ -858,7 +863,7 @@ function renderSpritesTab(): HTMLElement {
           ? 'buildings'
           : 'menuUi';
     const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
-    return new SpriteCard({
+    const opts: import('./SpriteCard.js').SpriteCardOptions = {
       key,
       initialPrompt,
       fileMeta: {
@@ -875,9 +880,36 @@ function renderSpritesTab(): HTMLElement {
           state.prompts[bucket]![baseName] = value;
         }
       },
-      onSaved: () => {},
+      onSaved: async () => {
+        // Refresh the global file list so hasAnimationFile() (and any
+        // other status indicator) reflects the just-saved sprite.
+        try {
+          const s = await fetchStatus();
+          state.files = s.files;
+        } catch {
+          // ignore — non-fatal, the next render will refetch
+        }
+      },
       showStatus: statusToast,
-    });
+    };
+    // Only unit sprites get inline animation support — buildings,
+    // UI elements, and branding don't animate.
+    if (kind === 'unit') {
+      opts.animation = {
+        hasAnimation: () => hasAnimationFile(baseName),
+        onGenerate: async (onProgress: (note: string) => void) => {
+          await generateAnimationFromSprite(baseName, onProgress);
+          // Refresh files so the status badge updates
+          try {
+            const s = await fetchStatus();
+            state.files = s.files;
+          } catch {
+            // ignore — cosmetic
+          }
+        },
+      };
+    }
+    return new SpriteCard(opts);
   };
 
   // Render sprites for active category

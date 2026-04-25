@@ -26,6 +26,14 @@ export interface SpriteCardOptions {
   onPromptSave: (newValue: string) => Promise<void>;
   onSaved: (result: { path: string; ext: 'png' | 'webp' }) => void;
   showStatus: (msg: string, kind?: 'info' | 'error' | 'success') => void;
+  // Optional animation support. When provided, the card shows an
+  // animation section that lets the admin generate a moving variant
+  // (legs/wings) using the saved sprite as reference. Used for unit
+  // sprites only — buildings/UI/branding skip animation.
+  animation?: {
+    hasAnimation: () => boolean;
+    onGenerate: (onProgress: (note: string) => void) => Promise<void>;
+  };
 }
 
 export class SpriteCard {
@@ -56,6 +64,7 @@ export class SpriteCard {
   private variantsSelect!: HTMLSelectElement;
   private compressionPanel?: HTMLDivElement;
   private compressionToggle?: HTMLButtonElement;
+  private animationPanel?: HTMLDivElement;
 
   constructor(opts: SpriteCardOptions) {
     this.key = opts.key;
@@ -465,6 +474,81 @@ export class SpriteCard {
 
     // Compression panel (collapsed by default, toggle to expand)
     this.renderCompressionPanel();
+
+    // Animation panel — only shown when caller passes animation option
+    // (i.e. for unit sprites). Lets the admin generate a moving variant
+    // from the saved sprite without leaving the card.
+    if (this.opts.animation) {
+      this.renderAnimationPanel();
+    }
+  }
+
+  private renderAnimationPanel(): void {
+    // Mirror renderCompressionPanel pattern: clean up any prior instance,
+    // then build fresh. Stored as a class property so refreshThumb (or
+    // any future state change) can re-render reliably without depending
+    // on a captured closure variable.
+    this.animationPanel?.remove();
+    if (!this.opts.animation) return;
+    const anim = this.opts.animation;
+    const panel = document.createElement('div');
+    panel.className = 'sprite-card-animation';
+    this.animationPanel = panel;
+
+    const header = document.createElement('div');
+    header.className = 'sprite-card-animation-head';
+    const title = document.createElement('span');
+    title.className = 'sprite-card-animation-title';
+    title.textContent = '🎬 Animation';
+    const status = document.createElement('span');
+    status.className = 'sprite-card-animation-status';
+    const animOk = anim.hasAnimation();
+    status.textContent = animOk ? '✓ ready' : '— not generated';
+    status.dataset.ok = animOk ? '1' : '0';
+    header.append(title, status);
+    panel.append(header);
+
+    const note = document.createElement('p');
+    note.className = 'sprite-card-animation-note';
+    note.textContent = animOk
+      ? 'Animation strip exists. Regenerate to create a new variant.'
+      : 'Generate a moving variation: legs walk if it has legs, wings flap if flying, both if both. Uses this sprite as reference.';
+    panel.append(note);
+
+    const actions = document.createElement('div');
+    actions.className = 'sprite-card-animation-actions';
+
+    const genBtn = document.createElement('button');
+    genBtn.className = 'btn accent';
+    genBtn.textContent = animOk ? 'Regenerate animation' : 'Generate animation';
+    genBtn.disabled = !this.opts.fileMeta.exists;
+    if (!this.opts.fileMeta.exists) {
+      genBtn.title = 'Save the sprite first';
+    }
+    genBtn.addEventListener('click', async () => {
+      if (genBtn.disabled) return;
+      genBtn.disabled = true;
+      const orig = genBtn.textContent;
+      genBtn.textContent = 'Generating…';
+      try {
+        await anim.onGenerate((msg) => this.opts.showStatus(msg, 'info'));
+        this.opts.showStatus(`Animation saved for ${this.key}`, 'success');
+        // Re-render via the stored reference path
+        this.renderAnimationPanel();
+      } catch (err) {
+        this.opts.showStatus(
+          `Animation failed: ${(err as Error).message}`,
+          'error',
+        );
+        genBtn.textContent = orig;
+        genBtn.disabled = false;
+      }
+    });
+
+    actions.append(genBtn);
+    panel.append(actions);
+
+    this.root.append(panel);
   }
 
   private renderCompressionPanel(): void {
@@ -675,6 +759,12 @@ export class SpriteCard {
       this.metaEl.classList.add('warn');
       // No sprite → no history to browse.
       this.historyBtn.disabled = true;
+      // Keep fileMeta in sync so the animation panel's enable/disable
+      // logic and any other readers see the current truth.
+      this.opts.fileMeta.exists = false;
+      this.opts.fileMeta.ext = null;
+      this.opts.fileMeta.size = 0;
+      this.renderAnimationPanel();
       return;
     }
     const img = document.createElement('img');
@@ -689,6 +779,12 @@ export class SpriteCard {
     // (the list endpoint handles that case with a "no history yet"
     // status toast).
     this.historyBtn.disabled = false;
+    // Sync fileMeta and re-render the animation panel so its
+    // "Generate animation" button enables immediately after a save.
+    this.opts.fileMeta.exists = true;
+    this.opts.fileMeta.ext = path.endsWith('.webp') ? 'webp' : 'png';
+    this.opts.fileMeta.size = this.compressed?.sizeBytes ?? this.opts.fileMeta.size;
+    this.renderAnimationPanel();
   }
 
   private setBusy(b: boolean): void {
