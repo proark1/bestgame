@@ -26,6 +26,7 @@ import {
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
 import { upgradeCostMult, levelStatPercent, LEVEL_COST_MULT } from '../game/progression.js';
+import { storageCaps } from '@hive/shared/sim';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
@@ -177,13 +178,33 @@ export function registerPlayer(app: FastifyInstance): void {
         ),
       );
       const tick = incomePerSecond(base.snapshot);
-      const gainedSugar = tick.sugar * elapsedSec;
-      const gainedLeaf = tick.leafBits * elapsedSec;
+      const rawGainedSugar = tick.sugar * elapsedSec;
+      const rawGainedLeaf = tick.leafBits * elapsedSec;
       const gainedMilk = tick.aphidMilk * elapsedSec;
 
-      const newSugar = BigInt(player.sugar) + BigInt(gainedSugar);
-      const newLeaf = BigInt(player.leaf_bits) + BigInt(gainedLeaf);
+      // Storage cap clamp. Production-style trickle stops at cap; loot
+      // (raid credit) bypasses this. See docs/GAME_DESIGN.md §6.8.
+      const caps = storageCaps(base.snapshot);
+      const sugarCapBig = BigInt(caps.sugar);
+      const leafCapBig = BigInt(caps.leafBits);
+      const existingSugar = BigInt(player.sugar);
+      const existingLeaf = BigInt(player.leaf_bits);
+      // Negative room (existing already past cap, e.g. from raids before
+      // a vault was destroyed) means the trickle is fully suppressed.
+      const sugarRoom = sugarCapBig > existingSugar ? sugarCapBig - existingSugar : 0n;
+      const leafRoom = leafCapBig > existingLeaf ? leafCapBig - existingLeaf : 0n;
+      const sugarTrickle = BigInt(rawGainedSugar) > sugarRoom ? sugarRoom : BigInt(rawGainedSugar);
+      const leafTrickle = BigInt(rawGainedLeaf) > leafRoom ? leafRoom : BigInt(rawGainedLeaf);
+
+      const newSugar = existingSugar + sugarTrickle;
+      const newLeaf = existingLeaf + leafTrickle;
       const newMilk = BigInt(player.aphid_milk) + BigInt(gainedMilk);
+
+      // Surface the actual credited amounts (not raw rate × time) so
+      // the HomeScene welcome toast doesn't lie about a 1.4M trickle
+      // when only the first 6k actually banked.
+      const gainedSugar = Number(sugarTrickle);
+      const gainedLeaf = Number(leafTrickle);
 
       // Login streak resolution. Runs on the /me path so every client
       // session goes through it once on boot. `resolveStreak` is pure:
@@ -289,6 +310,17 @@ export function registerPlayer(app: FastifyInstance): void {
             chapter: player.campaign_chapter,
             progress: player.campaign_progress,
           },
+          // Storage caps (§6.8 of GDD) — derived from base economy
+          // buildings so the HUD can render `current / cap` headroom
+          // text without re-deriving the formula client-side.
+          storage: {
+            sugarCap: caps.sugar,
+            leafCap: caps.leafBits,
+          },
+          // Per-second production from active producer buildings, so
+          // the HUD can render "+X/sec" pills without needing to walk
+          // the base.snapshot itself or duplicate INCOME_PER_SECOND.
+          incomePerSecond: tick,
         },
         base: base.snapshot,
         offlineTrickle: {
