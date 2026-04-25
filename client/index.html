@@ -122,14 +122,19 @@
       }
       .icon-btn svg { width: 28px; height: 28px; }
       .icon-btn:hover { opacity: 0.75; }
-      /* Scalloped curtain edge — repeating SVG used as background image
-         on a 24px-tall band that sits below the header content. */
+      /* Scalloped curtain edge — SVG mask cut out of a tan-deep band
+         so the color follows --tan-deep if the theme is retuned. */
       .curtain {
         height: 22px;
-        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 22' preserveAspectRatio='none'><path d='M0,0 L60,0 L60,8 C54,22 48,22 42,8 C36,22 30,22 24,8 C18,22 12,22 6,8 C4,12 2,12 0,8 Z' fill='%23d4c19f'/></svg>");
-        background-repeat: repeat-x;
-        background-size: 60px 22px;
-        background-position: top left;
+        background-color: var(--tan-deep);
+        -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 22' preserveAspectRatio='none'><path d='M0,0 L60,0 L60,8 C54,22 48,22 42,8 C36,22 30,22 24,8 C18,22 12,22 6,8 C4,12 2,12 0,8 Z' fill='black'/></svg>");
+        mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 22' preserveAspectRatio='none'><path d='M0,0 L60,0 L60,8 C54,22 48,22 42,8 C36,22 30,22 24,8 C18,22 12,22 6,8 C4,12 2,12 0,8 Z' fill='black'/></svg>");
+        -webkit-mask-repeat: repeat-x;
+        mask-repeat: repeat-x;
+        -webkit-mask-size: 60px 22px;
+        mask-size: 60px 22px;
+        -webkit-mask-position: top left;
+        mask-position: top left;
         margin-top: 10px;
       }
 
@@ -451,14 +456,14 @@
           <img class="top-logo" src="/icons/icon-192.png" alt="Hive Wars" />
         </a>
         <div class="top-actions">
-          <button class="icon-btn" aria-label="Cart">
+          <button class="icon-btn" type="button" aria-label="Cart">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6 2 L4 7 L4 20 a2 2 0 0 0 2 2 h12 a2 2 0 0 0 2 -2 V7 L18 2 Z" />
               <line x1="4" y1="7" x2="20" y2="7" />
               <path d="M9 11 a3 3 0 0 0 6 0" />
             </svg>
           </button>
-          <button class="icon-btn" aria-label="Menu">
+          <button class="icon-btn" type="button" aria-label="Menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
               <line x1="4" y1="7"  x2="20" y2="7" />
               <line x1="4" y1="13" x2="20" y2="13" />
@@ -610,7 +615,11 @@
       try {
         if (localStorage.getItem('hive.sessionToken')) {
           document.querySelectorAll('.pill-btn').forEach((btn) => {
-            btn.firstChild && (btn.firstChild.textContent = 'PLAY ');
+            btn.childNodes.forEach((node) => {
+              if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('LOG IN')) {
+                node.textContent = node.textContent.replace('LOG IN', 'PLAY');
+              }
+            });
           });
         }
       } catch (e) { /* ignore storage errors */ }
