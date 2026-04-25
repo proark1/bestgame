@@ -61,6 +61,10 @@ button {
   display: flex;
   align-items: center;
   gap: 16px;
+  /* Wrap the title block under the logo on narrow viewports
+     (≤320px-ish) so the wordmark + title pair doesn't push the
+     header off-screen on phones used to inspect generated sprites. */
+  flex-wrap: wrap;
 }
 .admin-header .admin-brand-logo {
   /* SVG wordmark is 320×80 native; cap height keeps the header

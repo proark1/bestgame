@@ -181,7 +181,7 @@ function render(): void {
   header.className = 'admin-header';
   header.innerHTML = `
     <div class="admin-brand">
-      <img class="admin-brand-logo" src="/units/logo-hivewars.svg" alt="Hive Wars" />
+      <img class="admin-brand-logo" src="/units/logo-hivewars.svg" alt="Hive Wars" width="320" height="80" />
       <div>
         <h1>Hive Wars · Admin</h1>
         <small>Gemini sprite generation · ${state.files.length} file(s) on disk</small>
