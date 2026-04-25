@@ -474,6 +474,66 @@ button {
   font-size: 11px;
 }
 
+.compress-toggle {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: left;
+  background: var(--panel-hi);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  margin-top: 8px;
+}
+.compress-toggle:hover {
+  background: var(--panel);
+}
+
+.compression-panel {
+  background: var(--panel-hi);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: -1px;
+  border-top: none;
+}
+
+.compression-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compression-content label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+.compression-content label span {
+  min-width: 80px;
+}
+
+.compression-content select,
+.compression-content input[type='range'],
+.compression-content input[type='number'] {
+  flex: 1;
+  padding: 4px 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font);
+  font-size: 11px;
+}
+
+.compression-content input[type='range'] {
+  padding: 0;
+}
+
 .status {
   position: fixed;
   bottom: 24px;

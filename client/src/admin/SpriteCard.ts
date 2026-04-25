@@ -37,6 +37,7 @@ export class SpriteCard {
   private selectedIdx = -1;
   private busy = false;
   private readonly opts: SpriteCardOptions;
+  private cardCompression: { format: 'webp' | 'png'; quality: number; maxDim: number } | null = null;
 
   private thumbEl!: HTMLDivElement;
   private metaEl!: HTMLSpanElement;
@@ -53,6 +54,8 @@ export class SpriteCard {
   private downloadBtn!: HTMLButtonElement;
   private historyBtn!: HTMLButtonElement;
   private variantsSelect!: HTMLSelectElement;
+  private compressionPanel?: HTMLDivElement;
+  private compressionToggle?: HTMLButtonElement;
 
   constructor(opts: SpriteCardOptions) {
     this.key = opts.key;
@@ -459,6 +462,113 @@ export class SpriteCard {
       labelRow,
       actions,
     );
+
+    // Compression panel (collapsed by default, toggle to expand)
+    this.renderCompressionPanel();
+  }
+
+  private renderCompressionPanel(): void {
+    this.compressionToggle?.remove();
+    this.compressionPanel?.remove();
+
+    const panel = el('div', 'compression-panel');
+    panel.hidden = true;
+
+    const toggle = document.createElement('button');
+    toggle.className = 'btn ghost compress-toggle';
+    toggle.textContent = 'Compression ▼';
+    toggle.addEventListener('click', () => {
+      panel.hidden = !panel.hidden;
+      toggle.textContent = panel.hidden ? 'Compression ▼' : 'Compression ▲';
+    });
+
+    const content = el('div', 'compression-content');
+
+    // Format selector
+    const fmtLabel = el('label');
+    fmtLabel.innerHTML = `<span>format</span>`;
+    const fmtSel = document.createElement('select');
+    for (const f of ['webp', 'png']) {
+      const opt = document.createElement('option');
+      opt.value = f;
+      opt.textContent = f.toUpperCase();
+      fmtSel.append(opt);
+    }
+    fmtSel.value = this.cardCompression?.format ?? 'global';
+    // Add "use global" option
+    const globalOpt = document.createElement('option');
+    globalOpt.value = 'global';
+    globalOpt.textContent = '(use global)';
+    fmtSel.insertBefore(globalOpt, fmtSel.firstChild);
+    fmtSel.addEventListener('change', () => {
+      if (fmtSel.value === 'global') {
+        if (this.cardCompression) this.cardCompression.format = this.opts.getCompression().format;
+      } else {
+        if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
+        this.cardCompression.format = fmtSel.value as 'webp' | 'png';
+      }
+      void this.prepareCompressed();
+    });
+    fmtLabel.append(fmtSel);
+
+    // Quality slider
+    const qLabel = el('label');
+    qLabel.innerHTML = `<span>quality</span>`;
+    const qInput = document.createElement('input');
+    qInput.type = 'range';
+    qInput.min = '0.4';
+    qInput.max = '1';
+    qInput.step = '0.05';
+    qInput.value = (this.cardCompression?.quality ?? this.opts.getCompression().quality).toString();
+    const qVal = el('span');
+    qVal.textContent = qInput.value;
+    qInput.addEventListener('input', () => {
+      if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
+      this.cardCompression.quality = Number(qInput.value);
+      qVal.textContent = qInput.value;
+      void this.prepareCompressed();
+    });
+    qLabel.append(qInput, qVal);
+
+    // Max dimension
+    const dLabel = el('label');
+    dLabel.innerHTML = `<span>max dim (px)</span>`;
+    const dInput = document.createElement('input');
+    dInput.type = 'number';
+    dInput.min = '64';
+    dInput.max = '1024';
+    dInput.step = '32';
+    dInput.value = this.cardCompression?.maxDim.toString() ?? '';
+    dInput.placeholder = 'use global';
+    dInput.addEventListener('change', () => {
+      if (!dInput.value) {
+        // Clear dimension override, use global
+        if (this.cardCompression) {
+          this.cardCompression.maxDim = this.opts.getCompression().maxDim;
+        }
+        dInput.value = '';
+      } else {
+        if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
+        this.cardCompression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
+        dInput.value = String(this.cardCompression.maxDim);
+      }
+      void this.prepareCompressed();
+    });
+    dLabel.append(dInput);
+
+    // Reset button
+    const resetBtn = button('Reset to global', 'btn ghost', () => {
+      this.cardCompression = null;
+      this.renderCompressionPanel();
+      void this.prepareCompressed();
+    });
+
+    content.append(fmtLabel, qLabel, dLabel, resetBtn);
+    panel.append(content);
+    this.root.append(toggle, panel);
+
+    this.compressionToggle = toggle;
+    this.compressionPanel = panel;
   }
 
   private renderCandidates(): void {
@@ -539,7 +649,9 @@ export class SpriteCard {
   private async prepareCompressed(): Promise<void> {
     if (this.selectedIdx < 0) return;
     const src = this.candidates[this.selectedIdx]!;
-    const { format, quality, maxDim } = this.opts.getCompression();
+    // Use card-level compression if set, otherwise fall back to global
+    const compression = this.cardCompression ?? this.opts.getCompression();
+    const { format, quality, maxDim } = compression;
     try {
       this.compressed = await compressBase64Image(src.data, src.mimeType, {
         format,
