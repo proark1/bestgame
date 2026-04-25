@@ -59,6 +59,7 @@ interface AdminState {
   files: SpriteFile[];
   cards: SpriteCard[];
   compression: Compression;
+  animationCompression: Compression;
   progressEl: HTMLDivElement | null;
   animation: AnimationSettings | null;
   uiOverrides: UiOverrideSettings | null;
@@ -69,6 +70,7 @@ const state: AdminState = {
   files: [],
   cards: [],
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
+  animationCompression: { format: 'webp', quality: 0.9, maxDim: 256 },
   progressEl: null,
   animation: null,
   uiOverrides: null,
@@ -156,11 +158,11 @@ async function bootstrap(): Promise<void> {
 // (not the URL hash) because the admin is a single-page tool and we
 // don't have routing; localStorage matches the existing token-stash
 // pattern on this page.
-type AdminTab = 'sprites' | 'users' | 'preview';
+type AdminTab = 'sprites' | 'animations' | 'users' | 'preview';
 const TAB_STORAGE_KEY = 'hive.adminTab';
 function readActiveTab(): AdminTab {
   const v = localStorage.getItem(TAB_STORAGE_KEY);
-  if (v === 'users' || v === 'preview' || v === 'sprites') return v;
+  if (v === 'animations' || v === 'users' || v === 'preview' || v === 'sprites') return v;
   return 'sprites';
 }
 function writeActiveTab(tab: AdminTab): void {
@@ -211,18 +213,18 @@ function render(): void {
   root.append(header);
 
   // -- Tabs -----------------------------------------------------------------
-  // Sprites / Users / Preview. Sprites is the original admin surface
-  // (sprite grid + animation + UI override flags); Users owns the
-  // login-account CRUD; Preview groups the UI overrides by the scene
-  // they affect so admins can see + toggle + regenerate everything
-  // tied to, say, HomeScene in one place.
+  // Sprites / Animations / Users / Preview. Sprites is the sprite grid +
+  // UI override flags; Animations owns unit walk-cycle generation with
+  // global format/quality/maxDim settings; Users owns login-account CRUD;
+  // Preview groups the UI overrides by the scene they affect.
   const activeTab = readActiveTab();
   const tabBar = document.createElement('nav');
   tabBar.className = 'admin-tabs';
   const tabDefs: ReadonlyArray<{ id: AdminTab; label: string }> = [
-    { id: 'sprites', label: 'Sprites' },
-    { id: 'users',   label: 'Users' },
-    { id: 'preview', label: 'Preview' },
+    { id: 'sprites',    label: 'Sprites' },
+    { id: 'animations', label: 'Animations' },
+    { id: 'users',      label: 'Users' },
+    { id: 'preview',    label: 'Preview' },
   ];
   for (const def of tabDefs) {
     const btn = document.createElement('button');
@@ -265,6 +267,10 @@ function render(): void {
         getCompression: () => ({ ...state.compression }),
       }),
     );
+    return;
+  }
+  if (activeTab === 'animations') {
+    root.append(renderAnimationsTab());
     return;
   }
 
@@ -602,6 +608,78 @@ function composePrompt(
 // Walk-cycle geometry + prompt composers live in ./walkCycle.ts so
 // the per-pose editor can share them with the bulk generator.
 
+// Animation generation (Animations tab): reuses existing sprite + generates variation.
+// Fetches the already-generated sprite, uses it as frame 1, generates a
+// pose variation as frame 2, then composites into a 256×128 strip.
+async function generateAnimationFromSprite(
+  kind: string,
+  onProgress?: (note: string) => void,
+): Promise<{ path: string; size: number }> {
+  const bucket = state.prompts?.walkCycles;
+  const poseB = bucket?.[`${kind}_poseB`];
+  if (!poseB || poseB.trim() === '') {
+    throw new Error(
+      `no walkCycles prompt for ${kind}_poseB — add to tools/gemini-art/prompts.json`,
+    );
+  }
+
+  onProgress?.(`${kind}: fetching sprite…`);
+  // Find the existing sprite in our file list
+  const spriteFile = state.files.find(
+    (f) => f.name === `unit-${kind}.webp` || f.name === `unit-${kind}.png`,
+  );
+  if (!spriteFile) {
+    throw new Error(`no sprite found for unit-${kind} — generate it first in Sprites tab`);
+  }
+
+  // Fetch the sprite from the server and convert to base64
+  const spriteResp = await fetch(`/assets/sprites/${spriteFile.name}`);
+  if (!spriteResp.ok) throw new Error(`failed to fetch sprite: ${spriteResp.statusText}`);
+  const spriteBlob = await spriteResp.blob();
+
+  // Convert blob to base64 directly (skip data URL prefix)
+  const buffer = await spriteBlob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  const spriteBase64 = btoa(binary);
+
+  // Determine MIME type from file extension
+  const mimeType = spriteFile.name.endsWith('.webp') ? 'image/webp' : 'image/png';
+
+  onProgress?.(`${kind}: generating variation (frame 2)…`);
+  const imgsB = await generateImages({
+    prompt: composeWalkPoseVariationPrompt(poseB),
+    variants: 1,
+    referenceImages: [{ mimeType, data: spriteBase64 }],
+  });
+  const b = imgsB[0];
+  if (!b) throw new Error('Gemini returned no image for frame 2');
+
+  onProgress?.(`${kind}: compositing strip…`);
+  // Convert sprite to GeminiImage format for compositing
+  const frameA: typeof b = { mimeType, data: spriteBase64 };
+  const stripPng = await compositeWalkStrip([frameA, b]);
+
+  onProgress?.(`${kind}: compressing…`);
+  const compressed = await compressBase64Image(stripPng, 'image/png', {
+    format: state.animationCompression.format,
+    quality: state.animationCompression.quality,
+    maxDimension: state.animationCompression.maxDim,
+  });
+
+  onProgress?.(`${kind}: saving…`);
+  const res = await saveSprite({
+    key: `unit-${kind}-walk`,
+    data: compressed.base64,
+    format: state.animationCompression.format,
+    frames: 2,
+  });
+  return res;
+}
+
 // End-to-end: generate pose A first, then pose B with pose A attached
 // as a reference image so Gemini sees the exact character/palette/
 // camera and can change ONLY the legs (or wings) → composite side-by-
@@ -649,13 +727,11 @@ async function generateWalkCycle(
   const stripPng = await compositeWalkStrip([a, b]);
 
   onProgress?.(`${kind}: compressing…`);
-  // maxDimension = WALK_STRIP_WIDTH keeps the strip at 256×128. A
-  // touch higher quality than singleton sprites (0.85) because any
-  // leg-pose detail lost to compression spoils the illusion.
+  // Use animation compression settings; fall back to high quality for this strip
   const compressed = await compressBase64Image(stripPng, 'image/png', {
-    format: 'webp',
-    quality: 0.9,
-    maxDimension: WALK_STRIP_WIDTH,
+    format: state.animationCompression.format,
+    quality: Math.max(0.85, state.animationCompression.quality), // minimum 0.85 for animation detail
+    maxDimension: state.animationCompression.maxDim,
   });
 
   onProgress?.(`${kind}: saving…`);
@@ -669,6 +745,162 @@ async function generateWalkCycle(
 }
 
 // Animation toggle + generation panel. One row per animated unit kind:
+// Dedicated Animations tab. Reuses generated sprites + creates variations
+// to build animation frames. Global compression settings (format/quality/
+// maxDim) apply to all animations unless per-unit overrides are added later.
+function renderAnimationsTab(): HTMLElement {
+  const root = document.createElement('div');
+  root.className = 'animations-tab';
+
+  // Header with intro text
+  const intro = document.createElement('section');
+  intro.className = 'animations-intro';
+  intro.innerHTML = `
+    <h2>Unit Animations</h2>
+    <p>Generate frame-based animations for units. Reuses existing sprites as frame 1, generates variations for additional frames, then composites them into animation strips.</p>
+  `;
+  root.append(intro);
+
+  // Global animation compression toolbar
+  const toolbar = document.createElement('div');
+  toolbar.className = 'toolbar animations-toolbar';
+
+  const fmtLabel = document.createElement('label');
+  fmtLabel.innerHTML = `<span>format</span>`;
+  const fmtSel = document.createElement('select');
+  for (const f of ['webp', 'png']) {
+    const opt = document.createElement('option');
+    opt.value = f;
+    opt.textContent = f.toUpperCase();
+    fmtSel.append(opt);
+  }
+  fmtSel.value = state.animationCompression.format;
+  fmtSel.addEventListener('change', () => {
+    state.animationCompression.format = fmtSel.value as 'webp' | 'png';
+  });
+  fmtLabel.append(fmtSel);
+
+  const qLabel = document.createElement('label');
+  qLabel.innerHTML = `<span>quality</span>`;
+  const qInput = document.createElement('input');
+  qInput.type = 'range';
+  qInput.min = '0.4';
+  qInput.max = '1';
+  qInput.step = '0.05';
+  qInput.value = String(state.animationCompression.quality);
+  const qVal = document.createElement('span');
+  qVal.textContent = qInput.value;
+  qInput.addEventListener('input', () => {
+    state.animationCompression.quality = Number(qInput.value);
+    qVal.textContent = qInput.value;
+  });
+  qLabel.append(qInput, qVal);
+
+  const dLabel = document.createElement('label');
+  dLabel.innerHTML = `<span>max dim (px)</span>`;
+  const dInput = document.createElement('input');
+  dInput.type = 'number';
+  dInput.min = '64';
+  dInput.max = '1024';
+  dInput.step = '32';
+  dInput.value = String(state.animationCompression.maxDim);
+  dInput.addEventListener('change', () => {
+    state.animationCompression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
+    dInput.value = String(state.animationCompression.maxDim);
+  });
+  dLabel.append(dInput);
+
+  const summary = document.createElement('label');
+  summary.style.marginLeft = 'auto';
+  summary.innerHTML = `<span style="color: var(--text)">Global settings — apply to all unit animations</span>`;
+
+  toolbar.append(fmtLabel, qLabel, dLabel, summary);
+  root.append(toolbar);
+
+  // Units list with animation generation controls
+  const settings = state.animation;
+  if (!settings) {
+    const msg = document.createElement('p');
+    msg.style.padding = '20px';
+    msg.textContent = 'Animation settings unreachable. Check the API/DB is up, then reload the admin.';
+    root.append(msg);
+    return root;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'animations-list';
+
+  const fileByKey = new Map<string, SpriteFile>();
+  for (const f of state.files) {
+    const base = f.name.replace(/\.(png|webp)$/i, '');
+    fileByKey.set(base, f);
+  }
+
+  const hasSprite = (kind: string): boolean => fileByKey.has(`unit-${kind}`);
+  const hasAnimation = (kind: string): boolean =>
+    state.files.some(f => f.name === `unit-${kind}-walk.webp` || f.name === `unit-${kind}-walk.png`);
+
+  const refreshAnimationFiles = async (): Promise<void> => {
+    try {
+      const s = await fetchStatus();
+      state.files = s.files;
+    } catch {
+      // ignore
+    }
+  };
+
+  for (const kind of settings.kinds) {
+    const row = document.createElement('div');
+    row.className = 'animations-row';
+
+    const info = document.createElement('div');
+    info.className = 'animations-info';
+    const name = document.createElement('div');
+    name.className = 'animations-name';
+    name.textContent = kind;
+    const status = document.createElement('div');
+    status.className = 'animations-status';
+    const spriteOk = hasSprite(kind);
+    const animOk = hasAnimation(kind);
+    status.innerHTML = `
+      Sprite: <span class="status-badge" data-ok="${spriteOk}">${spriteOk ? '✓' : '✗'}</span>
+      Animation: <span class="status-badge" data-ok="${animOk}">${animOk ? '✓' : '✗'}</span>
+    `;
+    info.append(name, status);
+
+    const actions = document.createElement('div');
+    actions.className = 'animations-actions';
+
+    const genBtn = document.createElement('button');
+    genBtn.className = 'btn';
+    genBtn.textContent = animOk ? 'Regenerate' : 'Generate';
+    genBtn.disabled = !spriteOk || !state.animation;
+    if (!spriteOk) {
+      genBtn.title = 'Generate the sprite first in the Sprites tab';
+    }
+    genBtn.addEventListener('click', async () => {
+      if (!spriteOk || !state.animation) return;
+      genBtn.disabled = true;
+      try {
+        await generateAnimationFromSprite(kind, (note) => statusToast(note, 'info'));
+        await refreshAnimationFiles();
+        render(); // Re-render animations tab to update status indicators
+        statusToast(`${kind} animation saved`, 'success');
+      } catch (err) {
+        statusToast(`${kind}: ${(err as Error).message}`, 'error');
+        genBtn.disabled = false;
+      }
+    });
+
+    actions.append(genBtn);
+    row.append(info, actions);
+    list.append(row);
+  }
+
+  root.append(list);
+  return root;
+}
+
 // checkbox toggles settings.values[kind]; a "Generate" button runs
 // the full pipeline and updates the strip-ready badge. A top-level
 // "Automate all missing" button iterates the kinds sequentially so

@@ -311,7 +311,6 @@ function buildLivePreview(scene: PreviewScene): LivePreviewHandle {
 
   const iframe = document.createElement('iframe');
   iframe.className = 'preview-live-iframe';
-  iframe.loading = 'lazy';
   iframe.title = `${scene.label} preview`;
   iframe.sandbox.add(
     'allow-scripts',
@@ -321,10 +320,10 @@ function buildLivePreview(scene: PreviewScene): LivePreviewHandle {
     'allow-pointer-lock',
   );
   const buildSrc = (): string => {
-    // Cache-buster so repeated reloads after a save don't return a
-    // stale index.html / sprite from the disk cache.
-    const bust = Date.now();
-    return `/?previewScene=${encodeURIComponent(scene.id)}&previewT=${bust}`;
+    // Cache-buster ensures scene changes + sprite reloads are visible.
+    // Timestamp + scene.id combo means every scene change gets a fresh load.
+    const bust = `${scene.id}-${Date.now()}`;
+    return `/?previewScene=${encodeURIComponent(scene.id)}&previewBust=${bust}`;
   };
   iframe.src = buildSrc();
 
