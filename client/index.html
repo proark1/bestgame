@@ -17,7 +17,11 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <link rel="preload" as="image" href="/og/cover.png" />
+    <!-- Preload the above-the-fold hero illustration (the SVG fallback
+         loads instantly; the JS below upgrades to the AI-generated
+         landing-hero from /api/sprites/manifest if it exists). -->
+    <link rel="preload" as="image" href="/units/logo-hivewars.svg" />
+    <link rel="preload" as="image" href="/og/hero-banner.svg" />
     <style>
       :root {
         color-scheme: light;
@@ -99,24 +103,26 @@
         margin: 0 auto;
         gap: 12px;
       }
+      /* The single brand mark in the sticky header. The page ships
+         the SVG wordmark by default; the JS at the end of <body>
+         upgrades the <img> to the AI-generated `ui-logo` PNG when
+         /api/sprites/manifest advertises one — same mechanism used
+         by units/buildings on this page and by BootScene in-game,
+         so the landing page always shows the same logo as the
+         game. */
       .top-logo {
-        width: 56px;
-        height: 56px;
+        height: 40px;
+        width: auto;
         display: block;
+      }
+      @media (min-width: 480px) {
+        .top-logo { height: 56px; }
       }
       .top-actions {
         display: flex;
         gap: 14px;
         align-items: center;
         color: var(--stroke);
-      }
-      .top-wordmark {
-        height: 36px;
-        width: auto;
-        display: none;
-      }
-      @media (min-width: 480px) {
-        .top-wordmark { display: block; height: 44px; }
       }
       .icon-btn {
         background: transparent;
@@ -180,6 +186,14 @@
       }
       .pill-btn:hover { transform: translateY(-1px); }
       .pill-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+      /* Compact variant used in the sticky header — same shape, less
+         padding so it sits comfortably next to the brand mark on
+         mobile. */
+      .pill-btn-sm {
+        padding: 8px 18px;
+        font-size: 13px;
+        letter-spacing: 1px;
+      }
       .pill-btn .pill-tag {
         display: inline-flex;
         align-items: center;
@@ -237,7 +251,15 @@
         text-align: center;
       }
       .hero-title {
-        margin: 0 0 22px;
+        margin: 0 0 14px;
+      }
+      .hero-sub {
+        margin: 0 auto 22px;
+        max-width: 480px;
+        font-size: clamp(15px, 3.5vw, 17px);
+        line-height: 1.45;
+        color: var(--text-muted);
+        font-weight: 600;
       }
       .hero-banner {
         display: block;
@@ -585,47 +607,50 @@
   <body>
     <header class="top">
       <div class="top-row">
-        <a href="/play" aria-label="Hive Wars home">
-          <img class="top-logo" src="/icons/icon-192.png" alt="Hive Wars" />
+        <a href="/play" aria-label="Hive Wars — play now">
+          <img
+            class="top-logo"
+            data-sprite-key="ui-logo"
+            src="/units/logo-hivewars.svg"
+            alt="Hive Wars"
+            width="320"
+            height="80"
+            fetchpriority="high"
+            decoding="async"
+          />
         </a>
-        <div class="top-actions">
-          <a href="/play" aria-label="Hive Wars home">
-            <img class="top-wordmark" src="/units/logo-hivewars.svg" alt="Hive Wars" width="320" height="80" />
-          </a>
-          <button class="icon-btn" type="button" aria-label="Cart">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 2 L4 7 L4 20 a2 2 0 0 0 2 2 h12 a2 2 0 0 0 2 -2 V7 L18 2 Z" />
-              <line x1="4" y1="7" x2="20" y2="7" />
-              <path d="M9 11 a3 3 0 0 0 6 0" />
-            </svg>
-          </button>
-          <button class="icon-btn" type="button" aria-label="Menu">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-              <line x1="4" y1="7"  x2="20" y2="7" />
-              <line x1="4" y1="13" x2="20" y2="13" />
-              <line x1="4" y1="19" x2="20" y2="19" />
-            </svg>
-          </button>
-        </div>
+        <nav class="top-actions" aria-label="Primary">
+          <a class="pill-btn pill-btn-sm" href="/play">Play</a>
+        </nav>
       </div>
       <div class="curtain" aria-hidden="true"></div>
     </header>
 
     <div class="login-bar">
-      <div class="login-bar-text">Log in to view offers</div>
+      <div class="login-bar-text">No download. Plays in your browser.</div>
       <a class="pill-btn" href="/play">
-        LOG IN
-        <span class="pill-tag">ID</span>
+        PLAY FREE
+        <span class="pill-tag">NEW</span>
       </a>
     </div>
 
     <section class="hero-section">
       <div class="hero-card">
-        <img class="hero-banner" src="/og/hero-banner.svg" alt="Hive Wars colony art" width="1200" height="630" />
-        <h1 class="display display-md hero-title">Log in to<br />view offers</h1>
+        <img
+          class="hero-banner"
+          data-sprite-key="landing-hero"
+          src="/og/hero-banner.svg"
+          alt="A colony of warrior ants marching across mossy soil toward a glowing earth-mound hive"
+          width="1280"
+          height="720"
+          fetchpriority="high"
+          decoding="async"
+        />
+        <h1 class="display display-lg hero-title">Raise your<br />colony</h1>
+        <p class="hero-sub">Build a hive, draw your raid path, climb the leaderboard. Free in your browser, no install.</p>
         <a class="pill-btn" href="/play" style="margin: 6px 0 12px;">
-          LOG IN
-          <span class="pill-tag">ID</span>
+          PLAY NOW
+          <span class="pill-tag">FREE</span>
         </a>
       </div>
     </section>
@@ -633,9 +658,9 @@
     <section class="promo-section">
       <div class="promo-card">
         <div class="unit-cluster">
-          <img class="unit" data-sprite-key="unit-FireAnt" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" />
-          <img class="unit lead" data-sprite-key="unit-Scarab" src="/units/unit-Scarab.svg" alt="Scarab" width="128" height="128" />
-          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-FireAnt" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit lead" data-sprite-key="unit-Scarab" src="/units/unit-Scarab.svg" alt="Scarab" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" loading="lazy" decoding="async" />
         </div>
         <h2 class="display display-md promo-title">Season Pass<br />Stamp Card</h2>
         <p class="promo-copy">
@@ -679,16 +704,16 @@
         <p class="colony-intro">From the workers who haul sugar home to the towers that spit acid at raiders — this is the cast you'll command.</p>
         <h3 class="colony-subtitle">Your army</h3>
         <div class="unit-cluster">
-          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" />
-          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" />
-          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" loading="lazy" decoding="async" />
         </div>
         <h3 class="colony-subtitle">Your buildings</h3>
         <div class="building-cluster">
-          <img class="building" data-sprite-key="building-QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" />
-          <img class="building" data-sprite-key="building-MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" />
-          <img class="building" data-sprite-key="building-SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" />
-          <img class="building" data-sprite-key="building-AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" />
+          <img class="building" data-sprite-key="building-QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="building-AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" loading="lazy" decoding="async" />
         </div>
       </div>
     </section>
@@ -699,7 +724,7 @@
         Far below the surface, the great Hive grows. You are the Queen — build your colony tile by tile, train your warriors, and march across the soil to raid rival hives. Every brick of dirt you place is a story. Every raid is yours to command.
       </p>
       <div class="discover-art">
-        <img src="/og/cover.png" alt="Hive Wars store preview" />
+        <img src="/og/cover.png" alt="Hive Wars store preview" width="1200" height="630" loading="lazy" decoding="async" />
       </div>
       <h3 class="display display-md discover-sub">Earn Points<br />and Bonuses</h3>
       <p class="discover-copy">
@@ -796,15 +821,20 @@
     </footer>
 
     <script>
-      // If the user has already played (cached session), default the
-      // login pill text to "Play" so returning visitors get a one-tap
-      // route back into the game.
+      // Returning visitors (cached session) see "RESUME" instead of
+      // "PLAY FREE / PLAY NOW" so the CTA is more useful — same one-
+      // tap route back into the game, just relabeled.
       try {
         if (localStorage.getItem('hive.sessionToken')) {
           document.querySelectorAll('.pill-btn').forEach((btn) => {
             btn.childNodes.forEach((node) => {
-              if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('LOG IN')) {
-                node.textContent = node.textContent.replace('LOG IN', 'PLAY');
+              if (node.nodeType !== Node.TEXT_NODE) return;
+              const t = node.textContent;
+              if (t.includes('PLAY FREE') || t.includes('PLAY NOW') || t.trim() === 'Play') {
+                node.textContent = t
+                  .replace('PLAY FREE', 'RESUME')
+                  .replace('PLAY NOW', 'RESUME')
+                  .replace(/\bPlay\b/, 'Resume');
               }
             });
           });
