@@ -642,26 +642,26 @@
       // key, we probe-load it and swap the <img>'s src on success.
       // Mirrors the behavior of client/src/scenes/BootScene.ts so the
       // landing page and the game show the same art.
-      (function upgradeUnitSprites() {
-        var imgs = document.querySelectorAll('img[data-sprite-key]');
+      (() => {
+        const imgs = document.querySelectorAll('img[data-sprite-key]');
         if (!imgs.length) return;
         fetch('/api/sprites/manifest', { credentials: 'omit' })
-          .then(function (r) { return r.ok ? r.json() : null; })
-          .then(function (manifest) {
+          .then((r) => (r.ok ? r.json() : null))
+          .then((manifest) => {
             if (!manifest || !Array.isArray(manifest.images)) return;
-            var byKey = Object.create(null);
-            manifest.images.forEach(function (entry) { byKey[entry.key] = entry; });
-            var version = manifest.updatedAt ? '?v=' + manifest.updatedAt : '';
-            imgs.forEach(function (img) {
-              var entry = byKey[img.dataset.spriteKey];
+            const byKey = Object.create(null);
+            manifest.images.forEach((entry) => { byKey[entry.key] = entry; });
+            const version = manifest.updatedAt ? `?v=${manifest.updatedAt}` : '';
+            imgs.forEach((img) => {
+              const entry = byKey[img.dataset.spriteKey];
               if (!entry || !entry.ext) return;
-              var url = '/assets/sprites/' + entry.key + '.' + entry.ext + version;
-              var probe = new Image();
-              probe.onload = function () { img.src = url; };
+              const url = `/assets/sprites/${entry.key}.${entry.ext}${version}`;
+              const probe = new Image();
+              probe.onload = () => { img.src = url; };
               probe.src = url;
             });
           })
-          .catch(function () { /* keep SVG fallbacks */ });
+          .catch(() => { /* keep SVG fallbacks */ });
       })();
     </script>
   </body>
