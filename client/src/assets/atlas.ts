@@ -36,6 +36,12 @@ export const BUILDING_SPRITE_KEYS = [
   'building-DewCollector',
   'building-MushroomTurret',
   'building-LeafWall',
+  // Vertical wall variant — when a LeafWall is rotated 90° we render a
+  // hand-tuned vertical sprite instead of just spinning the horizontal
+  // one. Keeps weave bands oriented along the long axis (a Phaser
+  // setRotation on the H sprite produced banding that read as
+  // sideways-text instead of a wall section).
+  'building-LeafWallV',
   'building-PebbleBunker',
   'building-LarvaNursery',
   'building-SugarVault',
@@ -48,6 +54,8 @@ export const BUILDING_SPRITE_KEYS = [
   'building-HiddenStinger',
   'building-SpiderNest',
   'building-ThornHedge',
+  // Vertical thorn-hedge variant — same reasoning as LeafWallV.
+  'building-ThornHedgeV',
 ] as const;
 
 export const UI_SPRITE_KEYS = [

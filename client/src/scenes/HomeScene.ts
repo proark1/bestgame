@@ -31,6 +31,18 @@ const BOARD_W = TILE * GRID_W;
 const BOARD_H = TILE * GRID_H;
 const HUD_H = 56;
 
+// Walls have hand-tuned horizontal + vertical sprites. When a wall is
+// rotated, instead of spinning the H sprite (whose weave bands then
+// run sideways and look broken) we swap to the V variant so weave
+// stays perpendicular to the long axis. Even rotation values (0, 2)
+// render horizontal; odd values (1, 3) render vertical.
+function buildingTextureKey(kind: Types.BuildingKind, rotation: 0 | 1 | 2 | 3 = 0): string {
+  if ((kind === 'LeafWall' || kind === 'ThornHedge') && rotation % 2 === 1) {
+    return `building-${kind}V`;
+  }
+  return `building-${kind}`;
+}
+
 // A fixed starter base. Each building is a tuple: [kind, x, y, layer].
 const STARTER_BUILDINGS: Array<{
   kind: Types.BuildingKind;
@@ -1152,7 +1164,8 @@ export class HomeScene extends Phaser.Scene {
     if (!onThisLayer) return null;
     const x = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
     const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
-    const spr = this.add.image(x, y, `building-${b.kind}`);
+    const rot = (b.rotation ?? 0) as 0 | 1 | 2 | 3;
+    const spr = this.add.image(x, y, buildingTextureKey(b.kind, rot));
     spr.setOrigin(0.5, 0.75);
     spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
     const tiles = Math.max(b.footprint.w, b.footprint.h);
@@ -1161,12 +1174,11 @@ export class HomeScene extends Phaser.Scene {
     // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
     // an integer-multiple downscale means less blur.
     spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
-    // Building rotation is a cosmetic 90-degree transform. Players
-    // can use it to line walls up properly (think CoC wall corners).
-    // Rotation 0 = default, 1 = 90°, 2 = 180°, 3 = 270° — so we map
-    // each step to π/2 radians.
-    const rot = b.rotation ?? 0;
-    if (rot !== 0) {
+    // For wall kinds rotation is encoded in the texture (LeafWall vs
+    // LeafWallV). For any other rotatable kind we'd still map the 90°
+    // step to a Phaser transform, but currently only walls rotate so
+    // this branch is effectively dead — kept for forward-compat.
+    if (rot !== 0 && b.kind !== 'LeafWall' && b.kind !== 'ThornHedge') {
       spr.setRotation((rot * Math.PI) / 2);
     }
     this.tweens.add({
@@ -1626,13 +1638,20 @@ export class HomeScene extends Phaser.Scene {
       this.serverBase = r.base;
       const updated = r.base.buildings.find((x) => x.id === buildingId);
       if (!updated) return;
-      // Update the sprite's rotation directly — much smoother than
+      // Update the sprite's texture directly — much smoother than
       // destroy+recreate (which would also kill the dragstart/drag
-      // handlers move mode set up in enterMoveMode).
+      // handlers move mode set up in enterMoveMode). For walls the
+      // H/V swap happens here; for any future non-wall rotatable kind
+      // we'd fall back to a Phaser setRotation transform.
       const spr = this.homeBuildingSprites.get(buildingId);
       if (spr) {
-        const rot = updated.rotation ?? 0;
-        spr.setRotation((rot * Math.PI) / 2);
+        const rot = (updated.rotation ?? 0) as 0 | 1 | 2 | 3;
+        if (updated.kind === 'LeafWall' || updated.kind === 'ThornHedge') {
+          spr.setTexture(buildingTextureKey(updated.kind, rot));
+          spr.setRotation(0);
+        } else {
+          spr.setRotation((rot * Math.PI) / 2);
+        }
       }
       // The footprint stayed the same (rotation is cosmetic), but
       // refresh overlays in case anything depends on the latest
