@@ -77,6 +77,13 @@ export interface PlayerState {
   // pre-storage server still loads (HUD falls back to "no cap").
   storage?: { sugarCap: number; leafCap: number };
   incomePerSecond?: { sugar: number; leafBits: number; aphidMilk: number };
+  // Colony Rank meta-progression (GDD §6.7). Optional so older servers
+  // keep working — client treats missing field as rank 0 + uncapped.
+  colony?: {
+    totalInvested: number;
+    rank: number;
+    lootCap: { sugar: number; leafBits: number };
+  };
 }
 
 export interface DailyQuestState {
@@ -475,6 +482,20 @@ export class Api {
     });
     if (!res.ok) throw await errorFromResponse(res, 'upgrade-building');
     return (await res.json()) as UpgradeBuildingResponse;
+  }
+
+  // Pay AphidMilk to instantly complete a pending building upgrade.
+  // Fails with 409 if the building has no pending job and 402 if the
+  // wallet is short on milk. Skip cost scales with remaining time —
+  // see shared/src/sim/builderGates.ts::skipCostMilk().
+  async skipBuilder(buildingId: string): Promise<BuilderSkipResponse> {
+    const res = await this.authedFetch('/player/builder/skip', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ buildingId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'builder/skip');
+    return (await res.json()) as BuilderSkipResponse;
   }
 
   // Advance the Queen one tier. Fails with 409 at max level and 402
@@ -976,6 +997,17 @@ export interface RaidSubmitResponse {
     leafBitsLooted: number;
     tickEnded: number;
   };
+  // Loot summary post-Colony-Rank cap. Optional so older servers
+  // (pre-#colony-rank-loot-cap) still parse; client falls back to
+  // result.sugarLooted / leafBitsLooted in that case.
+  loot?: {
+    sugar: number;
+    leafBits: number;
+    rawSugar: number;
+    rawLeaf: number;
+    capped: boolean;
+    colonyRank: number;
+  };
   player: {
     trophies: number;
     sugar: number;
@@ -1033,11 +1065,24 @@ export interface UpgradeQueenResponse {
   player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
 }
 
+// Now returns the pending fields instead of newLevel — the level bump
+// is delayed until the timer elapses. /me lazily promotes; the
+// /builder/skip endpoint can short-circuit it for AphidMilk.
 export interface UpgradeBuildingResponse {
   ok: true;
   buildingId: string;
-  newLevel: number;
+  pendingToLevel: number;
+  pendingCompletesAt: string;
   cost: { sugar: number; leafBits: number; aphidMilk: number };
+  base: Types.Base;
+  player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
+}
+
+export interface BuilderSkipResponse {
+  ok: true;
+  buildingId: string;
+  newLevel: number;
+  milkSpent: number;
   base: Types.Base;
   player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
 }

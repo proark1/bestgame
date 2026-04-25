@@ -110,6 +110,14 @@
         align-items: center;
         color: var(--stroke);
       }
+      .top-wordmark {
+        height: 36px;
+        width: auto;
+        display: none;
+      }
+      @media (min-width: 480px) {
+        .top-wordmark { display: block; height: 44px; }
+      }
       .icon-btn {
         background: transparent;
         border: 0;
@@ -230,6 +238,124 @@
       }
       .hero-title {
         margin: 0 0 22px;
+      }
+      .hero-banner {
+        display: block;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto 22px;
+        border-radius: 18px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+      }
+
+      /* ---------- "How Hive Wars works" feature grid ---------- */
+      .howto-section {
+        background: var(--tan);
+        padding: 0 18px 56px;
+      }
+      .howto-inner {
+        max-width: 1000px;
+        margin: 0 auto;
+      }
+      .howto-title {
+        text-align: center;
+        margin: 0 0 28px;
+      }
+      .feature-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+      @media (min-width: 640px) {
+        .feature-grid { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (min-width: 960px) {
+        .feature-grid { grid-template-columns: repeat(4, 1fr); }
+      }
+      .feature-card {
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 24px 20px;
+        box-shadow:
+          0 6px 0 rgba(0, 0, 0, 0.12),
+          0 12px 28px rgba(0, 0, 0, 0.14);
+        text-align: center;
+      }
+      .feature-emoji {
+        font-size: 40px;
+        line-height: 1;
+        margin-bottom: 10px;
+      }
+      .feature-card h3 {
+        font-family: "Arial Black", "Helvetica Neue", Impact, sans-serif;
+        font-size: 18px;
+        margin: 0 0 8px;
+        color: var(--text);
+      }
+      .feature-card p {
+        font-size: 14px;
+        line-height: 1.45;
+        margin: 0;
+        color: var(--text-muted);
+      }
+
+      /* ---------- "Meet your colony" gallery section ---------- */
+      .colony-section {
+        background: var(--tan);
+        padding: 0 18px 56px;
+      }
+      .colony-inner {
+        max-width: 1000px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .colony-title {
+        margin: 0 0 14px;
+      }
+      .colony-intro {
+        font-size: 15px;
+        line-height: 1.5;
+        margin: 0 auto 22px;
+        max-width: 540px;
+        color: var(--text-muted);
+      }
+      .colony-subtitle {
+        font-family: "Arial Black", "Helvetica Neue", Impact, sans-serif;
+        font-size: 16px;
+        margin: 22px 0 4px;
+        color: var(--text);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      .building-cluster {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 8px auto 0;
+        max-width: 640px;
+      }
+      .building-cluster .building {
+        width: 110px;
+        height: 110px;
+        flex: 0 0 auto;
+        filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.22));
+      }
+      @media (min-width: 480px) {
+        .building-cluster { gap: 14px; }
+        .building-cluster .building { width: 140px; height: 140px; }
+      }
+
+      /* ---------- Story blurb on the discover section ---------- */
+      .discover-story {
+        max-width: 600px;
+        margin: 0 auto 24px;
+        font-size: 16px;
+        line-height: 1.55;
+        color: var(--text-light);
+        opacity: 0.92;
+        text-align: center;
       }
 
       /* ---------- Yellow gold-pass-style offer card ---------- */
@@ -463,6 +589,9 @@
           <img class="top-logo" src="/icons/icon-192.png" alt="Hive Wars" />
         </a>
         <div class="top-actions">
+          <a href="/play" aria-label="Hive Wars home">
+            <img class="top-wordmark" src="/units/logo-hivewars.svg" alt="Hive Wars" width="320" height="80" />
+          </a>
           <button class="icon-btn" type="button" aria-label="Cart">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6 2 L4 7 L4 20 a2 2 0 0 0 2 2 h12 a2 2 0 0 0 2 -2 V7 L18 2 Z" />
@@ -492,16 +621,12 @@
 
     <section class="hero-section">
       <div class="hero-card">
+        <img class="hero-banner" src="/og/cover.png" alt="Hive Wars colony art" width="1200" height="630" />
         <h1 class="display display-md hero-title">Log in to<br />view offers</h1>
         <a class="pill-btn" href="/play" style="margin: 6px 0 12px;">
           LOG IN
           <span class="pill-tag">ID</span>
         </a>
-        <div class="unit-cluster">
-          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" />
-          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" />
-          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" />
-        </div>
       </div>
     </section>
 
@@ -520,8 +645,59 @@
       </div>
     </section>
 
+    <section class="howto-section">
+      <div class="howto-inner">
+        <h2 class="display display-md howto-title">How Hive Wars works</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-emoji" aria-hidden="true">🏗️</div>
+            <h3>Build your colony</h3>
+            <p>Place buildings on a dual-layer grid — surface walls and turrets above, tunnels and traps below. Every tile choice shapes the next raid.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-emoji" aria-hidden="true">🐜</div>
+            <h3>Draw attack routes</h3>
+            <p>No point-and-forget deploy. Drag a pheromone trail across the board and your swarm follows the route you painted.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-emoji" aria-hidden="true">⚔️</div>
+            <h3>Raid rivals</h3>
+            <p>Attack other colonies, loot sugar and dew, and climb the seasonal leaderboard. Replays let you study every defeat.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-emoji" aria-hidden="true">🛡️</div>
+            <h3>Defend smarter</h3>
+            <p>Your turrets, walls, and defender swarms react to what attackers actually did last time — defense evolves with the meta.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="colony-section">
+      <div class="colony-inner">
+        <h2 class="display display-md colony-title">Meet your colony</h2>
+        <p class="colony-intro">From the workers who haul sugar home to the towers that spit acid at raiders — this is the cast you'll command.</p>
+        <h3 class="colony-subtitle">Your army</h3>
+        <div class="unit-cluster">
+          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" />
+          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" />
+          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" />
+        </div>
+        <h3 class="colony-subtitle">Your buildings</h3>
+        <div class="building-cluster">
+          <img class="building" data-sprite-key="building-QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" />
+          <img class="building" data-sprite-key="building-MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" />
+          <img class="building" data-sprite-key="building-SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" />
+          <img class="building" data-sprite-key="building-AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" />
+        </div>
+      </div>
+    </section>
+
     <section class="discover-section">
       <h2 class="display display-md discover-title">Discover Hive<br />Wars Store</h2>
+      <p class="discover-story">
+        Far below the surface, the great Hive grows. You are the Queen — build your colony tile by tile, train your warriors, and march across the soil to raid rival hives. Every brick of dirt you place is a story. Every raid is yours to command.
+      </p>
       <div class="discover-art">
         <img src="/og/cover.png" alt="Hive Wars store preview" />
       </div>
@@ -648,9 +824,10 @@
         fetch('/api/sprites/manifest', { credentials: 'omit' })
           .then((r) => (r.ok ? r.json() : null))
           .then((manifest) => {
-            if (!manifest || !Array.isArray(manifest.images)) return;
+            if (!manifest) return;
             const byKey = Object.create(null);
-            manifest.images.forEach((entry) => { byKey[entry.key] = entry; });
+            const allEntries = [...(manifest.images || []), ...(manifest.sheets || [])];
+            allEntries.forEach((entry) => { byKey[entry.key] = entry; });
             const version = manifest.updatedAt ? `?v=${manifest.updatedAt}` : '';
             imgs.forEach((img) => {
               const entry = byKey[img.dataset.spriteKey];

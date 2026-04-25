@@ -66,6 +66,15 @@ export interface Building {
   // balance stays tractable and every combo is pre-validated on the
   // server (see server/api/src/game/aiRules.ts::validateRule).
   aiRules?: BuildingAIRule[];
+  // Builder time gate (GDD §6.6). When the player queues an upgrade on
+  // this building, the cost is debited immediately and these two
+  // fields are set; `level` does NOT change until the timer elapses
+  // and the next /player/me lazily promotes it. Both absent means
+  // "no upgrade in progress" — the default for any pre-existing
+  // building. ISO-8601 timestamp string so JSON round-trip stays
+  // deterministic; the server is authoritative on timing.
+  pendingCompletesAt?: string;
+  pendingToLevel?: number;
 }
 
 // Rule trigger / effect enums are intentionally small (v1): 6 triggers

@@ -442,29 +442,98 @@ Minimum guarantees (so any 3★ win feels rewarded):
 
 Canonical implementation: `server/api/src/game/progression.ts::trophyDelta()`.
 
-### 6.6 Time gates (future work)
+### 6.6 Time gates (active)
 
-Currently upgrades are instant. A future "builder slot" system will add
-time gates as the second dimension of progression (alongside cost):
+Building upgrades are time-gated. When a player queues an upgrade, the
+cost is debited up-front and a `pendingCompletesAt` timestamp is stamped
+on the building. The level bump itself is delayed until the timer
+elapses; `/player/me` lazily promotes any completed pending on next
+read. Players can pay AphidMilk to skip the remaining time — the
+intended monetization hook (§9).
 
 ```
-buildTime(L) = clamp(baseTime × mult[L] × 0.3, 10s, 48h)
+buildTime(L) = clamp(baseTime × LEVEL_COST_MULT[L] × 12, 10s, 48h)
 ```
 
-With baseTime = 30s, L1 upgrade takes 10s (floor), L9 upgrade takes ~26h
-(capped at 48h). Players can pay AphidMilk to skip timers — this is the
-planned monetization hook.
+With `baseTime = 30s` and `BUILD_CURVE_FACTOR = 12`:
 
-### 6.7 Colony Rank (future work)
+| Upgrade | LEVEL_COST_MULT | Build time |
+|---------|-----------------|------------|
+| L1→L2   | 0.5             | 3 minutes  |
+| L3→L4   | 1.6             | ~10 minutes |
+| L5→L6   | 4.2             | ~25 minutes |
+| L7→L8   | 11.0            | ~66 minutes |
+| L9→L10  | 28.8            | ~2.9 hours |
 
-An aggregate "Town Hall-like" rank derived from total invested resources.
-Unlocks new building kinds and raises placement caps. Rank formula:
+```
+skipCostMilk(remainingMs) = max(1, ceil(remainingMs / 36_000))
+```
+
+That's roughly 100 milk per hour skipped. With a single AphidFarm L1
+producing 720 milk/hour, a player gets ~7 hours of skip per online
+hour — generous for the free path, leaving meaningful headroom for
+future IAP packs to dwarf.
+
+Constraints:
+- One pending job per building. The route returns 409 if the player
+  tries to queue while one is in flight.
+- Cost is taken at queue, not at completion. Cancellation refunds are
+  not yet supported.
+- Unit upgrades (`/upgrade-unit`) and Queen upgrades stay instant for
+  MVP. Only building upgrades are gated.
+
+Canonical implementation: `shared/src/sim/builderGates.ts`. The route
+handlers live in `server/api/src/routes/player.ts` (`/upgrade-building`
++ `/builder/skip`). The client renders a live countdown + skip CTA in
+`buildingInfoModal.ts` while a job is in flight.
+
+### 6.7 Colony Rank (active)
+
+Meta progression that complements the storage cap (§6.8) by capping
+how much loot a single raid can yield. The intent: prevent a maxed
+late-game player from farming starter bases for runaway loot, while
+keeping symmetric matches paid out in full.
 
 ```
 colonyRank = floor(log₂(1 + totalInvested / 1000))
 ```
 
-At MVP, we operate at implicit rank 1 (all kinds unlocked at start).
+`total_invested` is the running sum of every sugar+leaf the player has
+spent on upgrades / placements / queen tiers. The column lives on the
+players row (migrations/0016) and is incremented atomically on every
+cost-debiting endpoint.
+
+Loot ceiling per rank:
+
+```
+lootCap.sugar = 600 × (1 + 0.5 × rank)
+lootCap.leaf  = 200 × (1 + 0.5 × rank)
+```
+
+Concrete points:
+
+| Rank | totalInvested gate | Sugar cap | Leaf cap |
+|------|--------------------|-----------|----------|
+| 0    | < 1000             | 600       | 200      |
+| 1    | 1000 – 2999        | 900       | 300      |
+| 5    | 31k – 62k          | 2,100     | 700      |
+| 10   | ~1M                | 3,600     | 1,200    |
+| 15   | ~32M (cap)         | 5,100     | 1,700    |
+
+A fresh player at rank 0 against a fresh base hits ~660 sugar / 40
+leaf in raw drops — the rank-0 cap of 600 lets them keep almost all
+of it. A rank-10 player against the same base would still cap at
+3,600 sugar but the base only drops 660, so they're loot-ceiling-
+neutral. The cap matters most when a high-rank player tries to
+harvest a much weaker target — the bot bases or freshly-shielded
+opponents — where the raw drops would otherwise massively exceed the
+attacker's pace.
+
+Canonical implementation: `shared/src/sim/colonyRank.ts`. Applied in
+`server/api/src/routes/raid.ts` before the wallet credit. Surface:
+`/player/me` returns `player.colony` with rank + lootCap; the
+`/raid/submit` response includes `loot.capped` so the client can hint
+"loot capped at rank N" on the result panel.
 
 ### 6.8 Storage caps (active)
 
@@ -547,10 +616,12 @@ and verify it still hits all of these. If any anchor moves more than
   credited at submit; values past the bank's storage cap (§6.8) still
   credit, but the wallet HUD flashes a "storage full" warning until
   the player drains it via a placement, upgrade, or queen tier.
-- Loot ceiling (future): `loot = min(defenderStock × 0.15, colonyRankCap)`
-  is the planned overlay (§6.7) once Colony Rank ships. MVP keeps the
-  per-building model uncapped because the storage cap already throttles
-  long-term inflation.
+- Loot ceiling (active): the per-building drop model (above) is
+  clamped by the attacker's Colony Rank (§6.7). `clampLootByRank()`
+  in `shared/src/sim/colonyRank.ts` is the single source of truth;
+  applied in `/raid/submit` before the wallet credit. The clamp lets
+  a fresh attacker take home almost all of a starter base's drops
+  but caps a rank-10 raider farming a starter base.
 - Pheromone paths: polyline of fixed-point waypoints. Units spawn
   evenly along the first segment; follow the polyline until engaged.
 
@@ -579,14 +650,21 @@ and verify it still hits all of these. If any anchor moves more than
   seeds the sim with the persisted `host_snapshot`. On match end,
   `POST /api/arena/_result` writes `outcome`, `winner_slot`, `ticks`,
   and `final_state_hash` back into the row.
-- **Today's sim limitation:** the core sim has no per-building
-  ownership, so live matches run on the host's base only — both players
-  deploy against it and the loser is whoever lost their deploy cap
-  first (or whoever dealt less damage at tick 2700). Full symmetric
-  base-vs-base PvP is a sim refactor: add `ownerSlot` to `SimBuilding`
-  and partition the map into left/right halves. The storage + wire
-  shape already carries both snapshots so no further migration will be
-  needed when the sim lands.
+- **Per-building ownership:** every `SimBuilding` carries `owner: 0 |
+  1` (`shared/src/sim/state.ts`). Asynchronous raids stamp every
+  building owner=1 (defender) — no behavior change vs. pre-ownership.
+  When `SimConfig.secondSnapshot` is supplied (live arena PvP path),
+  its buildings ingest as owner=0 with X coordinates flipped via
+  `gridW - x - w` (a horizontal mirror within the full grid). The
+  authored layout reads left-to-right intuitively from the second
+  player's POV — no side-specific authoring contract; bases are
+  exchanged "as if facing each other across the table". Combat filters
+  target acquisition + attack loops by owner so units of side X only
+  fire on buildings/units of side ≠ X. The determinism hash includes
+  the owner field. Today's arena entrypoint still sends a single
+  host-snapshot — wiring the second snapshot through `arena_matches` +
+  the Colyseus room is the next step but no further sim work is
+  needed.
 
 ### 8.3 Clan wars
 
@@ -664,18 +742,26 @@ See [`GLOSSARY.md`](./GLOSSARY.md) for vocabulary and tag conventions.
 The MVP economy is feature-complete for the build → raid → upgrade
 loop. Tracked gaps, ordered by player impact:
 
-1. **Builder time gates (§6.6)** — currently upgrades resolve instantly.
-   The `buildTime(L)` formula is specified but no `builders` table or
-   queue UI exists yet (`BuilderQueueScene` is a placeholder). This is
-   also the planned AphidMilk monetization hook (skip-time IAP).
-2. ~~**AphidMilk producers**~~ — shipped: AphidFarm (§5.4) produces
-   milk at 0.2/sec × level, gated to Q4+. Sinks (builder time-skip,
-   prestige cosmetics) still pending.
-3. **Colony Rank loot cap (§6.7)** — formula specified, not yet on
-   `/api/raid/submit`. Storage cap (§6.8) is shipped instead and
-   handles the inflation problem from a different angle.
-4. **Per-building ownership in sim** — needed for symmetric live PvP.
-   See §8.2 for the existing arena workaround (host's-base-only).
+1. ~~**Builder time gates (§6.6)**~~ — shipped: pending
+   {`pendingCompletesAt`, `pendingToLevel`} fields on `Types.Building`,
+   `buildTimeMs()` + `skipCostMilk()` in `shared/src/sim/builderGates.ts`,
+   `/player/upgrade-building` queues + debits, `/me` lazily promotes,
+   `/player/builder/skip` consumes AphidMilk to short-circuit. Builder
+   slots (multi-job parallelism cap) still pending — single-pending-
+   per-building is the v1 simplification.
+2. ~~**AphidMilk producers / sinks**~~ — both shipped. AphidFarm (§5.4)
+   produces milk at 0.2/sec × level, gated to Q4+. Builder time-gate
+   skip is the first sink (§6.6). IAP packs + prestige cosmetics still
+   pending.
+3. ~~**Colony Rank loot cap (§6.7)**~~ — shipped: `total_invested`
+   column on players (migrations/0016), `colonyRankFromInvested()` +
+   `lootCapForRank()` + `clampLootByRank()` in
+   `shared/src/sim/colonyRank.ts`, applied on `/raid/submit`.
+4. ~~**Per-building ownership in sim**~~ — shipped: `owner: 0 | 1`
+   on `SimBuilding`, `SimConfig.secondSnapshot` opt-in mirror, combat
+   targeting filters by owner, hash includes the field. Wiring the
+   actual second-snapshot through the Colyseus arena room is the next
+   integration step (§8.2).
 5. ~~**Clan war season payouts**~~ — shipped: `/clan/war/end` now
    credits trophies + sugar + leaf to every member of each clan based
    on the clan's outcome. Win: +25 trophies / +5000 sugar / +1500
