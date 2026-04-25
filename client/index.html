@@ -185,6 +185,39 @@
         border-radius: 6px;
       }
 
+      /* ---------- Unit clusters (inline SVG, ported from
+         client/src/assets/placeholders.ts so the marketing surface
+         shows the same units the game uses). ---------- */
+      .unit-defs {
+        position: absolute;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+      }
+      .unit-cluster {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 6px;
+        margin: 12px auto 0;
+        max-width: 420px;
+      }
+      .unit-cluster .unit {
+        width: 96px;
+        height: 96px;
+        flex: 0 0 auto;
+        filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.22));
+      }
+      .unit-cluster .unit.lead {
+        width: 132px;
+        height: 132px;
+      }
+      @media (min-width: 480px) {
+        .unit-cluster { gap: 10px; }
+        .unit-cluster .unit { width: 120px; height: 120px; }
+        .unit-cluster .unit.lead { width: 160px; height: 160px; }
+      }
+
       /* ---------- Hero login card ---------- */
       .hero-section {
         background: var(--tan);
@@ -204,16 +237,6 @@
       .hero-title {
         margin: 0 0 22px;
       }
-      .hero-art {
-        margin: 18px auto 0;
-        max-width: 360px;
-      }
-      .hero-art img {
-        width: 100%;
-        height: auto;
-        border-radius: 18px;
-        filter: drop-shadow(0 12px 16px rgba(0, 0, 0, 0.25));
-      }
 
       /* ---------- Yellow gold-pass-style offer card ---------- */
       .promo-section {
@@ -230,16 +253,6 @@
         box-shadow:
           0 8px 0 rgba(0, 0, 0, 0.22),
           0 24px 48px rgba(0, 0, 0, 0.25);
-      }
-      .promo-art {
-        max-width: 380px;
-        margin: 0 auto 24px;
-      }
-      .promo-art img {
-        width: 100%;
-        height: auto;
-        border-radius: 16px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
       }
       .promo-title { margin: 0 0 14px; }
       .promo-copy {
@@ -450,6 +463,137 @@
     </style>
   </head>
   <body>
+    <!--
+      Unit symbol library. Hand-ported from
+      client/src/assets/placeholders.ts so the same shapes, palette,
+      and outline weight the game falls back to when sprites are
+      missing also drive the landing page art. viewBox is 128x128 to
+      match UNIT_SIZE in placeholders.ts.
+    -->
+    <svg class="unit-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <symbol id="u-WorkerAnt" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#d98b4a"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#b8502b" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="64" cy="30" r="22" fill="#b8502b" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="56" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="72" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="55" cy="27" r="1.5" fill="#fff"/>
+          <circle cx="71" cy="27" r="1.5" fill="#fff"/>
+          <ellipse cx="64" cy="52" rx="14" ry="7" fill="#5ba445" stroke="#1a1208" stroke-width="3"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="60" x2="10" y2="70"/>
+            <line x1="102" y1="60" x2="118" y2="70"/>
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+        <symbol id="u-SoldierAnt" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#d98b4a"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#b8502b" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="64" cy="30" r="22" fill="#b8502b" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="56" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="72" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="55" cy="27" r="1.5" fill="#fff"/>
+          <circle cx="71" cy="27" r="1.5" fill="#fff"/>
+          <polygon points="46,18 58,8 54,24" fill="#1a1208"/>
+          <polygon points="82,18 70,8 74,24" fill="#1a1208"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="60" x2="10" y2="70"/>
+            <line x1="102" y1="60" x2="118" y2="70"/>
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+        <symbol id="u-Wasp" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#ffe799"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#f5c84c" stroke="#1a1208" stroke-width="4"/>
+          <ellipse cx="38" cy="58" rx="18" ry="11" fill="rgba(255,255,255,0.6)" stroke="#1a1208" stroke-width="2"/>
+          <ellipse cx="90" cy="58" rx="18" ry="11" fill="rgba(255,255,255,0.6)" stroke="#1a1208" stroke-width="2"/>
+          <circle cx="64" cy="30" r="22" fill="#f5c84c" stroke="#1a1208" stroke-width="4"/>
+          <rect x="48" y="24" width="32" height="8" fill="#1a1208"/>
+          <circle cx="56" cy="28" r="3" fill="#fff"/>
+          <circle cx="72" cy="28" r="3" fill="#fff"/>
+          <polygon points="64,106 58,98 70,98" fill="#1a1208"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="60" x2="10" y2="70"/>
+            <line x1="102" y1="60" x2="118" y2="70"/>
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+        <symbol id="u-FireAnt" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#e6a8a8"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#d94c4c" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="64" cy="30" r="22" fill="#d94c4c" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="56" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="72" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="55" cy="27" r="1.5" fill="#fff"/>
+          <circle cx="71" cy="27" r="1.5" fill="#fff"/>
+          <polygon points="54,14 74,14 64,-8" fill="#ffb347" stroke="#1a1208" stroke-width="3"/>
+          <polygon points="60,12 68,12 64,0" fill="#ffe799"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="60" x2="10" y2="70"/>
+            <line x1="102" y1="60" x2="118" y2="70"/>
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+        <symbol id="u-Mantis" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#7ac15f"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#5ba445" stroke="#1a1208" stroke-width="4"/>
+          <line x1="34" y1="74" x2="10" y2="42" stroke="#3a6a2a" stroke-width="6" stroke-linecap="round"/>
+          <line x1="94" y1="74" x2="118" y2="42" stroke="#3a6a2a" stroke-width="6" stroke-linecap="round"/>
+          <line x1="10" y1="42" x2="20" y2="28" stroke="#1a1208" stroke-width="4" stroke-linecap="round"/>
+          <line x1="118" y1="42" x2="108" y2="28" stroke="#1a1208" stroke-width="4" stroke-linecap="round"/>
+          <circle cx="64" cy="30" r="22" fill="#5ba445" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="56" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="72" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="55" cy="27" r="1.5" fill="#fff"/>
+          <circle cx="71" cy="27" r="1.5" fill="#fff"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+        <symbol id="u-Scarab" viewBox="0 0 128 128">
+          <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+          <ellipse cx="64" cy="78" rx="36" ry="28" fill="#88e2e2"/>
+          <ellipse cx="64" cy="70" rx="42" ry="32" fill="#3a8c8c" stroke="#1a1208" stroke-width="4"/>
+          <rect x="63" y="50" width="2" height="44" fill="#1a1208"/>
+          <circle cx="64" cy="72" r="10" fill="#f2d06b" stroke="#1a1208" stroke-width="3"/>
+          <circle cx="64" cy="30" r="22" fill="#3a8c8c" stroke="#1a1208" stroke-width="4"/>
+          <circle cx="56" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="72" cy="28" r="4" fill="#1a1208"/>
+          <circle cx="55" cy="27" r="1.5" fill="#fff"/>
+          <circle cx="71" cy="27" r="1.5" fill="#fff"/>
+          <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+            <line x1="26" y1="60" x2="10" y2="70"/>
+            <line x1="102" y1="60" x2="118" y2="70"/>
+            <line x1="26" y1="74" x2="10" y2="84"/>
+            <line x1="102" y1="74" x2="118" y2="84"/>
+            <line x1="26" y1="88" x2="10" y2="98"/>
+            <line x1="102" y1="88" x2="118" y2="98"/>
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
     <header class="top">
       <div class="top-row">
         <a href="/play" aria-label="Hive Wars home">
@@ -490,16 +634,20 @@
           LOG IN
           <span class="pill-tag">ID</span>
         </a>
-        <div class="hero-art">
-          <img src="/og/cover.png" alt="Hive Wars colony art" />
+        <div class="unit-cluster" role="img" aria-label="Worker, Soldier, and Wasp units">
+          <svg class="unit" viewBox="0 0 128 128"><use href="#u-WorkerAnt"/></svg>
+          <svg class="unit lead" viewBox="0 0 128 128"><use href="#u-SoldierAnt"/></svg>
+          <svg class="unit" viewBox="0 0 128 128"><use href="#u-Wasp"/></svg>
         </div>
       </div>
     </section>
 
     <section class="promo-section">
       <div class="promo-card">
-        <div class="promo-art">
-          <img src="/og/cover.png" alt="Season Pass" />
+        <div class="unit-cluster" role="img" aria-label="FireAnt, Scarab, and Mantis premium units">
+          <svg class="unit" viewBox="0 0 128 128"><use href="#u-FireAnt"/></svg>
+          <svg class="unit lead" viewBox="0 0 128 128"><use href="#u-Scarab"/></svg>
+          <svg class="unit" viewBox="0 0 128 128"><use href="#u-Mantis"/></svg>
         </div>
         <h2 class="display display-md promo-title">Season Pass<br />Stamp Card</h2>
         <p class="promo-copy">
