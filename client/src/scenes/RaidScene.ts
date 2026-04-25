@@ -1579,6 +1579,19 @@ export class RaidScene extends Phaser.Scene {
       if (this.replayNameText && this.replayName) {
         this.replayNameText.setText(`"${this.replayName}"`);
       }
+      // Surface the colony-rank cap hint when the server clamped the
+      // payout. The result panel's loot text was set ahead of submit
+      // from the unclamped sim totals; replace it with the actual
+      // banked numbers so the player isn't misled about their wallet
+      // gain. If the cap fired, append a one-liner explaining why.
+      if (res.loot && this.lootText) {
+        const capLine = res.loot.capped
+          ? ` (cap @ rank ${res.loot.colonyRank})`
+          : '';
+        this.lootText.setText(
+          `loot: ${res.loot.sugar} sugar · ${res.loot.leafBits} leaf${capLine}`,
+        );
+      }
 
       // Secondary submits: war attack, campaign mission. Best-effort —
       // a failure here doesn't invalidate the primary raid result.

@@ -26,7 +26,7 @@ import {
   MAX_UNIT_LEVEL,
 } from '../game/upgradeCosts.js';
 import { upgradeCostMult, levelStatPercent, LEVEL_COST_MULT } from '../game/progression.js';
-import { storageCaps } from '@hive/shared/sim';
+import { storageCaps, colonyRankFromInvested, lootCapForRank } from '@hive/shared/sim';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
@@ -99,6 +99,10 @@ interface PlayerRow {
   // See migrations/0015. Always read + written together with aphid_milk
   // so frequent /me polling can't flush sub-integer progress.
   aphid_milk_residual: number;
+  // Running sum of every sugar+leaf the player has spent on upgrades
+  // and placements. Drives the Colony Rank meta-progression curve
+  // (see migrations/0016 + shared/src/sim/colonyRank.ts).
+  total_invested: string; // BIGINT comes back as string from pg
   // Retention-loop columns (migrations/0011). `shield_expires_at` is
   // nullable; the rest default on the DB side so existing players
   // backfill without a data migration.
@@ -341,6 +345,14 @@ export function registerPlayer(app: FastifyInstance): void {
           // the HUD can render "+X/sec" pills without needing to walk
           // the base.snapshot itself or duplicate INCOME_PER_SECOND.
           incomePerSecond: tick,
+          // Colony Rank (§6.7) — meta progression. Surfaced so the
+          // client can render the rank badge + per-raid loot cap hint
+          // before the player commits to a target.
+          colony: {
+            totalInvested: safeBigintToNumber(player.total_invested ?? '0', 'total_invested', app.log),
+            rank: colonyRankFromInvested(player.total_invested ?? '0'),
+            lootCap: lootCapForRank(colonyRankFromInvested(player.total_invested ?? '0')),
+          },
         },
         base: base.snapshot,
         offlineTrickle: {
@@ -613,10 +625,11 @@ export function registerPlayer(app: FastifyInstance): void {
         aphid_milk: string;
       }>(
         `UPDATE players
-            SET sugar      = sugar - $2,
-                leaf_bits  = leaf_bits - $3,
-                aphid_milk = aphid_milk - $4,
-                last_seen_at = NOW()
+            SET sugar          = sugar - $2,
+                leaf_bits      = leaf_bits - $3,
+                aphid_milk     = aphid_milk - $4,
+                total_invested = total_invested + ($2 + $3),
+                last_seen_at   = NOW()
           WHERE id = $1
             AND sugar >= $2
             AND leaf_bits >= $3
@@ -1249,10 +1262,11 @@ export function registerPlayer(app: FastifyInstance): void {
         trophies: number;
       }>(
         `UPDATE players
-            SET sugar = sugar - $2,
-                leaf_bits = leaf_bits - $3,
-                aphid_milk = aphid_milk - $4,
-                last_seen_at = NOW()
+            SET sugar          = sugar - $2,
+                leaf_bits      = leaf_bits - $3,
+                aphid_milk     = aphid_milk - $4,
+                total_invested = total_invested + ($2 + $3),
+                last_seen_at   = NOW()
           WHERE id = $1
             AND sugar >= $2
             AND leaf_bits >= $3
@@ -1691,8 +1705,9 @@ export function registerPlayer(app: FastifyInstance): void {
           unit_levels: Record<string, number>;
         }>(
           `UPDATE players
-              SET sugar = sugar - $2,
-                  leaf_bits = leaf_bits - $3,
+              SET sugar          = sugar - $2,
+                  leaf_bits      = leaf_bits - $3,
+                  total_invested = total_invested + ($2 + $3),
                   unit_levels = jsonb_set(
                     COALESCE(unit_levels, '{}'::jsonb),
                     ARRAY[$4::text],
@@ -1811,8 +1826,9 @@ export function registerPlayer(app: FastifyInstance): void {
           trophies: number;
         }>(
           `UPDATE players
-              SET sugar     = sugar - $2,
-                  leaf_bits = leaf_bits - $3
+              SET sugar          = sugar - $2,
+                  leaf_bits      = leaf_bits - $3,
+                  total_invested = total_invested + ($2 + $3)
             WHERE id = $1
               AND sugar >= $2
               AND leaf_bits >= $3
