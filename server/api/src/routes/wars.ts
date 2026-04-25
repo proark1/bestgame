@@ -559,12 +559,20 @@ export function registerWars(app: FastifyInstance): void {
       for (const cid of [w.clan_a_id, w.clan_b_id]) {
         const outcome = sideOutcome[cid]!;
         const payout = WAR_PAYOUT[outcome];
+        // FROM-clause join is more idiomatic than the equivalent
+        // `WHERE id IN (SELECT …)` and lets Postgres plan a hash join
+        // straight from clan_members → players. Functionally identical
+        // for this volume (one row per clan member, ~30 max), but it's
+        // the correct shape if a clan ever scales up + reads stay
+        // grep-friendly for the next person paginating clan_members.
         await client.query(
-          `UPDATE players
-              SET trophies  = trophies + $2,
-                  sugar     = sugar + $3,
-                  leaf_bits = leaf_bits + $4
-            WHERE id IN (SELECT player_id FROM clan_members WHERE clan_id = $1)`,
+          `UPDATE players p
+              SET trophies  = p.trophies + $2,
+                  sugar     = p.sugar + $3,
+                  leaf_bits = p.leaf_bits + $4
+             FROM clan_members cm
+            WHERE cm.player_id = p.id
+              AND cm.clan_id = $1`,
           [cid, payout.trophies, payout.sugar, payout.leafBits],
         );
       }
