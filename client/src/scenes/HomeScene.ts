@@ -212,8 +212,11 @@ export class HomeScene extends Phaser.Scene {
   // + a single radial fog ellipse.
   private drawAmbient(): void {
     const g = this.add.graphics().setDepth(DEPTHS.background);
-    const top = 0x203224;
-    const bot = 0x070d08;
+    // Vibrant pastel scene gradient — soft pink-cream up top easing
+    // into lavender at the bottom. Replaces the deep forest gradient
+    // that anchored the old earthy theme.
+    const top = 0xfff4f6;
+    const bot = 0xede4f7;
     const BANDS = 22;
     for (let i = 0; i < BANDS; i++) {
       const t = i / (BANDS - 1);
@@ -842,27 +845,28 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawBoard(): void {
-    // Layer-aware palette. Surface = mossy daylight greens; underground
-    // = warm cave tones with amber lighting.
+    // Layer-aware palette. Surface = bright pastel mint daylight;
+    // underground = warm peachy tan with butter highlights. Both
+    // tracks match the vibrant-pastel theme in theme.ts.
     const palette =
       this.layer === 0
         ? {
-            baseA: 0x274a21,
-            baseB: 0x1d3a1a,
-            grid: 0x2c5a23,
-            decorA: 0x8bbd62,
-            decorB: 0x4a7a2a,
-            frame: 0x3d5e2a,
-            highlight: 0x8fd273,
+            baseA: 0xb6e6c0,   // bright mint top
+            baseB: 0x8edaa1,   // softer mint bottom
+            grid: 0x4d9b5c,
+            decorA: 0xd3f1d8,  // pale mint highlights
+            decorB: 0x6cd47e,  // saturated mint dots
+            frame: 0x4d9b5c,
+            highlight: 0xe8fff0,
           }
         : {
-            baseA: 0x35241a,
-            baseB: 0x1f150e,
-            grid: 0x5a3e23,
-            decorA: 0xb88c4a,
-            decorB: 0x7a5830,
-            frame: 0x5a3a20,
-            highlight: 0xd1a060,
+            baseA: 0xeacca8,   // peachy tan top
+            baseB: 0xd1ad88,   // warmer tan bottom
+            grid: 0xb8a285,
+            decorA: 0xfcdfc0,  // pale peach highlights
+            decorB: 0xfdcd6a,  // butter-yellow dots
+            frame: 0xb8a285,
+            highlight: 0xfff5e3,
           };
 
     // Solid base layer painted UNDER everything else so the playable
@@ -991,18 +995,16 @@ export class HomeScene extends Phaser.Scene {
     // below. Makes the board read as a discrete, raised object
     // against the scene ambient.
     const frame = this.add.graphics();
-    // Outer drop shadow
-    frame.fillStyle(0x000000, 0.35);
-    frame.fillRoundedRect(-3, -1, BOARD_W + 6, BOARD_H + 8, 12);
-    // Outer ring (thick dark brown)
-    frame.lineStyle(6, 0x3a2512, 1);
-    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 10);
-    // Middle ring (warm brown)
-    frame.lineStyle(3, 0x6b4420, 0.9);
-    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 8);
-    // Inner brass highlight
-    frame.lineStyle(1, COLOR.brass, 0.55);
-    frame.strokeRoundedRect(5, 5, BOARD_W - 10, BOARD_H - 10, 6);
+    // Soft navy-tinted ambient shadow under the playfield.
+    frame.fillStyle(0x1f2148, 0.22);
+    frame.fillRoundedRect(-3, -1, BOARD_W + 6, BOARD_H + 8, 14);
+    // Outer ring — soft mint outline so the board reads as a card on
+    // the cream scene without the heavy wooden look.
+    frame.lineStyle(4, COLOR.outline, 0.85);
+    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 12);
+    // Inner soft white highlight (subtle bevel)
+    frame.lineStyle(1, 0xffffff, 0.45);
+    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 10);
 
     // Clash-of-Clans-style layer banner: a single brass chip with
     // just the mode title, vertically centered. The prior version

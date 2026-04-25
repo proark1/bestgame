@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f1b10" />
+    <meta name="theme-color" content="#f7f0e3" />
     <meta name="description" content="Hive Wars — build your colony, raid rivals, and climb the leaderboard. Free browser-based ant strategy game. Play on any phone or desktop, no app needed." />
     <meta property="og:title" content="Hive Wars — ant-colony strategy" />
     <meta property="og:description" content="Build your colony, raid rivals, climb the leaderboard. Free. No app. Plays on any device." />
@@ -20,23 +20,26 @@
     <link rel="preload" as="image" href="/og/cover.png" />
     <style>
       :root {
-        color-scheme: dark;
-        --bg: #0f1b10;
-        --panel-hi: #2a3f2d;
-        --panel-lo: #142117;
-        --brass: #ffd98a;
-        --brass-deep: #b8883a;
-        --ink: #2a1d08;
-        --text: #f7edd0;
-        --text-dim: #bad3a3;
-        --stroke: #5c4020;
-        --accent: #6fb97f;
+        color-scheme: light;
+        /* Vibrant pastel theme — soft cream scene, white cards with
+           pink/lavender tint, coral primary accent, sky/mint secondary.
+           Match the in-game theme.ts COLOR tokens for visual continuity. */
+        --bg: #f7f0e3;
+        --panel-hi: #ffffff;
+        --panel-lo: #ede4f7;
+        --brass: #ee5e7c;       /* coral CTA */
+        --brass-deep: #c73f5e;
+        --ink: #1f2148;
+        --text: #1f2148;
+        --text-dim: #4a4d72;
+        --stroke: #b8a285;
+        --accent: #6cd47e;      /* mint accent */
         --bg-semi: color-mix(in srgb, var(--bg) 80%, transparent);
         --stroke-dim: color-mix(in srgb, var(--stroke) 30%, transparent);
-        --panel-semi: color-mix(in srgb, var(--panel-hi) 80%, transparent);
+        --panel-semi: color-mix(in srgb, var(--panel-hi) 92%, transparent);
         --panel-lo-semi: color-mix(in srgb, var(--panel-lo) 80%, transparent);
-        --accent-semi: color-mix(in srgb, var(--accent) 8%, transparent);
-        --accent-border: color-mix(in srgb, var(--accent) 40%, transparent);
+        --accent-semi: color-mix(in srgb, var(--accent) 16%, transparent);
+        --accent-border: color-mix(in srgb, var(--accent) 50%, transparent);
       }
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; }
@@ -44,9 +47,9 @@
         font-family: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
         color: var(--text);
         background:
-          radial-gradient(circle at 30% 12%, rgba(255, 217, 138, 0.12), transparent 40%),
-          radial-gradient(circle at 80% 90%, rgba(90, 140, 90, 0.12), transparent 38%),
-          linear-gradient(180deg, var(--panel-hi) 0%, var(--panel-lo) 58%, var(--bg) 100%);
+          radial-gradient(circle at 30% 12%, rgba(255, 144, 168, 0.18), transparent 40%),
+          radial-gradient(circle at 80% 90%, rgba(108, 212, 126, 0.16), transparent 38%),
+          linear-gradient(180deg, #fff4f6 0%, #ede4f7 58%, var(--bg) 100%);
         min-height: 100vh;
         min-height: 100dvh;
         -webkit-font-smoothing: antialiased;
@@ -108,7 +111,7 @@
         color: var(--brass);
         line-height: 1;
         letter-spacing: -1.5px;
-        text-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        text-shadow: 0 4px 16px rgba(31, 33, 72, 0.18);
       }
       .hero-copy .tagline {
         font-size: clamp(18px, 2.8vw, 24px);
@@ -169,10 +172,10 @@
       .hero-art {
         border-radius: 24px;
         overflow: hidden;
-        border: 3px solid var(--stroke);
+        border: 3px solid var(--accent-border);
         box-shadow:
-          0 24px 48px rgba(0, 0, 0, 0.5),
-          inset 0 2px 0 rgba(255, 217, 138, 0.18);
+          0 24px 48px rgba(31, 33, 72, 0.18),
+          inset 0 2px 0 rgba(255, 255, 255, 0.5);
         aspect-ratio: 1200 / 630;
         background-image: url('/og/cover.png');
         background-size: cover;
@@ -233,7 +236,7 @@
         font-family: "Arial Black", Impact, sans-serif;
         font-size: clamp(32px, 5vw, 48px);
         color: var(--brass);
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(31, 33, 72, 0.14);
       }
       .gameplay-grid {
         display: grid;
@@ -299,7 +302,7 @@
         font-family: "Arial Black", Impact, sans-serif;
         font-size: clamp(32px, 5vw, 48px);
         color: var(--brass);
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        text-shadow: 0 2px 8px rgba(31, 33, 72, 0.14);
       }
       .cta-section p {
         margin: 0 0 24px;
