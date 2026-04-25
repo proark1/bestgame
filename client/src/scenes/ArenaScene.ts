@@ -288,6 +288,7 @@ export class ArenaScene extends Phaser.Scene {
     const targetY = Math.min(this.scale.height - 86, boardBottom + 18);
     const targetX = Math.round((this.scale.width - this.statusCardWidth) / 2);
     this.statusCard.setPosition(targetX, targetY);
+    this.statusHint.setWordWrapWidth(this.statusCardWidth - 40);
   }
 
   private setStatus(message: string, hint: string, tone: 'normal' | 'warn' | 'error' = 'normal'): void {
@@ -649,7 +650,9 @@ export class ArenaScene extends Phaser.Scene {
       const spr = this.buildingSprites.get(b.id);
       if (!spr) continue;
       if (b.hp <= 0 && spr.alpha > 0.2) {
-        this.tweens.add({ targets: spr, alpha: 0.18, duration: 200 });
+        const label = this.buildingRoleLabels.get(b.id);
+        const tweenTargets = label ? [spr, label] : [spr];
+        this.tweens.add({ targets: tweenTargets, alpha: 0.18, duration: 200 });
       }
     }
   }

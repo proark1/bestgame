@@ -519,6 +519,7 @@ export class BootScene extends Phaser.Scene {
 // so a new scene added to main.ts has to be opted-in here before the
 // admin Preview iframe can render it.
 const PREVIEW_SCENE_WHITELIST: Readonly<Record<string, string>> = {
+  boot: 'BootScene',
   home: 'HomeScene',
   raid: 'RaidScene',
   codex: 'CodexScene',
@@ -535,6 +536,7 @@ const PREVIEW_SCENE_WHITELIST: Readonly<Record<string, string>> = {
   history: 'RaidHistoryScene',
   upgrade: 'UpgradeScene',
   prologue: 'PrologueScene',
+  misc: 'HomeScene',
 };
 
 function readPreviewSceneFromQuery(): string | null {
