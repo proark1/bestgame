@@ -687,6 +687,39 @@ const PLACEHOLDER_BUILDINGS: Record<
       g.strokeTriangle(x0 + panelW - 4, sy, x0 + panelW - 4, sy + spikeH, x0 + panelW + 22, sy + spikeH / 2);
     }
   },
+  'building-AphidFarm': (g, s) => {
+    // Underground "milk shed" — a low domed pen with a row of three
+    // aphid bumps along its top, each with a pearl droplet hanging
+    // beneath. Reads as "premium" via the cream + soft pink palette
+    // and the visible droplet that connects it to the AphidMilk pill.
+    const cx = s / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    // Pen base: cream rounded slab, half-buried in the ground.
+    g.fillStyle(0xf3e6c8, 1);
+    g.fillRoundedRect(cx - 70, s - 88, 140, 64, 18);
+    g.strokeRoundedRect(cx - 70, s - 88, 140, 64, 18);
+    // Three plump aphid bumps along the top, soft pink with bright eye.
+    const aphidPositions = [-40, 0, 40];
+    for (const dx of aphidPositions) {
+      // body
+      g.fillStyle(0xe7a3b6, 1);
+      g.fillEllipse(cx + dx, s - 92, 30, 22);
+      g.strokeEllipse(cx + dx, s - 92, 30, 22);
+      // eye highlight
+      g.fillStyle(0xffffff, 1);
+      g.fillCircle(cx + dx - 6, s - 96, 3);
+      // milk droplet hanging from the underside
+      g.fillStyle(0xfff8e0, 1);
+      g.fillCircle(cx + dx, s - 76, 5);
+      g.lineStyle(2, OUTLINE, 1);
+      g.strokeCircle(cx + dx, s - 76, 5);
+      g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    }
+    // Pen door / vent strip across the front, dark slab
+    g.fillStyle(0x6b4d2e, 1);
+    g.fillRoundedRect(cx - 30, s - 38, 60, 12, 4);
+    g.strokeRoundedRect(cx - 30, s - 38, 60, 12, 4);
+  },
   default: (g, s) => {
     const cx = s / 2;
     g.fillStyle(PALETTE.neutral.body, 1);

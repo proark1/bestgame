@@ -56,6 +56,8 @@ export const BUILDING_SPRITE_KEYS = [
   'building-ThornHedge',
   // Vertical thorn-hedge variant — same reasoning as LeafWallV.
   'building-ThornHedgeV',
+  // Premium producer (AphidMilk source).
+  'building-AphidFarm',
 ] as const;
 
 export const UI_SPRITE_KEYS = [

@@ -30,7 +30,12 @@ export type BuildingKind =
   | 'RootSnare'      // one-shot trap, roots/slows on trigger
   | 'HiddenStinger'  // cloaked until a unit enters range, then reveals
   | 'SpiderNest'     // periodically spawns defender units during a raid
-  | 'ThornHedge';    // tier-2 wall: higher hp + chip-damage reflect
+  | 'ThornHedge'     // tier-2 wall: higher hp + chip-damage reflect
+  // Premium economy. Slow producer of AphidMilk, the third currency.
+  // Late-tier unlock; sets the foundation for future builder-time-skip
+  // monetization (GDD §9 / §12). Underground-only and limited per
+  // queen tier so early bases can't farm milk for an instant skip.
+  | 'AphidFarm';
 
 export interface Building {
   id: string;

@@ -32,6 +32,10 @@ export const BUILDING_PLACEMENT_COSTS: Record<Types.BuildingKind, PlacementCost>
   HiddenStinger:   { sugar: 900,   leafBits: 260,   aphidMilk: 0 },
   SpiderNest:      { sugar: 1200,  leafBits: 320,   aphidMilk: 0 },
   ThornHedge:      { sugar: 220,   leafBits: 110,   aphidMilk: 0 },
+  // Premium producer. Sugar-heavy placement cost so milk farming is a
+  // late-game investment, not a Q1 shortcut. No milk-on-place because
+  // milk is the resource it produces — placing one shouldn't refund.
+  AphidFarm:       { sugar: 1500,  leafBits: 400,   aphidMilk: 0 },
 };
 
 // Default footprint + hp per kind. Keeps the sim snapshot honest when
@@ -58,6 +62,8 @@ export const BUILDING_DEFAULTS: Record<
   HiddenStinger:  { w: 1, h: 1, hp: 220 },
   SpiderNest:     { w: 2, h: 2, hp: 260 },
   ThornHedge:     { w: 1, h: 1, hp: 1100 },
+  // 1×1 footprint. Underground-only (gated in ALLOWED_LAYERS).
+  AphidFarm:      { w: 1, h: 1, hp: 320 },
 };
 
 // Hard ceiling on buildings per base. Shared between POST
@@ -85,6 +91,7 @@ export const PLAYER_PLACEABLE: readonly Types.BuildingKind[] = [
   'HiddenStinger',
   'SpiderNest',
   'ThornHedge',
+  'AphidFarm',
 ] as const;
 
 export function isPlayerPlaceable(kind: Types.BuildingKind): boolean {
