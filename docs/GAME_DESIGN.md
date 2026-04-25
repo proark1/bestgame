@@ -588,6 +588,39 @@ and verify it still hits all of these. If any anchor moves more than
   shape already carries both snapshots so no further migration will be
   needed when the sim lands.
 
+### 8.3 Clan wars
+
+24-hour paired battles. Each clan member contributes one attack via
+`/clan/war/attack`; star totals aggregate per side. When `ends_at`
+elapses, `/clan/war/end` finalizes idempotently — first call wins,
+subsequent calls return the recorded summary.
+
+War-end payouts go to every member of each clan based on that clan's
+outcome (win / draw / loss). Trophies + Sugar + LeafBits land
+together so a winning war feels like a meaningful resource event,
+not just a small ladder bump:
+
+| Outcome | Trophies | Sugar  | LeafBits |
+|---------|----------|--------|----------|
+| Win     | +25      | +5,000 | +1,500   |
+| Draw    | +5       | +1,000 | +300     |
+| Loss    | 0        | +500   | +100     |
+
+A clean win on a Q3 player (3 unit upgrades cost ~1,400 sugar) is
+roughly 3× a unit upgrade — meaningful but not raid-replacing. Loss
+consolation (~500 sugar) is enough that participating in a losing war
+feels rewarded; encourages playing through mismatched matchups
+instead of rage-quitting on the brink.
+
+Resources bypass the storage cap (consistent with raid loot, §6.8) —
+the storage-full HUD warning still nudges the player to spend, but
+clan war payouts are never forfeited. Bonus pool scales with clan
+size since every member receives the full payout independently;
+that's intentional — clans with active members feel more rewarding to
+play in.
+
+Canonical implementation: `server/api/src/routes/wars.ts`.
+
 ## 9. Monetization (post-MVP)
 
 Free-to-play. Pay-for-time, not pay-for-power:
@@ -643,7 +676,13 @@ loop. Tracked gaps, ordered by player impact:
    handles the inflation problem from a different angle.
 4. **Per-building ownership in sim** — needed for symmetric live PvP.
    See §8.2 for the existing arena workaround (host's-base-only).
-5. **Clan war season payouts** — clan scaffolding exists, but the
-   resource payout for war wins is not yet wired up.
+5. ~~**Clan war season payouts**~~ — shipped: `/clan/war/end` now
+   credits trophies + sugar + leaf to every member of each clan based
+   on the clan's outcome. Win: +25 trophies / +5000 sugar / +1500
+   leaf per member. Draw: +5 / +1000 / +300. Loss: +0 / +500 / +100
+   (consolation pot keeps a losing war from feeling fully wasted).
+   Resources bypass the storage cap (consistent with raid loot, GDD
+   §6.8). Response includes per-side payouts plus the caller's own
+   `myOutcome` + `myPayout` for direct toast rendering.
 
 Each of these is a focused PR, not a refactor. Avoid bundling them.
