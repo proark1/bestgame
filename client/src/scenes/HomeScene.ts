@@ -1036,6 +1036,67 @@ export class HomeScene extends Phaser.Scene {
   // flicker + churns every sprite's tween timer).
   private homeBuildingSprites: Map<string, Phaser.GameObjects.Image> = new Map();
 
+  // Persistent overlay graphic that paints a soft "+" on every empty
+  // buildable tile, plus the corresponding pulse tween so the marks
+  // breathe gently. Cleared and rebuilt whenever the layout changes
+  // (build, demolish, move, layer switch). Hidden during move-mode +
+  // picker so it doesn't compete with those overlays.
+  private emptyTileHints: Phaser.GameObjects.Graphics | null = null;
+  private emptyTileHintsTween: Phaser.Tweens.Tween | null = null;
+
+  private drawEmptyTileHints(): void {
+    if (this.emptyTileHintsTween) {
+      this.emptyTileHintsTween.stop();
+      this.emptyTileHintsTween = null;
+    }
+    if (this.emptyTileHints) {
+      this.emptyTileHints.destroy();
+      this.emptyTileHints = null;
+    }
+    // While the player is moving a building or has the picker open,
+    // those flows render their own overlays — stack avoidance.
+    if (this.moveMode) return;
+    if (this.pickerContainer) return;
+
+    const g = this.add.graphics();
+    // Sit just above the background grid but below building sprites
+    // and selection chrome.
+    g.setDepth(DEPTHS.boardOverlay - 2);
+
+    let drewAny = false;
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        if (this.isTileOccupied(x, y, this.layer)) continue;
+        const cx = x * TILE + TILE / 2;
+        const cy = y * TILE + TILE / 2;
+        // Soft brass "+" — readable against the green/dirt tile but
+        // never loud enough to fight the buildings for attention.
+        g.lineStyle(2, COLOR.brass, 0.55);
+        g.lineBetween(cx - 5, cy, cx + 5, cy);
+        g.lineBetween(cx, cy - 5, cx, cy + 5);
+        drewAny = true;
+      }
+    }
+
+    if (!drewAny) {
+      g.destroy();
+      return;
+    }
+
+    this.boardContainer.add(g);
+    this.emptyTileHints = g;
+    // Gentle breathing pulse so the affordances feel alive without
+    // being distracting (matches CoC's "tap here" subtle hint cadence).
+    this.emptyTileHintsTween = this.tweens.add({
+      targets: g,
+      alpha: { from: 0.55, to: 1 },
+      duration: 1600,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
   private drawBuildings(): void {
     // Prefer the server's base snapshot. Fall back to the hardcoded
     // starter layout when running guest-local (DB unavailable).
@@ -1045,27 +1106,30 @@ export class HomeScene extends Phaser.Scene {
         const spr = this.createBuildingSprite(b);
         if (spr) this.homeBuildingSprites.set(b.id, spr);
       }
-      return;
+    } else {
+      for (const b of STARTER_BUILDINGS) {
+        const spansBoth = b.kind === 'QueenChamber';
+        if (!spansBoth && b.layer !== this.layer) continue;
+        const x = b.x * TILE + TILE;
+        const y = b.y * TILE + TILE;
+        const spr = this.add.image(x, y, `building-${b.kind}`);
+        spr.setOrigin(0.5, 0.75);
+        spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
+        spr.setDisplaySize(112, 112);
+        this.tweens.add({
+          targets: spr,
+          scale: { from: spr.scale, to: spr.scale * 1.03 },
+          duration: 1400 + Math.random() * 800,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+        this.boardContainer.add(spr);
+      }
     }
-    for (const b of STARTER_BUILDINGS) {
-      const spansBoth = b.kind === 'QueenChamber';
-      if (!spansBoth && b.layer !== this.layer) continue;
-      const x = b.x * TILE + TILE;
-      const y = b.y * TILE + TILE;
-      const spr = this.add.image(x, y, `building-${b.kind}`);
-      spr.setOrigin(0.5, 0.75);
-      spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
-      spr.setDisplaySize(112, 112);
-      this.tweens.add({
-        targets: spr,
-        scale: { from: spr.scale, to: spr.scale * 1.03 },
-        duration: 1400 + Math.random() * 800,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
-      this.boardContainer.add(spr);
-    }
+    // Affordances paint after the buildings exist so isTileOccupied
+    // sees the live layout.
+    this.drawEmptyTileHints();
   }
 
   // Create, size, tween, and wire one building sprite. Returns the
@@ -1298,6 +1362,8 @@ export class HomeScene extends Phaser.Scene {
         const spr = this.homeBuildingSprites.get(b.id);
         spr?.destroy();
         this.homeBuildingSprites.delete(b.id);
+        // The freed tiles are now buildable — repaint affordances.
+        this.drawEmptyTileHints();
       },
       onMoveRequest: (building) => this.enterMoveMode(building),
     });
@@ -1594,6 +1660,9 @@ export class HomeScene extends Phaser.Scene {
     }
     window.removeEventListener('keydown', keyListener);
     this.moveMode = null;
+    // Move mode suppressed the build-tile affordances while it was
+    // active; restore them now that the player can place again.
+    this.drawEmptyTileHints();
   }
 
   private snapSpriteToBuilding(
@@ -2926,6 +2995,9 @@ export class HomeScene extends Phaser.Scene {
       // Stamp the grace window so a pointerup that arrives just after
       // this call can't open a new picker on the closing tap's tile.
       this.pickerClosedAtMs = this.time.now;
+      // Build affordances were suppressed while the picker was open;
+      // restore them now.
+      this.drawEmptyTileHints();
     }
   }
 
