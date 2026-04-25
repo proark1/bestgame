@@ -467,7 +467,7 @@ function render(): void {
         size: file?.size ?? 0,
         ext,
       },
-      composePrompt: (desc) => composePrompt(desc, kind),
+      composePrompt: (desc) => composePrompt(desc, kind, key),
       getCompression: () => state.compression,
       onPromptSave: async (value) => {
         await updatePrompt({ category: bucket, key: baseName, value });
@@ -531,6 +531,11 @@ const MENU_UI_KEYS = [
   // Logo wordmark. Shown on boot splash + HomeScene top-left when
   // generated AND the `ui-logo` override flag is flipped on.
   'ui-logo',
+  // Landing-page hero banner. Wide cinematic illustration shown above
+  // the fold on /index.html. The `landing-` key prefix routes through
+  // a different prompt composer (cinematic perspective + depth) so it
+  // doesn't get the flat-2D, head-on UI-chrome constraint.
+  'landing-hero',
   // Queen-skin portraits. Admin can generate + toggle each one;
   // the Queen picker + HomeScene identity chip render the image
   // when present and fall back to a tinted silhouette otherwise.
@@ -547,8 +552,29 @@ const MENU_UI_KEYS = [
 function composePrompt(
   description: string,
   kind: 'unit' | 'building' | 'menuUi',
+  key?: string,
 ): string {
   const style = state.prompts?.styleLock ?? '';
+  // Landing-page art (key prefix `landing-`) is cinematic illustration,
+  // not UI chrome — it would look dead if forced into the flat-2D /
+  // head-on / no-characters constraints of the menuUi composer below.
+  // Routed through its own branch so the painter is free to use
+  // perspective, characters, and full-bleed framing.
+  if (kind === 'menuUi' && key && key.startsWith('landing-')) {
+    // The global style lock ends with sprite-only technical constraints
+    // ("128x128 transparent PNG, subject fills ~85%, no background, …")
+    // that directly contradict the wide opaque hero brief below. Slice
+    // those off so only the *visual* part of the style lock (palette,
+    // lighting, outlines, painterly direction) reaches the model — the
+    // delivery section in this branch owns size + transparency.
+    const visualStyle = (style.split('128x128')[0] ?? style).trim();
+    return [
+      `Subject: ${description}`,
+      `Style: ${visualStyle}`,
+      `Camera: cinematic painterly hero illustration. Wide landscape framing with clear foreground / midground / background depth, dramatic directional lighting, atmospheric perspective. Characters and scenery are encouraged.`,
+      `Delivery: full-bleed PNG, opaque background is fine (the page crops it inside a rounded card). No text, no UI overlays, no logos, no watermarks, no borders, no signature.`,
+    ].join(' ');
+  }
   // Menu UI assets are larger and designed for 9-slice scaling —
   // the prompt shape differs enough that we route it through its
   // own composer instead of twisting the shared subject prompt.
