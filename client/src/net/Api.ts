@@ -71,6 +71,12 @@ export interface PlayerState {
   queenSkin?: QueenSkinState;
   tutorialStage?: number;
   campaign?: CampaignBrief;
+  // Resource economy surface (GDD §6.8 / §5.3). Storage caps are
+  // derived from the player's economy buildings; incomePerSecond is
+  // the totals across all live producers. Both are optional so a
+  // pre-storage server still loads (HUD falls back to "no cap").
+  storage?: { sugarCap: number; leafCap: number };
+  incomePerSecond?: { sugar: number; leafBits: number; aphidMilk: number };
 }
 
 export interface DailyQuestState {
