@@ -608,6 +608,78 @@ function composePrompt(
 // Walk-cycle geometry + prompt composers live in ./walkCycle.ts so
 // the per-pose editor can share them with the bulk generator.
 
+// Animation generation (Animations tab): reuses existing sprite + generates variation.
+// Fetches the already-generated sprite, uses it as frame 1, generates a
+// pose variation as frame 2, then composites into a 256×128 strip.
+async function generateAnimationFromSprite(
+  kind: string,
+  onProgress?: (note: string) => void,
+): Promise<{ path: string; size: number }> {
+  const bucket = state.prompts?.walkCycles;
+  const poseB = bucket?.[`${kind}_poseB`];
+  if (!poseB || poseB.trim() === '') {
+    throw new Error(
+      `no walkCycles prompt for ${kind}_poseB — add to tools/gemini-art/prompts.json`,
+    );
+  }
+
+  onProgress?.(`${kind}: fetching sprite…`);
+  // Find the existing sprite in our file list
+  const spriteFile = state.files.find(
+    (f) => f.name === `unit-${kind}.webp` || f.name === `unit-${kind}.png`,
+  );
+  if (!spriteFile) {
+    throw new Error(`no sprite found for unit-${kind} — generate it first in Sprites tab`);
+  }
+
+  // Fetch the sprite from the server and convert to base64
+  const spriteResp = await fetch(`/assets/sprites/${spriteFile.name}`);
+  if (!spriteResp.ok) throw new Error(`failed to fetch sprite: ${spriteResp.statusText}`);
+  const spriteBlob = await spriteResp.blob();
+
+  // Convert blob to base64 directly (skip data URL prefix)
+  const buffer = await spriteBlob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  const spriteBase64 = btoa(binary);
+
+  // Determine MIME type from file extension
+  const mimeType = spriteFile.name.endsWith('.webp') ? 'image/webp' : 'image/png';
+
+  onProgress?.(`${kind}: generating variation (frame 2)…`);
+  const imgsB = await generateImages({
+    prompt: composeWalkPoseVariationPrompt(poseB),
+    variants: 1,
+    referenceImages: [{ mimeType, data: spriteBase64 }],
+  });
+  const b = imgsB[0];
+  if (!b) throw new Error('Gemini returned no image for frame 2');
+
+  onProgress?.(`${kind}: compositing strip…`);
+  // Convert sprite to GeminiImage format for compositing
+  const frameA: typeof b = { mimeType, data: spriteBase64 };
+  const stripPng = await compositeWalkStrip([frameA, b]);
+
+  onProgress?.(`${kind}: compressing…`);
+  const compressed = await compressBase64Image(stripPng, 'image/png', {
+    format: state.animationCompression.format,
+    quality: state.animationCompression.quality,
+    maxDimension: state.animationCompression.maxDim,
+  });
+
+  onProgress?.(`${kind}: saving…`);
+  const res = await saveSprite({
+    key: `unit-${kind}-walk`,
+    data: compressed.base64,
+    format: state.animationCompression.format,
+    frames: 2,
+  });
+  return res;
+}
+
 // End-to-end: generate pose A first, then pose B with pose A attached
 // as a reference image so Gemini sees the exact character/palette/
 // camera and can change ONLY the legs (or wings) → composite side-by-
@@ -813,7 +885,7 @@ function renderAnimationsTab(): HTMLElement {
       genBtn.disabled = true;
       const originalText = genBtn.textContent;
       try {
-        await generateWalkCycle(kind, (note) => statusToast(note, 'info'));
+        await generateAnimationFromSprite(kind, (note) => statusToast(note, 'info'));
         await refreshAnimationFiles();
         const newAnimOk = hasAnimation(kind);
         status.innerHTML = `
