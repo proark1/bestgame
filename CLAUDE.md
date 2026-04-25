@@ -1,228 +1,345 @@
-# Claude Code — Project Guide
+# CLAUDE.md
 
-## Quick Start
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Branch:** `main` (production)
-**Dev branches:** Feature branches off `main` (prefixed `claude/`)
-**Tech stack:** Phaser 3 (game), Fastify (API), TypeScript, Vitest
+---
+
+## Quick Commands
+
+```bash
+# Install & verify determinism
+corepack enable
+pnpm install
+pnpm test  # Run determinism gate (should pass in <1s)
+
+# Development servers (run in separate terminals)
+pnpm dev:client   # Vite @ http://localhost:5173
+pnpm dev:api      # Fastify @ http://localhost:8787
+pnpm dev:arena    # Colyseus @ ws://localhost:2567
+
+# Testing & quality
+pnpm typecheck    # TypeScript check all workspaces
+pnpm test         # Determinism test suite
+pnpm --filter @hive/shared test:determinism  # Just shared sim tests
+pnpm lint         # Linter (if configured)
+
+# Build & analysis
+pnpm build                                # Build all workspaces
+pnpm --filter @hive/client bundle:report  # Analyze bundle size
+```
+
+### Database Setup
+
+**Required for persistence** (raids, base saves, matchmaking):
+
+```bash
+# Option 1: Docker Compose (local dev)
+docker-compose up postgres
+export DATABASE_URL=postgres://postgres:postgres@localhost:5432/hive
+pnpm dev:api
+
+# Option 2: Railway (production)
+# Add Postgres plugin, set DATABASE_URL environment variable, redeploy
+```
+
+Without a database, API boots but persistence routes return 503 "database not configured".
+
+---
+
+## Codebase Architecture
+
+### High-Level Overview
+
+**Hive Wars** is a Clash-of-Clans-style strategy game with two novel mechanics:
+
+1. **Dual-Layer Bases** — Every base has a surface grid (turrets, walls, resources) and an underground tunnel grid (spawners, traps, storage). Attackers choose which layer to invade; some units can dig between layers mid-raid.
+
+2. **Pheromone Paths** — Instead of point-and-forget troop deployment, players draw the route their swarm will follow. The sim routes units along the drawn path.
+
+### Workspace Structure
+
+```
+shared/              Deterministic game simulation (Q16.16 fixed-point math)
+  src/sim/           Turn-by-turn engine: combat, path-finding, AI rules
+  src/types/         Type definitions (Base, Building, Unit, SimState)
+  tests/             Determinism test suite + hash validation
+
+client/              Phaser 3 game client (Vite)
+  src/scenes/        BootScene, HomeScene, RaidScene, ArenaScene, LandingScene
+  src/ui/            Buttons, panels, modals, text styles, theming
+  src/codex/         Building/unit stats and descriptions
+  src/assets/        Sprite atlas registry, procedural placeholders
+  src/admin/         Sprite generation UI, settings
+  tests/             Unit tests (vitest)
+
+server/api/          Fastify REST API
+  src/routes/        /health, /player/*, /match, /raid/submit, /admin/*
+  src/db/            Postgres migrations, schema, sprite persistence
+  tests/             Route + simulation tests
+
+server/arena/        Colyseus multiplayer arena
+  src/rooms/         PicnicRoom (input-delay-lockstep netcode)
+
+tools/gemini-art/    Sprite generation via Gemini API
+  prompts.json       Stable Diffusion-style prompts for all sprites
+  admin/main.ts      Upload/edit UI
+```
+
+### Key Design Patterns
+
+#### 1. **Determinism & Sim Split**
+
+- **Shared sim** (`shared/src/sim/`) is 100% deterministic — fixed-point math, seeded RNG, no floating-point.
+- **Client** renders the sim's output; never modifies sim state directly.
+- **Server** re-runs the sim to validate raid submissions (replay + hash check).
+- **Tests** run both Node and jsdom with identical results (CI gate).
+
+When modifying sim logic, all changes must maintain determinism (no Date, Math.random, async, etc.).
+
+#### 2. **Phaser Scene Composition**
+
+Each scene manages its own lifecycle (create → update → render):
+
+| Scene | Role | Key Features |
+|---|---|---|
+| **BootScene** | Asset loading, placeholder generation | Loads sprites from disk or draws fallbacks |
+| **HomeScene** | Home base editing | Building placement/rotation, move mode, layer switching |
+| **RaidScene** | Attack another base | Deck UI, pheromone path drawing, unit deployment |
+| **ArenaScene** | AI battle sim (spectate) | Synchronized netcode, deterministic replay, deckless |
+| **LandingScene** | Marketing page | Landing page UI (outside Phaser game loop) |
+
+#### 3. **Dual-Layer Board**
+
+Every base has two grids (surface + underground). Buildings can span both or be layer-specific:
+
+- **Surface** (layer 0): Visible, contains turrets, walls, traps
+- **Underground** (layer 1): Tunnels, storage, spawners; accessed via TunnelJunction
+
+When raiding, players pick a layer → units spawn on that layer → can dig to switch layers mid-raid (if unit has that ability).
+
+Code reference: `Types.Layer = 0 | 1` in `shared/src/types/base.ts`.
+
+#### 4. **Building Rotation & Wall Variants**
+
+Walls (LeafWall, ThornHedge) have separate H/V sprite variants, not rotated sprites:
+
+- `KINDS_WITH_V_VARIANTS` constant in HomeScene (line ~35) lists which kinds have V variants
+- Even rotation values (0, 2) → horizontal sprite; odd (1, 3) → vertical sprite
+- `buildingTextureKey(kind, rotation)` returns the correct texture key
+
+This ensures wall weave bands stay perpendicular to the long axis (no sideways-text effect).
+
+#### 5. **Color Tokens & Theming**
+
+**Never hardcode colors.** Always use `COLOR` from `client/src/ui/theme.ts`:
+
+```typescript
+import { COLOR } from '../ui/theme.js';
+// Use: COLOR.bgPanel, COLOR.textPrimary, etc.
+// NOT: 0xffffff or '#fff'
+```
+
+All UI prompts in `tools/gemini-art/prompts.json` reference the **DESIGN.md** color palette to maintain consistency.
+
+#### 6. **Sprite Generation Pipeline**
+
+1. **Prompts** — Write/edit prompts in `tools/gemini-art/prompts.json` (units, buildings, UI)
+2. **Register sprite key** — Add to `client/src/assets/atlas.ts` BUILDING_SPRITE_KEYS or UNIT_SPRITE_KEYS
+3. **Fallback graphic** — Draw placeholder in `client/src/assets/placeholders.ts` (shown before real art lands)
+4. **Regenerate** — Via admin UI (sprite upload) or Gemini tool
+5. **BootScene loads** — Tries disk/DB sprites first, falls back to placeholders
+
+#### 7. **Input & Pointer Events**
+
+**RaidScene** has strict input validation:
+
+- **Spawn zone** — Only left edge (2 tiles) allows unit deployment start
+- **Pointerdown** → validate, highlight spawn zone
+- **Pointermove** → draw pheromone trail (distance threshold: 14px, max 32 points)
+- **Pointerup** → commit path, decrement unit count, auto-select next unit
+
+**ArenaScene** has no spawn zone (always allows deployment).
+
+#### 8. **Unit Count & Deck System**
+
+**RaidScene** has a full deck UI at the bottom:
+
+- Each card shows: unit type, remaining count (×10), role label
+- Depleted cards dim to 55% alpha + turn red
+- Selecting a card makes it "active" — next drag deploys that unit type
+- Count decrements by burst size (1–5 units)
+
+**ArenaScene** currently has NO deck system (hardcoded SoldierAnt ×5).
+
+#### 9. **Pheromone Path Routing**
+
+When a player draws a path (RaidScene):
+
+1. Path is an array of tile coords (sampled from screen-space drag)
+2. `SimInput` sent to server: `{ type: 'deployPath', unitKind, path, burstSize }`
+3. Sim spawns units at the first path tile
+4. Pathfinding logic routes each unit along the drawn path (see `shared/src/sim/systems/pathfinding.ts`)
+5. If a unit reaches the end of the path, it switches to attacking/exploring
 
 ---
 
 ## Critical Documents
 
-### **DESIGN.md** — UI/Brand Design System
+### DESIGN.md
+**Source of truth for all UI/brand decisions.** When creating or updating menu UI (buttons, panels, HUD, icons), check DESIGN.md first for:
+- Color palette (brand-earth, gold, coral, sky, neutrals)
+- Material direction (modern, shiny, polished — NOT dark wood)
+- Component guidelines
+- Typography scale
 
-**This is the source of truth for all menu UI work.**
-
-When creating or updating:
-- Buttons, panels, modals, HUD elements
-- Icon frames, badges, UI sprites
-- Any `menuUi` prompts in `tools/gemini-art/prompts.json`
-
-**Always check DESIGN.md first** to ensure:
-- Colors match the palette (brand-earth, brand-gold, coral, sky)
-- Materials are modern/shiny (glass, iridescent, polished — not carved wood)
-- Prompt wording reflects the new direction
-
-**Character sprites** (units, queen skins) can stay hand-crafted; the design system focuses on menu UI consistency.
-
----
-
-## Codebase Structure
-
-### Scenes (Game Logic)
-
-| Scene | Purpose | Key Files |
-|---|---|---|
-| `BootScene` | Asset loading, placeholder generation | `client/src/scenes/BootScene.ts` |
-| `HomeScene` | Home base building & management | `client/src/scenes/HomeScene.ts` |
-| `RaidScene` | Attacking another player's base | `client/src/scenes/RaidScene.ts` |
-| `ArenaScene` | AI battle simulator | `client/src/scenes/ArenaScene.ts` |
-| `LandingScene` | Marketing landing page | `client/src/scenes/LandingScene.ts` |
-
-### UI & Theming
-
-| Module | Responsibility |
-|---|---|
-| `client/src/ui/theme.ts` | Color palette, typography, spacing tokens |
-| `client/src/ui/button.ts` | Button factory + states (primary, secondary, ghost, danger) |
-| `client/src/ui/panel.ts` | Panel drawing (cards, shadows, bevels) |
-| `client/src/ui/buildingInfoModal.ts` | Building upgrade/info modal |
-| `client/src/assets/atlas.ts` | Sprite key registry |
-| `client/src/assets/placeholders.ts` | Procedural fallback graphics |
-
-### Asset Generation
-
-| Tool | Input | Output |
-|---|---|---|
-| `tools/gemini-art/` | `prompts.json` | Sprite PNGs via Gemini |
-| `admin/` (UI) | Upload/edit prompts | API stores in DB; hydrates disk |
-| `BootScene` | `atlas.ts` keys | Load from disk or draw placeholders |
-
-### Server & API
-
-| Endpoint | Purpose |
-|---|---|
-| `/api/player/...` | User base, buildings, upgrades |
-| `/api/match/...` | Raid matchmaking, results |
-| `/admin/api/...` | Sprite upload, prompt editing |
-
----
-
-## Key Patterns
-
-### Rotation & Wall Orientation
-
-**Walls (LeafWall, ThornHedge) have separate H/V sprites.**
-
-- `building-LeafWall` + `building-LeafWallV` (horizontal & vertical)
-- `building-ThornHedge` + `building-ThornHedgeV`
-- Renderer in `HomeScene.ts` uses `buildingTextureKey(kind, rotation)` to swap based on rotation parity
-- Don't rotate a single sprite; use the texture swap instead
-
-See `client/src/scenes/HomeScene.ts:39–48` for the helper function and constant.
-
-### Color Tokens
-
-Always use `COLOR` from `theme.ts`; never hardcode hex values in scenes.
-
-```typescript
-import { COLOR } from '../ui/theme.js';
-// Use COLOR.bgPanel, COLOR.textPrimary, etc.
-// NOT 0xffffff or '#fff'
-```
-
-### Text Rendering
-
-Use the style helper functions from `theme.ts`:
-
-```typescript
-displayTextStyle(size, color?, strokeThickness?)  // for titles
-bodyTextStyle(size?, color?)                        // for body text
-labelTextStyle(size?, color?)                       // for small labels
-```
-
-### Building Sprites
-
-Registered in `client/src/assets/atlas.ts`. Fallback placeholders drawn in `placeholders.ts`.
-
-When adding a new building type:
-1. Add the kind to the enum in `shared/src/types/base.ts`
-2. Register sprite key in `atlas.ts` BUILDING_SPRITE_KEYS
-3. Add a prompt in `tools/gemini-art/prompts.json` (buildings bucket)
-4. Add a placeholder in `placeholders.ts`
-
----
-
-## Testing & QA
-
-### Local Dev
-
-```bash
-npm run dev:client    # Game client (port 3000)
-npm run dev:api       # API server (port 5000)
-npm run dev:arena     # Arena service (port 5001)
-```
-
-### Running Tests
-
-```bash
-npm test              # All tests
-npm run typecheck     # Type checking
-npm run unit-tests    # Just unit tests
-```
-
-### Build & Production
-
-```bash
-npm run build         # Build all workspaces
-npm start             # Run production stack
-```
+**Always reference DESIGN.md when:**
+- Writing new UI sprite prompts in `tools/gemini-art/prompts.json`
+- Changing colors in `client/src/ui/theme.ts`
+- Creating new buttons, modals, or HUD elements
 
 ---
 
 ## Common Tasks
 
-### Adding a New Building
+### Adding a New Building Type
 
-1. Add to `BuildingKind` union in `shared/src/types/base.ts`
-2. Register sprite key + placeholder graphic
-3. Add codex entry in `client/src/codex/codexData.ts`
-4. Write prompt in `tools/gemini-art/prompts.json` (buildings bucket)
-5. Regenerate sprites in admin UI
+1. Add kind to `BuildingKind` union in `shared/src/types/base.ts`
+2. Register sprite key in `client/src/assets/atlas.ts` BUILDING_SPRITE_KEYS
+3. Add placeholder graphic in `client/src/assets/placeholders.ts`
+4. Add prompt in `tools/gemini-art/prompts.json` (buildings bucket)
+5. Add codex entry in `client/src/codex/codexData.ts` (stats, name, role, story)
+6. Update DESIGN.md if UI changes
 
-### Adding a New Unit
+### Adding a New Unit Type
 
-Same steps as buildings, but use the `units` bucket in prompts.json.
+Same steps as buildings, but use `units` bucket in prompts.json.
 
-**Unit prompts should include:**
+**Unit prompts must include:**
 - Clear role description (e.g., "FLYING SNIPER", "MELEE TANK")
 - Visible weapon/tool specific to that role
 - Faction colors and visual identity
 
-See `tools/gemini-art/prompts.json` (units bucket) for examples.
+### Updating a Scene
 
-### Updating UI Prompts
+1. Identify which scene (Boot, Home, Raid, Arena, Landing)
+2. Check `src/scenes/<SceneName>.ts` for lifecycle hooks (create, update, shutdown)
+3. Use `DEPTHS` from theme.ts for z-index (never magic numbers)
+4. Use `COLOR` from theme.ts for colors (never hardcoded hex)
+5. Test on device — especially mobile for input events
 
-1. **Reference DESIGN.md** — check the brand palette and direction
-2. **Edit the prompt** in `tools/gemini-art/prompts.json` (menuUi bucket)
-3. **Regenerate sprites** via the admin UI or run the Gemini tool
-4. **Test** in the game to ensure the new look fits the overall aesthetic
+### Testing Determinism
 
-### Changing Colors Globally
+The shared sim must remain 100% deterministic:
 
-**All color changes should:**
+```bash
+pnpm --filter @hive/shared test  # Runs determinism gate
+```
 
-1. Update `COLOR` object in `client/src/ui/theme.ts`
-2. Update any hardcoded theme colors in other files (search for hex values)
-3. Update theme colors in `client/index.html` CSS variables
-4. Update DESIGN.md to reflect the new palette
-5. Consider updating UI prompts if the aesthetic direction changed
+If you modify `shared/src/sim/*`, the test suite will re-run both Node and jsdom and compare hashes. If they diverge, the gate fails.
+
+**Never introduce in sim code:**
+- `Date.now()`, `Math.random()` — use `this.rng.next()` instead
+- Floating-point math — use Q16.16 fixed-point
+- Async/await, setTimeout, Promise — must be synchronous
+- Object key iteration order — use sorted array iteration
+- JSON.stringify order — JSON field order must be deterministic
 
 ---
 
-## Performance Notes
+## Debugging & Development Tips
 
-### Memory
+### Local Database Issues
 
-- Destroy unused sprites and graphics objects (Phaser best practice)
-- Use `.clear()` on Graphics objects instead of destroying + recreating
-- Keep scene loading fast — preload assets in BootScene
+If you see "database not configured" in the UI:
 
-### Bundle Size
+1. Verify DATABASE_URL is set: `echo $DATABASE_URL`
+2. Test connection: `psql $DATABASE_URL -c "SELECT 1"`
+3. Check API logs: `pnpm dev:api` should show `[db] migrations up to date`
+4. Hit `GET http://localhost:8787/health/db` from a browser for detailed status
 
-- Keep game client + landing page separate bundles
-- Lazy-load admin UI
-- Monitor with `npm run bundle:report`
+### Determinism Failures
 
-### Rendering
+If `pnpm test` fails on determinism:
 
-- Graphics objects (drawPanel, drawPill) are fast but use sparingly
-- Tween animations should use reasonable durations (not constantly animating)
-- Keep text rendering performant; batch updates when possible
+1. Run with more detail: `pnpm --filter @hive/shared test:determinism`
+2. Check if you modified `shared/src/sim/*` — that's the culprit
+3. Common causes:
+   - Using `Math.random()` instead of `this.rng.next()`
+   - Floating-point math (use Q16.16 fixed-point: `new Fixed(x)`)
+   - Object field iteration order (iterate arrays, not keys)
+4. Use Node REPL to test: `node` → `require('@hive/shared')` → test locally
+
+### Pheromone Path Debugging
+
+To visualize drawn paths in RaidScene:
+
+1. Check `drawDeck()` (line ~900) — draws deck cards
+2. Check `handlePointerMove()` (line ~694) — accumulates path points
+3. Path array stored in `currentPath` (line ~649)
+4. When deployed, path is sent as `SimInput` — check server logs for receipt
+
+### Bundle Size Check
+
+After making changes to client:
+
+```bash
+pnpm --filter @hive/client build
+pnpm --filter @hive/client bundle:report  # Opens interactive UI
+```
+
+Target: Keep client bundle < 500KB (current: ~350KB). Report shows per-module breakdown.
 
 ---
 
 ## Git Workflow
 
-1. Create a feature branch: `git checkout -b claude/<feature-name>`
-2. Make changes, commit locally
-3. Push to remote: `git push -u origin claude/<feature-name>`
-4. Create a draft PR on GitHub
-5. Wait for CI (typecheck, unit-tests, bundle-size, determinism, determinism-browser)
-6. When all checks pass, remove draft status and merge to main
+1. Create feature branch: `git checkout -b claude/<feature-name>`
+2. Commit with clear message (include design rationale for non-obvious changes)
+3. Push: `git push -u origin claude/<feature-name>`
+4. Create draft PR on GitHub
+5. Wait for CI:
+   - `determinism` (Node + jsdom)
+   - `typecheck` (TypeScript)
+   - `unit-tests` (vitest)
+   - `bundle-size` (size budget check)
+6. When all checks pass, remove draft status and merge
 
-**No force-pushing to main.** Destructive operations need explicit permission.
+**Never force-push to main.** Destructive operations need explicit permission.
 
 ---
 
-## Contacts & References
+## Architecture Notes for Future Work
 
-- **Design System:** See `DESIGN.md` (this directory)
-- **Type Definitions:** `shared/src/types/base.ts`, `units.ts`, `pheromone.ts`
-- **Game Simulation:** `shared/src/sim/` (deterministic ruleset)
-- **Admin Panel:** `client/src/admin/` (sprite generation, settings)
+### RaidScene Improvements (Top/Bottom Swipe Entry)
+
+Current state: Units spawn on left edge only; deck at bottom. Future: Allow top/bottom entry with smooth animation.
+
+**Known limitations:**
+- Spawn zone hardcoded to left edge (2 tiles) — needs expansion for top/bottom
+- No unit entry animation (instant appearance) — should slide from edge
+- Unit count only on deck cards — should be prominent on board
+- ArenaScene has no deck system (hardcoded SoldierAnt ×5)
+
+**For next implementer:** Refactor spawn zone validation + add top/bottom entry points. Extract deck UI to reusable component for ArenaScene.
+
+### AI Rules & Defender Spawning
+
+Buildings can have attached AI rules (see `shared/src/types/base.ts::BuildingAIRule`). These are evaluated each tick by `shared/src/sim/systems/ai_rules.ts`.
+
+Defender spawning (SpiderNest, LarvaNursery) uses these rules. If modifying spawner logic, ensure rules remain deterministic.
+
+---
+
+## Resources
+
+- **Game design docs:** See `README.md` for high-level vision
+- **Type definitions:** `shared/src/types/` — Base, Building, Unit, SimState, etc.
+- **Sim engine:** `shared/src/sim/` — Combat, pathfinding, AI rules
+- **UI theming:** `client/src/ui/theme.ts` — Colors, fonts, spacing, depths
+- **Sprite manifests:** `client/src/assets/atlas.ts` — All sprite keys
+- **Design system:** `DESIGN.md` — Brand colors, UI guidelines, component specs
 
 ---
 
 **Last updated:** April 2026
+**Status:** Foundation; update as new scenes/features ship
