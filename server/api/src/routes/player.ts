@@ -347,12 +347,18 @@ export function registerPlayer(app: FastifyInstance): void {
           incomePerSecond: tick,
           // Colony Rank (§6.7) — meta progression. Surfaced so the
           // client can render the rank badge + per-raid loot cap hint
-          // before the player commits to a target.
-          colony: {
-            totalInvested: safeBigintToNumber(player.total_invested ?? '0', 'total_invested', app.log),
-            rank: colonyRankFromInvested(player.total_invested ?? '0'),
-            lootCap: lootCapForRank(colonyRankFromInvested(player.total_invested ?? '0')),
-          },
+          // before the player commits to a target. Compute rank once
+          // and reuse — the formula is pure but the BigInt parse +
+          // log2 call is still wasted work on every /me roundtrip.
+          colony: (() => {
+            const totalInvestedRaw = player.total_invested ?? '0';
+            const rank = colonyRankFromInvested(totalInvestedRaw);
+            return {
+              totalInvested: safeBigintToNumber(totalInvestedRaw, 'total_invested', app.log),
+              rank,
+              lootCap: lootCapForRank(rank),
+            };
+          })(),
         },
         base: base.snapshot,
         offlineTrickle: {
