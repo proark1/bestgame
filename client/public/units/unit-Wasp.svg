@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <ellipse cx="64" cy="110" rx="32" ry="7" fill="rgba(0,0,0,0.22)"/>
+  <ellipse cx="64" cy="78" rx="36" ry="28" fill="#ffe799"/>
+  <ellipse cx="64" cy="70" rx="42" ry="32" fill="#f5c84c" stroke="#1a1208" stroke-width="4"/>
+  <g fill="rgba(255,255,255,0.6)" stroke="#1a1208" stroke-width="2">
+    <ellipse cx="38" cy="58" rx="18" ry="11"/>
+    <ellipse cx="90" cy="58" rx="18" ry="11"/>
+  </g>
+  <circle cx="64" cy="30" r="22" fill="#f5c84c" stroke="#1a1208" stroke-width="4"/>
+  <rect x="48" y="24" width="32" height="8" fill="#1a1208"/>
+  <g fill="#fff">
+    <circle cx="56" cy="28" r="3"/>
+    <circle cx="72" cy="28" r="3"/>
+  </g>
+  <polygon points="64,106 58,98 70,98" fill="#1a1208"/>
+  <g stroke="#1a1208" stroke-width="4" stroke-linecap="round">
+    <line x1="26" y1="60" x2="10" y2="70"/>
+    <line x1="102" y1="60" x2="118" y2="70"/>
+    <line x1="26" y1="74" x2="10" y2="84"/>
+    <line x1="102" y1="74" x2="118" y2="84"/>
+    <line x1="26" y1="88" x2="10" y2="98"/>
+    <line x1="102" y1="88" x2="118" y2="98"/>
+  </g>
+</svg>
