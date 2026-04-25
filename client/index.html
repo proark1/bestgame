@@ -264,10 +264,12 @@
       .hero-banner {
         display: block;
         width: 100%;
-        max-width: 560px;
+        max-width: 760px;
         margin: 0 auto 22px;
         border-radius: 18px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
       }
 
       /* ---------- "How Hive Wars works" feature grid ---------- */
@@ -637,15 +639,15 @@
     <section class="promo-section">
       <div class="promo-card">
         <div class="unit-cluster">
-          <img class="unit" data-sprite-key="unit-FireAnt" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit lead" data-sprite-key="unit-Scarab" src="/units/unit-Scarab.svg" alt="Scarab" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="Dragonfly" src="/units/unit-Dragonfly.svg" alt="Dragonfly" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit lead" data-sprite-key="FireAnt" src="/units/unit-FireAnt.svg" alt="Fire Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="Termite" src="/units/unit-Termite.svg" alt="Termite" width="128" height="128" loading="lazy" decoding="async" />
         </div>
-        <h2 class="display display-md promo-title">Season Pass<br />Stamp Card</h2>
+        <h2 class="display display-md promo-title">Raid Daily<br />Climb Rankings</h2>
         <p class="promo-copy">
-          You'll earn a free Royal Cache each time you complete the Season Pass Stamp Card!
+          Attack rivals, loot resources, and climb the seasonal leaderboard. Every raid shapes your strategy.
         </p>
-        <a class="ghost-pill" href="/play">Learn more</a>
+        <a class="ghost-pill" href="/play">Start Playing</a>
       </div>
     </section>
 
@@ -683,23 +685,23 @@
         <p class="colony-intro">From the workers who haul sugar home to the towers that spit acid at raiders — this is the cast you'll command.</p>
         <h3 class="colony-subtitle">Your army</h3>
         <div class="unit-cluster">
-          <img class="unit" data-sprite-key="unit-WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit" data-sprite-key="unit-DirtDigger" src="/units/unit-DirtDigger.svg" alt="Dirt Digger" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit lead" data-sprite-key="unit-SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit" data-sprite-key="unit-ShieldBeetle" src="/units/unit-ShieldBeetle.svg" alt="Shield Beetle" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit" data-sprite-key="unit-Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" loading="lazy" decoding="async" />
-          <img class="unit" data-sprite-key="unit-Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="WorkerAnt" src="/units/unit-WorkerAnt.svg" alt="Worker Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="DirtDigger" src="/units/unit-DirtDigger.svg" alt="Dirt Digger" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit lead" data-sprite-key="SoldierAnt" src="/units/unit-SoldierAnt.svg" alt="Soldier Ant" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="ShieldBeetle" src="/units/unit-ShieldBeetle.svg" alt="Shield Beetle" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="Mantis" src="/units/unit-Mantis.svg" alt="Mantis" width="128" height="128" loading="lazy" decoding="async" />
+          <img class="unit" data-sprite-key="Wasp" src="/units/unit-Wasp.svg" alt="Wasp" width="128" height="128" loading="lazy" decoding="async" />
         </div>
         <h3 class="colony-subtitle">Your buildings</h3>
         <div class="building-cluster">
-          <img class="building" data-sprite-key="building-DewCollector" src="/units/building-DewCollector.svg" alt="Dew Collector" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-PebbleBunker" src="/units/building-PebbleBunker.svg" alt="Pebble Bunker" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-LarvaNursery" src="/units/building-LarvaNursery.svg" alt="Larva Nursery" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" loading="lazy" decoding="async" />
-          <img class="building" data-sprite-key="building-TunnelJunction" src="/units/building-TunnelJunction.svg" alt="Tunnel Junction" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="DewCollector" src="/units/building-DewCollector.svg" alt="Dew Collector" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="QueenChamber" src="/units/building-QueenChamber.svg" alt="Queen Chamber" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="MushroomTurret" src="/units/building-MushroomTurret.svg" alt="Mushroom Turret" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="PebbleBunker" src="/units/building-PebbleBunker.svg" alt="Pebble Bunker" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="LarvaNursery" src="/units/building-LarvaNursery.svg" alt="Larva Nursery" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="SugarVault" src="/units/building-SugarVault.svg" alt="Sugar Vault" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="AcidSpitter" src="/units/building-AcidSpitter.svg" alt="Acid Spitter" width="192" height="192" loading="lazy" decoding="async" />
+          <img class="building" data-sprite-key="TunnelJunction" src="/units/building-TunnelJunction.svg" alt="Tunnel Junction" width="192" height="192" loading="lazy" decoding="async" />
         </div>
       </div>
     </section>
@@ -710,7 +712,7 @@
         Far below the surface, the great Hive grows. You are the Queen — build your colony tile by tile, train your warriors, and march across the soil to raid rival hives. Every brick of dirt you place is a story. Every raid is yours to command.
       </p>
       <div class="discover-art">
-        <img src="/og/cover.png" alt="Hive Wars store preview" width="1200" height="630" loading="lazy" decoding="async" />
+        <img data-sprite-key="ui-discover-banner" src="/og/cover.png" alt="Hive Wars store preview" width="1200" height="630" loading="lazy" decoding="async" />
       </div>
       <h3 class="display display-md discover-sub">Earn Points<br />and Bonuses</h3>
       <p class="discover-copy">
