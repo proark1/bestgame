@@ -468,6 +468,9 @@ export class SpriteCard {
   }
 
   private renderCompressionPanel(): void {
+    this.compressionToggle?.remove();
+    this.compressionPanel?.remove();
+
     const panel = el('div', 'compression-panel');
     panel.hidden = true;
 
@@ -516,9 +519,9 @@ export class SpriteCard {
     qInput.min = '0.4';
     qInput.max = '1';
     qInput.step = '0.05';
-    qInput.value = this.cardCompression?.quality.toString() ?? 'global';
+    qInput.value = (this.cardCompression?.quality ?? this.opts.getCompression().quality).toString();
     const qVal = el('span');
-    qVal.textContent = this.cardCompression ? qInput.value : 'global';
+    qVal.textContent = qInput.value;
     qInput.addEventListener('input', () => {
       if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
       this.cardCompression.quality = Number(qInput.value);
@@ -539,8 +542,10 @@ export class SpriteCard {
     dInput.placeholder = 'use global';
     dInput.addEventListener('change', () => {
       if (!dInput.value) {
-        // Clear override, use global
-        this.cardCompression = null;
+        // Clear dimension override, use global
+        if (this.cardCompression) {
+          this.cardCompression.maxDim = this.opts.getCompression().maxDim;
+        }
         dInput.value = '';
       } else {
         if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
