@@ -58,7 +58,52 @@ interface SavedTactic {
 
 const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
 const TACTICS_LIMIT = 8; // tight cap — keeps the panel readable
+// Per-tactic point cap — matches the live-draw cap in pointermove. A
+// tactic the player draws can't exceed it; any larger stored polyline
+// is treated as malformed (corrupted localStorage) and dropped.
+const TACTIC_POINTS_LIMIT = 32;
+
+// Modifier bar layout dimensions — used by drawModifierBar() and
+// layout() so both stay in sync. Changing the button width / gap in
+// one place ripples through to the other automatically.
 const MODIFIER_BAR_H = 44;
+const MOD_BTN_W = 96;
+const MOD_BTN_H = 32;
+const MOD_BTN_GAP = 6;
+const MOD_ACTION_BTN_W = 110;
+const MOD_ACTION_GAP = 8;
+const MODIFIER_KINDS: Array<Types.PathModifierKind | 'none'> = ['none', 'split', 'ambush', 'dig'];
+
+function isValidPoint(v: unknown): v is { x: number; y: number } {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { x: unknown }).x === 'number' &&
+    typeof (v as { y: unknown }).y === 'number' &&
+    Number.isFinite((v as { x: number }).x) &&
+    Number.isFinite((v as { y: number }).y)
+  );
+}
+
+function isValidTactic(t: unknown): t is SavedTactic {
+  if (typeof t !== 'object' || t === null) return false;
+  const r = t as Partial<SavedTactic>;
+  if (typeof r.name !== 'string') return false;
+  if (typeof r.unitKind !== 'string') return false;
+  if (!Array.isArray(r.pointsTile)) return false;
+  if (r.pointsTile.length < 2) return false;
+  if (r.pointsTile.length > TACTIC_POINTS_LIMIT) return false;
+  if (!r.pointsTile.every(isValidPoint)) return false;
+  if (r.spawnEdge !== 'left' && r.spawnEdge !== 'top' && r.spawnEdge !== 'bottom') return false;
+  if (r.modifier !== undefined) {
+    const m = r.modifier as Partial<Types.PathModifier>;
+    if (typeof m !== 'object' || m === null) return false;
+    if (m.kind !== 'split' && m.kind !== 'ambush' && m.kind !== 'dig') return false;
+    if (typeof m.pointIndex !== 'number') return false;
+    if (m.pointIndex < 0 || m.pointIndex >= r.pointsTile.length) return false;
+  }
+  return true;
+}
 
 function loadSavedTactics(): SavedTactic[] {
   try {
@@ -66,16 +111,11 @@ function loadSavedTactics(): SavedTactic[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    // Light schema check — anything malformed is dropped silently
-    // rather than crashing the scene.
-    return parsed.filter(
-      (t): t is SavedTactic =>
-        typeof t === 'object' &&
-        t !== null &&
-        typeof (t as SavedTactic).name === 'string' &&
-        typeof (t as SavedTactic).unitKind === 'string' &&
-        Array.isArray((t as SavedTactic).pointsTile),
-    );
+    // Strict schema check — anything malformed is dropped silently so
+    // a corrupted localStorage entry can't crash the scene during
+    // deployTactic. Cap to TACTICS_LIMIT to bound panel size.
+    const valid = parsed.filter(isValidTactic);
+    return valid.slice(0, TACTICS_LIMIT);
   } catch {
     return [];
   }
@@ -281,6 +321,7 @@ export class RaidScene extends Phaser.Scene {
   // path's midpoint waypoint. 'none' = vintage straight-shot path.
   private currentModifierMode: Types.PathModifierKind | 'none' = 'none';
   private modifierBar!: Phaser.GameObjects.Container;
+  private modifierBarBg!: Phaser.GameObjects.Graphics;
   private modifierButtons: Array<{
     kind: Types.PathModifierKind | 'none';
     container: Phaser.GameObjects.Container;
@@ -294,6 +335,8 @@ export class RaidScene extends Phaser.Scene {
   private tacticsPanel: Phaser.GameObjects.Container | null = null;
   private lastDraft: SavedTactic | null = null;
   private saveTacticBtn!: Phaser.GameObjects.Container;
+  private saveTacticBg!: Phaser.GameObjects.Graphics;
+  private saveTacticLabel!: Phaser.GameObjects.Text;
 
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
@@ -983,75 +1026,66 @@ export class RaidScene extends Phaser.Scene {
 
   private drawModifierBar(): void {
     this.modifierBar = this.add.container(0, 0).setDepth(32);
-    const bg = this.add.graphics();
-    this.modifierBar.add(bg);
-    // Background panel — re-painted in layout() at the right width.
-    (this.modifierBar as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics })._bg = bg;
+    this.modifierBarBg = this.add.graphics();
+    this.modifierBar.add(this.modifierBarBg);
 
-    const order: Array<Types.PathModifierKind | 'none'> = ['none', 'split', 'ambush', 'dig'];
-    const buttonW = 96;
-    const buttonH = 32;
-    const gap = 6;
     let cursorX = 0;
-    for (const kind of order) {
+    for (const kind of MODIFIER_KINDS) {
       const containerBtn = this.add.container(cursorX, 0);
       const btnBg = this.add.graphics();
       const label = this.add
-        .text(buttonW / 2, buttonH / 2, `${MODIFIER_GLYPH[kind]}  ${MODIFIER_LABEL[kind]}`, {
+        .text(MOD_BTN_W / 2, MOD_BTN_H / 2, `${MODIFIER_GLYPH[kind]}  ${MODIFIER_LABEL[kind]}`, {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '13px',
           color: '#e6f5d2',
         })
         .setOrigin(0.5);
       containerBtn.add([btnBg, label]);
-      containerBtn.setSize(buttonW, buttonH);
+      containerBtn.setSize(MOD_BTN_W, MOD_BTN_H);
       containerBtn.setInteractive(
-        new Phaser.Geom.Rectangle(0, 0, buttonW, buttonH),
+        new Phaser.Geom.Rectangle(0, 0, MOD_BTN_W, MOD_BTN_H),
         Phaser.Geom.Rectangle.Contains,
       );
       containerBtn.on('pointerdown', () => this.setModifierMode(kind));
       this.modifierBar.add(containerBtn);
       this.modifierButtons.push({ kind, container: containerBtn, bg: btnBg, label });
-      cursorX += buttonW + gap;
+      cursorX += MOD_BTN_W + MOD_BTN_GAP;
     }
 
     // Save & Tactics action buttons share the bar's right side.
-    const actionW = 110;
-    const saveContainer = this.add.container(cursorX + 8, 0);
-    const saveBg = this.add.graphics();
-    const saveLabel = this.add
-      .text(actionW / 2, buttonH / 2, '★ Save', {
+    const saveContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    this.saveTacticBg = this.add.graphics();
+    this.saveTacticLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '★ Save', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
         color: '#ffd98a',
       })
       .setOrigin(0.5);
-    saveContainer.add([saveBg, saveLabel]);
-    saveContainer.setSize(actionW, buttonH);
+    saveContainer.add([this.saveTacticBg, this.saveTacticLabel]);
+    saveContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
     saveContainer.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, actionW, buttonH),
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
       Phaser.Geom.Rectangle.Contains,
     );
     saveContainer.on('pointerdown', () => this.handleSaveTactic());
-    (saveContainer as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics; _label?: Phaser.GameObjects.Text })._bg = saveBg;
-    (saveContainer as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics; _label?: Phaser.GameObjects.Text })._label = saveLabel;
     this.modifierBar.add(saveContainer);
     this.saveTacticBtn = saveContainer;
-    cursorX += actionW + 8;
+    cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
 
-    const tacContainer = this.add.container(cursorX + 8, 0);
+    const tacContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
     const tacBg = this.add.graphics();
     const tacLabel = this.add
-      .text(actionW / 2, buttonH / 2, '☰ Tactics', {
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '☰ Tactics', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
         color: '#c3e8b0',
       })
       .setOrigin(0.5);
     tacContainer.add([tacBg, tacLabel]);
-    tacContainer.setSize(actionW, buttonH);
+    tacContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
     tacContainer.setInteractive(
-      new Phaser.Geom.Rectangle(0, 0, actionW, buttonH),
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
       Phaser.Geom.Rectangle.Contains,
     );
     tacContainer.on('pointerdown', () => this.toggleTacticsPanel());
@@ -1066,8 +1100,8 @@ export class RaidScene extends Phaser.Scene {
     bg.clear();
     bg.fillStyle(pressed ? 0x2a4530 : 0x1a2b1a, 1);
     bg.lineStyle(2, COLOR.brassDeep, 1);
-    bg.fillRoundedRect(0, 0, 110, 32, 8);
-    bg.strokeRoundedRect(0, 0, 110, 32, 8);
+    bg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    bg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
   }
 
   private refreshModifierBar(): void {
@@ -1076,8 +1110,8 @@ export class RaidScene extends Phaser.Scene {
       b.bg.clear();
       b.bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
       b.bg.lineStyle(2, selected ? 0xffd98a : COLOR.brassDeep, 1);
-      b.bg.fillRoundedRect(0, 0, 96, 32, 8);
-      b.bg.strokeRoundedRect(0, 0, 96, 32, 8);
+      b.bg.fillRoundedRect(0, 0, MOD_BTN_W, MOD_BTN_H, 8);
+      b.bg.strokeRoundedRect(0, 0, MOD_BTN_W, MOD_BTN_H, 8);
       b.label.setColor(selected ? '#fff' : '#e6f5d2');
     }
   }
@@ -1126,19 +1160,13 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private refreshSaveTacticEnabled(): void {
-    const btn = this.saveTacticBtn as Phaser.GameObjects.Container & {
-      _bg?: Phaser.GameObjects.Graphics;
-      _label?: Phaser.GameObjects.Text;
-    };
     const enabled = !!this.lastDraft;
-    if (btn._bg) {
-      btn._bg.clear();
-      btn._bg.fillStyle(enabled ? 0x3a3520 : 0x1a1a16, 1);
-      btn._bg.lineStyle(2, enabled ? 0xffd98a : 0x554d2c, 1);
-      btn._bg.fillRoundedRect(0, 0, 110, 32, 8);
-      btn._bg.strokeRoundedRect(0, 0, 110, 32, 8);
-    }
-    if (btn._label) btn._label.setAlpha(enabled ? 1 : 0.45);
+    this.saveTacticBg.clear();
+    this.saveTacticBg.fillStyle(enabled ? 0x3a3520 : 0x1a1a16, 1);
+    this.saveTacticBg.lineStyle(2, enabled ? 0xffd98a : 0x554d2c, 1);
+    this.saveTacticBg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.saveTacticBg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.saveTacticLabel.setAlpha(enabled ? 1 : 0.45);
   }
 
   private handleSaveTactic(): void {
@@ -2397,23 +2425,20 @@ export class RaidScene extends Phaser.Scene {
     const yOffset = HUD_H + MODIFIER_BAR_H + Math.max(8, (availH - scaledH) / 2);
     this.boardContainer.setPosition(xOffset, yOffset);
 
-    // Modifier bar — positioned between HUD and the board. Re-paint
-    // its background each layout in case scale.width changed.
+    // Modifier bar — positioned between HUD and the board. Width is
+    // computed from the same MOD_* constants drawModifierBar uses, so
+    // any future change to button sizes ripples through both places.
     if (this.modifierBar) {
-      // Bar contents: 4 modifier buttons (96 wide), 2 action buttons (110 wide)
-      // with gaps. Re-center the whole strip on every layout pass so it
-      // tracks viewport resizes.
-      const groupW = 4 * 96 + 3 * 6 + 8 + 110 + 8 + 110;
+      const modCount = MODIFIER_KINDS.length;
+      const groupW =
+        modCount * MOD_BTN_W +
+        (modCount - 1) * MOD_BTN_GAP +
+        2 * (MOD_ACTION_GAP + MOD_ACTION_BTN_W);
       const startX = Math.max(12, (this.scale.width - groupW) / 2);
       this.modifierBar.setPosition(startX, HUD_H + 6);
-      const bg = (this.modifierBar as Phaser.GameObjects.Container & {
-        _bg?: Phaser.GameObjects.Graphics;
-      })._bg;
-      if (bg) {
-        bg.clear();
-        bg.fillStyle(0x0a120b, 0.6);
-        bg.fillRoundedRect(-12, -4, groupW + 24, 40, 10);
-      }
+      this.modifierBarBg.clear();
+      this.modifierBarBg.fillStyle(0x0a120b, 0.6);
+      this.modifierBarBg.fillRoundedRect(-12, -4, groupW + 24, 40, 10);
     }
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
