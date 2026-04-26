@@ -175,3 +175,88 @@ export function sfxError(): void {
 export function sfxNotify(): void {
   tone({ freq: 1080, duration: 0.08, type: 'sine', gain: 0.2, release: 0.1 });
 }
+
+// ---------- Raid-specific SFX vocabulary ----------
+// The raid scene fires dozens of moments per second; each cue here is
+// shaped for low-latency triggers and small spectral footprint so a
+// burst of three units plus a turret salvo doesn't blow into mush.
+// Tones are short and gain-conservative.
+
+export function sfxDeploy(): void {
+  // "Whoof" — a quick descending chirp that reads as "swarm released".
+  // Slightly louder than sfxClick so the player feels the path commit
+  // distinctly from the modifier-toggle ticks.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 540, sweepTo: 280, duration: 0.12, type: 'triangle', gain: 0.32, attack: 0.005, release: 0.08, startTime: now });
+  tone({ freq: 720, duration: 0.05, type: 'sine', gain: 0.16, release: 0.05, startTime: now + 0.01 });
+}
+
+export function sfxDig(): void {
+  // Subterranean thump + low rumble — the magic moment when a unit
+  // flips layers via the dig modifier.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 110, sweepTo: 70, duration: 0.18, type: 'sawtooth', gain: 0.32, release: 0.12, startTime: now });
+  tone({ freq: 240, sweepTo: 120, duration: 0.16, type: 'triangle', gain: 0.18, release: 0.1, startTime: now });
+}
+
+export function sfxAmbush(): void {
+  // Held tension chord — pairs with the ambush pause animation.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 320, duration: 0.18, type: 'sine', gain: 0.18, attack: 0.04, release: 0.18, startTime: now });
+  tone({ freq: 480, duration: 0.18, type: 'sine', gain: 0.12, attack: 0.04, release: 0.18, startTime: now });
+}
+
+export function sfxSplit(): void {
+  // Two-note fork — left and right channels would land it but mono
+  // is fine for v1.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 760, duration: 0.05, type: 'triangle', gain: 0.2, release: 0.05, startTime: now });
+  tone({ freq: 580, duration: 0.05, type: 'triangle', gain: 0.2, release: 0.05, startTime: now + 0.04 });
+}
+
+export function sfxModifierTick(): void {
+  // Tiny tick when toggling modifier mode — quieter than sfxClick so
+  // it doesn't compete with the haptic buzz on the same moment.
+  tone({ freq: 920, duration: 0.025, type: 'square', gain: 0.1, release: 0.03 });
+}
+
+export function sfxBuildingHit(): void {
+  // Mid-low thud — fires every time a unit lands a hit on a building.
+  // Conservative gain so the chorus of overlapping hits stays musical.
+  tone({ freq: 180, sweepTo: 120, duration: 0.04, type: 'square', gain: 0.07, release: 0.04 });
+}
+
+export function sfxBuildingDestroyed(): void {
+  // Heavy crunch — single building falling.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  tone({ freq: 200, sweepTo: 80, duration: 0.16, type: 'sawtooth', gain: 0.3, release: 0.14, startTime: now });
+  tone({ freq: 90, duration: 0.08, type: 'sine', gain: 0.18, release: 0.1, startTime: now + 0.05 });
+}
+
+export function sfxQueenDestroyed(): void {
+  // Hero moment — three-note descending fanfare flipping the
+  // sfxVictory direction. Loud enough to land but not so loud it
+  // clips if the camera flash sound from raid.ts also fires.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  [600, 480, 320].forEach((f, i) => {
+    tone({ freq: f, duration: 0.18, type: 'sawtooth', gain: 0.34, release: 0.18, startTime: now + i * 0.1 });
+  });
+}
+
+export function sfxUnitDeath(): void {
+  // Tiny puff — every unit kill. Very quiet so a swarm wipeout
+  // doesn't melt the speaker.
+  tone({ freq: 360, sweepTo: 160, duration: 0.05, type: 'sine', gain: 0.08, release: 0.05 });
+}

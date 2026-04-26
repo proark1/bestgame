@@ -4,7 +4,12 @@ import { bakeTrailDot } from '../assets/placeholders.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
-import { sfxVictory, sfxDefeat } from '../ui/audio.js';
+import {
+  sfxVictory, sfxDefeat,
+  sfxDeploy, sfxDig, sfxAmbush, sfxSplit,
+  sfxModifierTick, sfxBuildingHit, sfxBuildingDestroyed,
+  sfxQueenDestroyed, sfxUnitDeath,
+} from '../ui/audio.js';
 import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
@@ -329,6 +334,10 @@ export class RaidScene extends Phaser.Scene {
   // Drawn in drawHud(), updated in renderFrame().
   private layerBadgeSurface!: Phaser.GameObjects.Text;
   private layerBadgeUnderground!: Phaser.GameObjects.Text;
+  // Per-render-frame SFX throttles. Reset at the top of renderFrame
+  // so a swarm of overlapping events doesn't spam the WebAudio mixer.
+  private buildingHitsThisFrame = 0;
+  private unitDeathsThisFrame = 0;
   // Populated from GET /api/settings/animation at scene create.
   // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
   // (this Record has it set to true) AND (the walk texture loaded).
@@ -1086,6 +1095,15 @@ export class RaidScene extends Phaser.Scene {
       const start = this.drawingPoints[0];
       if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
       haptic(modifier ? [10, 6, 14] : 12);
+      sfxDeploy();
+      // Modifier-specific cue scheduled slightly after the deploy
+      // whoof so the two cues read as a phrase, not a chord.
+      if (modifier) {
+        const delay = 90;
+        if (modifier.kind === 'dig') this.time.delayedCall(delay, sfxDig);
+        else if (modifier.kind === 'ambush') this.time.delayedCall(delay, sfxAmbush);
+        else if (modifier.kind === 'split') this.time.delayedCall(delay, sfxSplit);
+      }
       this.advanceCoachmark('spawn');
 
       // fade the committed trail
@@ -1320,6 +1338,7 @@ export class RaidScene extends Phaser.Scene {
         : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
     );
     haptic(8);
+    sfxModifierTick();
     // Step 3 of the drill is "try Dig" — toggling any modifier kind
     // counts (the goal is teaching the bar exists; the player can
     // experiment with split/ambush from here on their own).
@@ -1920,6 +1939,11 @@ export class RaidScene extends Phaser.Scene {
 
     // Clear per-tick deployment counters to prevent memory leaks in long sessions.
     this.deploymentUnitCounts.clear();
+    // Reset SFX throttles. The hit thud is allowed to fire at most
+    // twice per frame across the whole board so we never melt the
+    // mix when a 5-unit burst spreads across multiple targets.
+    this.buildingHitsThisFrame = 0;
+    this.unitDeathsThisFrame = 0;
 
     // Pre-pass: tally where the attacker actually is right now. Used
     // both for the HUD layer badges (set later in the units pass) and
@@ -1956,6 +1980,7 @@ export class RaidScene extends Phaser.Scene {
             const centerY = b.anchorY * TILE + (b.h * TILE) / 2;
             this.spawnDebrisBurst(centerX, centerY, b.kind === 'QueenChamber' ? 24 : 10);
             if (b.kind === 'QueenChamber') {
+              sfxQueenDestroyed();
               this.cameras.main.shake(340, 0.012);
               this.cameras.main.flash(180, 255, 230, 160);
               // Brief zoom punch: scale up the board container then
@@ -1971,6 +1996,7 @@ export class RaidScene extends Phaser.Scene {
                 ease: 'Sine.easeOut',
               });
             } else {
+              sfxBuildingDestroyed();
               this.cameras.main.shake(120, 0.004);
             }
             // Floating loot text for buildings that drop resources on
@@ -1998,6 +2024,13 @@ export class RaidScene extends Phaser.Scene {
       if (b.hp < prevHp) {
         spr.setTint(0xffe799);
         this.time.delayedCall(70, () => spr.clearTint());
+        // Throttle the hit thuds with a per-frame budget so a 5-unit
+        // burst against one building doesn't fire five overlapping
+        // SFX in the same render tick.
+        if (this.buildingHitsThisFrame < 2) {
+          sfxBuildingHit();
+          this.buildingHitsThisFrame++;
+        }
       } else {
         // Layer-active reveal: a building on the attacker's CURRENT
         // layer reads as "in play" — full alpha, no tint. A building
@@ -2141,6 +2174,10 @@ export class RaidScene extends Phaser.Scene {
       if (!alive.has(id)) {
         // Unit death burst: small puff at last-known sprite position.
         this.spawnDebrisBurst(spr.x, spr.y, 6);
+        if (this.unitDeathsThisFrame < 3) {
+          sfxUnitDeath();
+          this.unitDeathsThisFrame++;
+        }
         spr.destroy();
         this.unitSprites.delete(id);
         this.unitLastHp.delete(id);
