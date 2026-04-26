@@ -90,6 +90,18 @@ export function registerHiveWar(app: FastifyInstance): void {
     );
     const myClanId = my.rows[0]?.clan_id ?? null;
     const myEntry = enrollments.rows.find((r) => r.clan_id === myClanId) ?? null;
+    // Daily-attack-cap state for the viewer. Exposed alongside the
+    // season so the UI can render "X attacks remaining today" without
+    // a second round-trip.
+    const used = await pool.query<{ used: string }>(
+      `SELECT COUNT(*)::text AS used
+         FROM hive_war_attacks
+        WHERE season_id = $1
+          AND attacker_player_id = $2::uuid
+          AND created_at > NOW() - INTERVAL '24 hours'`,
+      [s.id, playerId],
+    );
+    const attacksUsedToday = Number(used.rows[0]?.used ?? 0);
     return {
       season: {
         id: Number(s.id),
@@ -100,6 +112,8 @@ export function registerHiveWar(app: FastifyInstance): void {
         boardH: s.board_h,
         state: s.state as 'open' | 'active' | 'finished',
       },
+      attacksUsedToday,
+      attackCapPerDay: ATTACKS_PER_DAY,
       enrollments: enrollments.rows.map((r) => ({
         clanId: r.clan_id,
         clanName: r.clan_name ?? 'Unknown Clan',
@@ -238,4 +252,206 @@ export function registerHiveWar(app: FastifyInstance): void {
       }
     },
   );
+
+  // POST /api/hivewar/season/:id/attack — submit a hive-war attack.
+  // The body identifies the defender clan + the stars earned (0..3).
+  // v1 is self-reported: a future PR will make /raid/submit
+  // hive-war-aware and link the raid_id automatically. Validations:
+  // - Both clans enrolled in this season.
+  // - Attacker is a member of an enrolled clan.
+  // - Attacker can't target their own clan.
+  // - Daily cap: ATTACKS_PER_DAY per attacker per season.
+  // - Season state must be 'active'.
+  app.post<{ Params: { id: string }; Body: { defenderClanId?: string; stars?: number } }>(
+    '/hivewar/season/:id/attack',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const seasonId = Number(req.params.id);
+      if (!Number.isFinite(seasonId) || seasonId <= 0) {
+        reply.code(400);
+        return { error: 'invalid season id' };
+      }
+      const stars = Number(req.body?.stars);
+      if (!Number.isInteger(stars) || stars < 0 || stars > 3) {
+        reply.code(400);
+        return { error: 'stars must be an integer 0..3' };
+      }
+      const defenderClanId = req.body?.defenderClanId;
+      if (typeof defenderClanId !== 'string' || defenderClanId.length === 0) {
+        reply.code(400);
+        return { error: 'defenderClanId required' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        // Lock the season so a concurrent state-flip can't change
+        // 'active' under us mid-attack.
+        const seasonRes = await client.query<{ state: string }>(
+          'SELECT state FROM hive_war_seasons WHERE id = $1 FOR UPDATE',
+          [seasonId],
+        );
+        if (seasonRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'season not found' };
+        }
+        if (seasonRes.rows[0]!.state !== 'active') {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: 'season is not active' };
+        }
+        const me = await client.query<{ clan_id: string }>(
+          'SELECT clan_id FROM clan_members WHERE player_id = $1::uuid',
+          [playerId],
+        );
+        if (me.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(403);
+          return { error: 'not in a clan' };
+        }
+        const attackerClanId = me.rows[0]!.clan_id;
+        if (attackerClanId === defenderClanId) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'cannot attack your own clan' };
+        }
+        // Both clans must be enrolled in this season; the join
+        // returns 0 rows if either is missing.
+        const enrolled = await client.query<{
+          attacker_id: string;
+          defender_id: string;
+        }>(
+          `SELECT a.id AS attacker_id, d.id AS defender_id
+             FROM hive_war_enrollments a
+             JOIN hive_war_enrollments d
+               ON d.season_id = a.season_id
+              AND d.clan_id = $3::uuid
+            WHERE a.season_id = $1 AND a.clan_id = $2::uuid
+            FOR UPDATE`,
+          [seasonId, attackerClanId, defenderClanId],
+        );
+        if (enrolled.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: 'both clans must be enrolled in this season' };
+        }
+        // Daily cap. ATTACKS_PER_DAY per attacker per season per
+        // UTC day. Counted via the ledger so a future raid-linked
+        // attack stays consistent.
+        const cap = await client.query<{ used: string }>(
+          `SELECT COUNT(*)::text AS used
+             FROM hive_war_attacks
+            WHERE season_id = $1
+              AND attacker_player_id = $2::uuid
+              AND created_at > NOW() - INTERVAL '24 hours'`,
+          [seasonId, playerId],
+        );
+        const used = Number(cap.rows[0]!.used);
+        if (used >= ATTACKS_PER_DAY) {
+          await client.query('ROLLBACK');
+          reply.code(429);
+          return {
+            error: `daily attack cap reached (${ATTACKS_PER_DAY}/24h)`,
+            attacksUsed: used,
+            cap: ATTACKS_PER_DAY,
+          };
+        }
+        // Score delta — each star is 1 point. 0-star attack still
+        // costs the attacker their daily slot but earns no score.
+        const scoreDelta = stars;
+        await client.query(
+          `INSERT INTO hive_war_attacks
+             (season_id, attacker_clan_id, defender_clan_id,
+              attacker_player_id, stars, score_delta)
+           VALUES ($1, $2::uuid, $3::uuid, $4::uuid, $5, $6)`,
+          [seasonId, attackerClanId, defenderClanId, playerId, stars, scoreDelta],
+        );
+        await client.query(
+          `UPDATE hive_war_enrollments
+              SET score = score + $3,
+                  attacks_made = attacks_made + 1
+            WHERE season_id = $1 AND clan_id = $2::uuid`,
+          [seasonId, attackerClanId, scoreDelta],
+        );
+        await client.query(
+          `UPDATE hive_war_enrollments
+              SET attacks_received = attacks_received + 1
+            WHERE season_id = $1 AND clan_id = $2::uuid`,
+          [seasonId, defenderClanId],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          stars,
+          scoreDelta,
+          attacksUsed: used + 1,
+          cap: ATTACKS_PER_DAY,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'hivewar/attack failed');
+        reply.code(500);
+        return { error: 'attack failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/hivewar/season/:id/start — admin-ish flip from open
+  // to active. v1 lets any leader of an enrolled clan flip it; in a
+  // future PR this becomes a cron once a min-enrollment threshold or
+  // starts_at passes. The endpoint is idempotent — re-flipping an
+  // already-active season is a no-op.
+  app.post<{ Params: { id: string } }>(
+    '/hivewar/season/:id/start',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const seasonId = Number(req.params.id);
+      if (!Number.isFinite(seasonId) || seasonId <= 0) {
+        reply.code(400);
+        return { error: 'invalid season id' };
+      }
+      const r = await pool.query<{ role: string }>(
+        `SELECT cm.role
+           FROM clan_members cm
+           JOIN hive_war_enrollments e
+             ON e.clan_id = cm.clan_id
+            AND e.season_id = $2
+          WHERE cm.player_id = $1::uuid`,
+        [playerId, seasonId],
+      );
+      if (r.rows.length === 0) {
+        reply.code(403);
+        return { error: 'must be a clan leader of an enrolled clan' };
+      }
+      if (r.rows[0]!.role !== 'leader') {
+        reply.code(403);
+        return { error: 'only clan leaders can start the season' };
+      }
+      await pool.query(
+        `UPDATE hive_war_seasons SET state = 'active'
+          WHERE id = $1 AND state = 'open'`,
+        [seasonId],
+      );
+      return { ok: true };
+    },
+  );
 }
+
+// Per-attacker daily cap. 3 keeps the season meaningful (a 7-day
+// season at 3/day = 21 attacks per player) without letting a single
+// player snipe a 60-attack run in an afternoon.
+const ATTACKS_PER_DAY = 3;
