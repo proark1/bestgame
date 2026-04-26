@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { applyGlobalSettings } from './ui/settingsModal.js';
+import { readTacticFromHash } from './codex/tacticShare.js';
 import { registerServiceWorker } from './pwa/register.js';
 import { initSentryIfConfigured } from './obs/sentry.js';
 import { initAnalyticsIfConfigured, track } from './obs/analytics.js';
@@ -53,7 +54,49 @@ function dismissSplash(): void {
 // If we hit this, something is wrong, but at least the user sees the page.
 splashTimer = setTimeout(dismissSplash, 6000);
 
+// Pull a shared tactic out of the URL hash (if any) and stash it
+// into the player's saved-tactics list before the Phaser game boots.
+// Mirrors the format RaidScene.handleSaveTactic uses; running here
+// means a friend who clicks a `/play.html#tactic=…` link arrives at
+// the home screen with the tactic pre-loaded into their library.
+//
+// Schema-mismatched / oversized payloads are silently dropped by
+// readTacticFromHash; the worst case is "the link does nothing"
+// rather than a crashed boot. We also strip the hash via
+// history.replaceState so a refresh doesn't re-import.
+function importTacticFromHashIfPresent(): void {
+  if (typeof window === 'undefined') return;
+  const incoming = readTacticFromHash(window.location.hash);
+  if (!incoming) return;
+  try {
+    const raw = window.localStorage.getItem('hive:tactics:v1');
+    const list = raw ? (JSON.parse(raw) as Array<Record<string, unknown>>) : [];
+    if (!Array.isArray(list)) return;
+    list.push({
+      name: `Shared: ${incoming.name}`,
+      unitKind: incoming.unitKind,
+      pointsTile: incoming.pointsTile,
+      spawnEdge: incoming.spawnEdge,
+      ...(incoming.modifier ? { modifier: incoming.modifier } : {}),
+    });
+    // Keep the stored list bounded so a malicious series of share
+    // links can't blow out localStorage. Same TACTICS_LIMIT (8) the
+    // RaidScene uses.
+    while (list.length > 8) list.shift();
+    window.localStorage.setItem('hive:tactics:v1', JSON.stringify(list));
+    // Clear the hash so a refresh doesn't re-import. Replace, not
+    // push, so back-button history stays predictable.
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  } catch {
+    // localStorage may be quota-blocked / disabled in private mode.
+    // Silent fail — the import is a nice-to-have, not load-bearing.
+  }
+}
+
 async function main(): Promise<void> {
+  // Import any shared tactic ASAP so it lands in localStorage before
+  // any scene reads from it.
+  importTacticFromHashIfPresent();
   // Apply last-chosen text-size / color-blind / perf preset from
   // localStorage before scenes start laying out so they honor the
   // user's settings on first paint (not after a resize).
