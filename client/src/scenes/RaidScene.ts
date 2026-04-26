@@ -2154,8 +2154,13 @@ export class RaidScene extends Phaser.Scene {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
     try {
+      // Pass the revenge target through so the server pins the
+      // matchmaker on that defender. If the target is invalid (self,
+      // shielded, base missing) the server falls through to random
+      // matchmaking and the player still gets a fight.
       const match = await runtime.api.requestMatch(
         runtime.player?.player.trophies ?? 100,
+        this.revengeContext?.defenderId,
       );
       // Race guard: if the player already started committing inputs
       // against the fallback bot base before this response arrived,

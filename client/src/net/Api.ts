@@ -236,13 +236,22 @@ export class Api {
     if (!res.ok) throw new Error(`player/base ${res.status}`);
   }
 
-  async requestMatch(trophies: number): Promise<MatchResponse> {
+  async requestMatch(
+    trophies: number,
+    targetDefenderId?: string,
+  ): Promise<MatchResponse> {
+    // `targetDefenderId` is the revenge / direct-attack hook. The
+    // server validates the target (real player, not self, has a base,
+    // not shielded) and falls through to random matchmaking if the
+    // pin is invalid — revenge against a now-shielded defender just
+    // becomes a normal match instead of failing.
     const res = await this.authedFetch('/match', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         playerId: this.auth.playerId ?? 'guest',
         trophies,
+        ...(targetDefenderId ? { targetDefenderId } : {}),
       }),
     });
     if (!res.ok) throw new Error(`match ${res.status}`);
