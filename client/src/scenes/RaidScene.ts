@@ -2762,7 +2762,10 @@ export class RaidScene extends Phaser.Scene {
     // this is a no-op — min(400, viewport-32) is still 400.
     const isWin = this.state.outcome === 'attackerWin' && stars > 0;
     const cardW = Math.min(400, this.scale.width - 32);
-    const cardH = isWin ? 290 : 240;
+    // Card grows another 56 px on both branches to seat a second
+    // row of buttons (Raid again on top, Back/Share below). The
+    // single-row layout pre-#102 left no room for the new CTAs.
+    const cardH = isWin ? 346 : 296;
     const card = this.add.graphics().setDepth(DEPTHS.resultCard);
     const cx = (this.scale.width - cardW) / 2;
     const cy = (this.scale.height - cardH) / 2;
@@ -2899,41 +2902,78 @@ export class RaidScene extends Phaser.Scene {
       haptic([20, 60, 20]);
     }
 
-    const actionsY = isWin ? cy + 220 : cy + 170;
-
-    // Replace the old Text-backed buttons with our shared beveled
-    // buttons so the result modal matches the rest of the UI. On a
-    // win we render two side-by-side; on a loss the single "back"
-    // button centers. Widths scale with the card so the pair stays
-    // inside the card rather than overflowing on narrow phones —
-    // previously these were hard-wired to 180 px at ±100 from center,
-    // which overlapped badly at ≤400 px viewports.
+    // Two-row action layout. Top row is the "next loop iteration"
+    // CTAs (Raid again primary, Share replay on wins); bottom row
+    // is the calmer Back-to-home. This keeps the most useful
+    // forward-momentum action one tap away — players who just
+    // 3-starred shouldn't have to detour through HomeScene to
+    // start the next raid.
+    const topRowY = isWin ? cy + 218 : cy + 168;
+    const bottomRowY = topRowY + 54;
     const innerW = cardW - 32;
-    const btnW = isWin ? Math.min(180, Math.floor((innerW - 12) / 2)) : Math.min(220, innerW);
-    const split = isWin ? btnW / 2 + 6 : 0;
-    makeHiveButton(this, {
-      x: this.scale.width / 2 - split,
-      y: actionsY,
-      width: btnW,
-      height: 46,
-      label: 'Back to home',
-      variant: 'secondary',
-      fontSize: 15,
-      onPress: () => fadeToScene(this, 'HomeScene'),
-    }).container.setDepth(DEPTHS.resultContent);
+    const halfW = Math.min(180, Math.floor((innerW - 12) / 2));
+    const halfSplit = halfW / 2 + 6;
 
     if (isWin) {
+      // Top row — Raid again + Share replay (two equal halves).
       makeHiveButton(this, {
-        x: this.scale.width / 2 + split,
-        y: actionsY,
-        width: btnW,
+        x: this.scale.width / 2 - halfSplit,
+        y: topRowY,
+        width: halfW,
         height: 46,
-        label: '📣 Share',
+        label: '⚔ Raid again',
         variant: 'primary',
-        fontSize: 15,
+        fontSize: 14,
+        onPress: () => this.raidAgain(),
+      }).container.setDepth(DEPTHS.resultContent);
+      makeHiveButton(this, {
+        x: this.scale.width / 2 + halfSplit,
+        y: topRowY,
+        width: halfW,
+        height: 46,
+        label: '📣 Share replay',
+        variant: 'secondary',
+        fontSize: 14,
         onPress: () => void this.shareOutcome(stars),
       }).container.setDepth(DEPTHS.resultContent);
+    } else {
+      // Loss — single Raid again CTA centered. The "Share" path
+      // is hidden because there's nothing flashy to share, but the
+      // forward-momentum button still ships.
+      makeHiveButton(this, {
+        x: this.scale.width / 2,
+        y: topRowY,
+        width: Math.min(220, innerW),
+        height: 46,
+        label: '⚔ Raid again',
+        variant: 'primary',
+        fontSize: 15,
+        onPress: () => this.raidAgain(),
+      }).container.setDepth(DEPTHS.resultContent);
     }
+
+    // Bottom row — Back to home, in the calmer secondary variant.
+    makeHiveButton(this, {
+      x: this.scale.width / 2,
+      y: bottomRowY,
+      width: Math.min(220, innerW),
+      height: 42,
+      label: 'Back to home',
+      variant: 'secondary',
+      fontSize: 14,
+      onPress: () => fadeToScene(this, 'HomeScene'),
+    }).container.setDepth(DEPTHS.resultContent);
+  }
+
+  // "Raid again" CTA from the result screen. Re-enters RaidScene
+  // with no prefilled context so matchmaking runs fresh — the
+  // simplest way to ship the loop without keeping the post-result
+  // UI alive while the next match resolves.
+  private raidAgain(): void {
+    this.registry.set('prefilledMatch', null);
+    this.registry.set('replayContext', null);
+    this.registry.set('revengeContext', null);
+    fadeToScene(this, 'RaidScene');
   }
 
   // Fire-and-forget share. Web Share API → clipboard. On clipboard copy
