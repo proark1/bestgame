@@ -10,6 +10,130 @@ import { requirePlayer } from '../auth/playerAuth.js';
 // seasons + enrollment + map state + scoreboard. Attack mechanics
 // land on a future PR using the same season + enrollment tables.
 
+// Reward sweep — top-3 clans by score get a sugar/leaf bonus paid
+// to every member. Tier scale is intentionally mild for v1: we want
+// the reward to feel real without making hive war the dominant
+// econ source. Tweakable.
+const REWARDS: ReadonlyArray<{ sugar: number; leafBits: number }> = [
+  { sugar: 5000, leafBits: 1500 }, // 1st
+  { sugar: 2500, leafBits: 750 },  // 2nd
+  { sugar: 1000, leafBits: 300 },  // 3rd
+];
+
+interface PoolLike {
+  query<T extends import('pg').QueryResultRow = Record<string, unknown>>(
+    text: string,
+    params?: unknown[],
+  ): Promise<{ rows: T[] }>;
+  connect(): Promise<{
+    query<T extends import('pg').QueryResultRow = Record<string, unknown>>(
+      text: string,
+      params?: unknown[],
+    ): Promise<{ rows: T[] }>;
+    release(): void;
+  }>;
+}
+
+interface LoggerLike {
+  error(payload: unknown, msg?: string): void;
+  warn?(payload: unknown, msg?: string): void;
+}
+
+// Lazy auto-flip: any 'open' season whose starts_at has passed →
+// 'active'; any 'active' season whose ends_at has passed →
+// 'finished' (with reward sweep). Idempotent under concurrent
+// callers because each UPDATE is gated on the current state, so a
+// second caller seeing the new state simply does nothing.
+export async function maybeFinalizeSeasons(
+  pool: PoolLike,
+  log: LoggerLike,
+): Promise<void> {
+  try {
+    // open → active. Bulk update; no per-season transaction needed.
+    await pool.query(
+      `UPDATE hive_war_seasons
+          SET state = 'active'
+        WHERE state = 'open' AND starts_at <= NOW()`,
+    );
+    // active → finished. Per-season because we also have to pay
+    // out rewards atomically with the state flip — a partially-
+    // paid finalize on retry would double-credit winners.
+    const finishing = await pool.query<{ id: string }>(
+      `SELECT id FROM hive_war_seasons
+        WHERE state = 'active' AND ends_at <= NOW()
+        ORDER BY id`,
+    );
+    for (const row of finishing.rows) {
+      await finalizeSeason(pool, log, Number(row.id));
+    }
+  } catch (err) {
+    // Failure here mustn't break /season/current — the worst case
+    // is a delayed finalize that runs on the next request.
+    log.error({ err }, 'maybeFinalizeSeasons failed');
+  }
+}
+
+async function finalizeSeason(
+  pool: PoolLike,
+  log: LoggerLike,
+  seasonId: number,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Re-check + flip atomically so two concurrent finalizes pay
+    // out the rewards exactly once.
+    const flip = await client.query<{ id: string }>(
+      `UPDATE hive_war_seasons
+          SET state = 'finished'
+        WHERE id = $1 AND state = 'active' AND ends_at <= NOW()
+        RETURNING id`,
+      [seasonId],
+    );
+    if (flip.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return;
+    }
+    // Top-3 clans by score for the reward sweep. Ties broken by
+    // earliest enrollment (tied clans both got the slot first → both
+    // worked harder; reward the one that committed earlier).
+    const winners = await client.query<{
+      clan_id: string;
+      score: number;
+      rank: number;
+    }>(
+      `SELECT clan_id, score,
+              ROW_NUMBER() OVER (ORDER BY score DESC, enrolled_at ASC) AS rank
+         FROM hive_war_enrollments
+        WHERE season_id = $1
+        LIMIT 3`,
+      [seasonId],
+    );
+    for (const w of winners.rows) {
+      const tier = REWARDS[Number(w.rank) - 1];
+      if (!tier) continue;
+      // Pay every member of the winning clan — that's how clan
+      // wars in CoC distribute rewards and it's the most
+      // motivating shape ("we won together").
+      await client.query(
+        `UPDATE players
+            SET sugar = sugar + $2,
+                leaf_bits = leaf_bits + $3
+          WHERE id IN (
+            SELECT player_id FROM clan_members WHERE clan_id = $1::uuid
+          )`,
+        [w.clan_id, tier.sugar, tier.leafBits],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    log.error({ err, seasonId }, 'finalizeSeason failed');
+  } finally {
+    client.release();
+  }
+}
+
 // Helper: find next available slot in (board_w × board_h), left-to-
 // right top-to-bottom. Returns null if the season is full. Pure
 // computation — exported so unit tests can pin the scan order
@@ -41,6 +165,15 @@ export function registerHiveWar(app: FastifyInstance): void {
       reply.code(503);
       return { error: 'database not configured' };
     }
+    // Lazy finalize: opportunistically promote any seasons whose
+    // timeline has elapsed. This replaces a real cron daemon for
+    // v1 — every /season/current call (cheap, single UPDATE per
+    // bucket) auto-flips:
+    //   * 'open' → 'active' once starts_at passes
+    //   * 'active' → 'finished' once ends_at passes (+ reward sweep)
+    // Both updates are idempotent so racing clients can't double-pay.
+    await maybeFinalizeSeasons(pool, app.log);
+
     // Latest open or active season — the seed migration always
     // leaves at least one of these in the table.
     const seasonRes = await pool.query<{
