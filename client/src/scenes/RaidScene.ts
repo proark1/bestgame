@@ -537,8 +537,8 @@ export class RaidScene extends Phaser.Scene {
 
   private drawBoard(): void {
     // Board background sprite (loaded by BootScene or rendered as placeholder)
-    // Use TileSprite to properly tile the seamless background without stretching
-    const bgSprite = this.add.tileSprite(0, 0, BOARD_W, BOARD_H, 'board-background').setOrigin(0, 0);
+    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
+    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
     bgSprite.setDepth(DEPTHS.boardUnder);
 
     // Minimal grid - very subtle for alignment only
@@ -1885,30 +1885,22 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private flashShareToast(msg: string): void {
-    const container = this.add
-      .container(this.scale.width / 2, this.scale.height - 40)
-      .setDepth(DEPTHS.toast);
     const t = this.add
-      .text(0, 0, msg, {
+      .text(this.scale.width / 2, this.scale.height - 40, msg, {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
         color: '#0f1b10',
         backgroundColor: '#ffd98a',
         padding: { left: 10, right: 10, top: 6, bottom: 6 },
       })
-      .setOrigin(0.5);
-    container.add(t);
-    container.setSize(t.width, t.height).setInteractive({ useHandCursor: true });
-    container.on('pointerdown', () => {
-      this.tweens.killTweensOf(container);
-      container.destroy();
-    });
+      .setOrigin(0.5)
+      .setDepth(DEPTHS.toast);
     this.tweens.add({
-      targets: container,
+      targets: t,
       alpha: { from: 1, to: 0 },
       delay: 1600,
       duration: 400,
-      onComplete: () => container.destroy(),
+      onComplete: () => t.destroy(),
     });
   }
 
