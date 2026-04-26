@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { applyGlobalSettings } from './ui/settingsModal.js';
-import { readTacticFromHash } from './codex/tacticShare.js';
+import { readTacticFromHash, TACTICS_STORAGE_KEY, TACTICS_LIMIT } from './codex/tacticShare.js';
 import { registerServiceWorker } from './pwa/register.js';
 import { initSentryIfConfigured } from './obs/sentry.js';
 import { initAnalyticsIfConfigured, track } from './obs/analytics.js';
@@ -69,7 +69,7 @@ function importTacticFromHashIfPresent(): void {
   const incoming = readTacticFromHash(window.location.hash);
   if (!incoming) return;
   try {
-    const raw = window.localStorage.getItem('hive:tactics:v1');
+    const raw = window.localStorage.getItem(TACTICS_STORAGE_KEY);
     const list = raw ? (JSON.parse(raw) as Array<Record<string, unknown>>) : [];
     if (!Array.isArray(list)) return;
     list.push({
@@ -80,10 +80,10 @@ function importTacticFromHashIfPresent(): void {
       ...(incoming.modifier ? { modifier: incoming.modifier } : {}),
     });
     // Keep the stored list bounded so a malicious series of share
-    // links can't blow out localStorage. Same TACTICS_LIMIT (8) the
-    // RaidScene uses.
-    while (list.length > 8) list.shift();
-    window.localStorage.setItem('hive:tactics:v1', JSON.stringify(list));
+    // links can't blow out localStorage. The cap is shared with
+    // RaidScene so this file and the writer there agree.
+    while (list.length > TACTICS_LIMIT) list.shift();
+    window.localStorage.setItem(TACTICS_STORAGE_KEY, JSON.stringify(list));
     // Clear the hash so a refresh doesn't re-import. Replace, not
     // push, so back-button history stays predictable.
     history.replaceState(null, '', window.location.pathname + window.location.search);

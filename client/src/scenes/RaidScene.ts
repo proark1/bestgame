@@ -16,7 +16,7 @@ import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { haptic } from '../ui/haptics.js';
-import { buildTacticShareUrl } from '../codex/tacticShare.js';
+import { buildTacticShareUrl, TACTICS_STORAGE_KEY, TACTICS_LIMIT } from '../codex/tacticShare.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -64,8 +64,9 @@ interface SavedTactic {
   spawnEdge: SpawnEdge;
 }
 
-const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
-const TACTICS_LIMIT = 8; // tight cap — keeps the panel readable
+// TACTICS_STORAGE_KEY + TACTICS_LIMIT now live in
+// ../codex/tacticShare.ts so this file, main.ts, and any future
+// writer share one source of truth. Imported above.
 // First-run drill flag. Bumped whenever the drill steps change in a
 // way that's worth re-teaching (e.g., adding a fourth step). Until
 // the player completes the full drill, we re-show the coachmarks
@@ -1614,7 +1615,10 @@ export class RaidScene extends Phaser.Scene {
   // the clipboard API is unavailable (mostly older mobile WebViews
   // without a user-gesture-bound clipboard permission).
   private async shareTactic(t: SavedTactic): Promise<void> {
-    const url = buildTacticShareUrl(window.location.origin, {
+    // Pass the full current URL so buildTacticShareUrl can resolve
+    // play.html relative to the deployed subpath (works under
+    // /games/hive/ as well as the bare origin).
+    const url = buildTacticShareUrl(window.location.href, {
       name: t.name,
       unitKind: t.unitKind,
       pointsTile: t.pointsTile,

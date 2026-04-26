@@ -124,13 +124,38 @@ describe('readTacticFromHash', () => {
 });
 
 describe('buildTacticShareUrl', () => {
-  it('joins origin and tactic hash cleanly', () => {
-    const url = buildTacticShareUrl('https://hive.example', SAMPLE);
+  it('builds an absolute URL from a bare origin', () => {
+    const url = buildTacticShareUrl('https://hive.example/', SAMPLE);
     expect(url.startsWith('https://hive.example/play.html#tactic=')).toBe(true);
   });
 
-  it('strips a trailing slash from the origin', () => {
-    const url = buildTacticShareUrl('https://hive.example/', SAMPLE);
-    expect(url.startsWith('https://hive.example/play.html#tactic=')).toBe(true);
+  it('preserves the deployment subpath when the caller passes a deep URL', () => {
+    // Subpath deployment — common when the game is hosted under a
+    // company's marketing-site path (`/games/hive/`). The share URL
+    // must point at the same subpath, not the bare origin.
+    const url = buildTacticShareUrl(
+      'https://example.com/games/hive/index.html',
+      SAMPLE,
+    );
+    expect(url.startsWith('https://example.com/games/hive/play.html#tactic=')).toBe(true);
+  });
+
+  it('resolves correctly when the caller is already on play.html', () => {
+    const url = buildTacticShareUrl(
+      'https://example.com/games/hive/play.html',
+      SAMPLE,
+    );
+    expect(url.startsWith('https://example.com/games/hive/play.html#tactic=')).toBe(true);
+  });
+
+  it('resolves correctly when the caller URL has its own hash', () => {
+    // The existing hash on the caller URL must NOT bleed through;
+    // we always overwrite with the tactic payload.
+    const url = buildTacticShareUrl(
+      'https://example.com/games/hive/play.html#some-other-state',
+      SAMPLE,
+    );
+    expect(url).toContain('#tactic=');
+    expect(url).not.toContain('some-other-state');
   });
 });

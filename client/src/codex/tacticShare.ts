@@ -1,14 +1,16 @@
 // Tactic sharing — encode a SavedTactic into a URL-safe string and
 // decode it back. The encoded string lands in window.location.hash
-// (e.g. `#tactic=AbC123…`); BootScene (or any other early entry
-// point) calls decode + persist on startup so a friend who opens the
-// link is greeted with the tactic pre-loaded into their saved set.
+// (e.g. `#tactic=AbC123…`); main.ts calls decode + persist on
+// startup so a friend who opens the link is greeted with the tactic
+// pre-loaded into their saved set.
 //
-// We base64-encode a compact JSON shape that uses single-letter keys
-// and rounded coordinates. A 32-point polyline + modifier survives
-// at well under URL-length limits on every common browser. The
-// spec is deliberately tiny so the URL stays scannable in chat
+// We base64url-encode a compact JSON shape that uses single-letter
+// keys and rounded coordinates. A 32-point polyline + modifier
+// survives at well under URL-length limits on every common browser.
+// The spec is deliberately tiny so the URL stays scannable in chat
 // previews on mobile.
+
+import { UNIT_CODEX } from './codexData.js';
 
 // Mirror the SavedTactic shape from RaidScene without importing it
 // (would create a Phaser dependency from a util that should stay
@@ -29,17 +31,27 @@ export interface SharedTactic {
   spawnEdge: 'left' | 'top' | 'bottom';
 }
 
+// Localstorage key + cap shared with RaidScene.handleSaveTactic and
+// main.importTacticFromHashIfPresent. Kept here so all three writers
+// agree on the schema and a future bump is one-line.
+export const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
+export const TACTICS_LIMIT = 8;
+
 // Tighter caps than localStorage allows — anything that fits in
 // localStorage also fits here. The decoder rejects oversized
 // payloads so a hostile URL can't blow up the deck UI.
 const MAX_POINTS = 32;
 const MAX_NAME_LEN = 64;
-const ALLOWED_KINDS = new Set<string>([
-  'WorkerAnt', 'SoldierAnt', 'DirtDigger', 'Forager', 'Wasp',
-  'HoneyTank', 'ShieldBeetle', 'BombBeetle', 'Roller', 'Jumper',
-  'WebSetter', 'Ambusher', 'FireAnt', 'Termite', 'Dragonfly',
-  'Mantis', 'Scarab',
-]);
+
+// Defender-side units that the sim spawns autonomously — these
+// should never appear in a player-authored tactic and so are
+// excluded from the share allow-list. Adding a new ATTACKER kind
+// auto-includes it via UNIT_CODEX; the deny-list pattern means the
+// tactic-share path doesn't need to track every attacker addition.
+const DEFENDER_ONLY_KINDS = new Set<string>(['NestSpider', 'MiniScarab']);
+const ALLOWED_KINDS: ReadonlySet<string> = new Set(
+  (Object.keys(UNIT_CODEX) as string[]).filter((k) => !DEFENDER_ONLY_KINDS.has(k)),
+);
 const ALLOWED_EDGES = new Set<SharedTactic['spawnEdge']>(['left', 'top', 'bottom']);
 const ALLOWED_MOD_KINDS = new Set<SharedTacticModifier['kind']>(['split', 'ambush', 'dig']);
 
@@ -57,19 +69,30 @@ function round2(x: number): number {
   return Math.round(x * 100) / 100;
 }
 
+// UTF-8 → base64url. The raw btoa() input must be a "binary string"
+// (each char's code unit ≤ 0xff), so we run UTF-8 bytes through
+// TextEncoder first, then String.fromCharCode-walk them into the
+// binary form btoa expects. TextEncoder/TextDecoder is the modern
+// replacement for the deprecated escape()/unescape() trick.
 function base64UrlEncode(s: string): string {
-  // btoa handles latin1; we wrap with TextEncoder/decoder semantics
-  // by URI-encoding non-ASCII first, then unescaping.
-  const ascii = unescape(encodeURIComponent(s));
-  const b64 = (typeof btoa === 'function' ? btoa : nodeBtoa)(ascii);
+  const bytes = new TextEncoder().encode(s);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  const b64 = (typeof btoa === 'function' ? btoa : nodeBtoa)(binary);
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64UrlDecode(s: string): string | null {
   try {
     const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
-    const ascii = (typeof atob === 'function' ? atob : nodeAtob)(b64);
-    return decodeURIComponent(escape(ascii));
+    const binary = (typeof atob === 'function' ? atob : nodeAtob)(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
   } catch {
     return null;
   }
@@ -77,8 +100,7 @@ function base64UrlDecode(s: string): string | null {
 
 // Node fallback for the rare path where this runs outside a browser
 // (vitest jsdom usually provides btoa/atob, but bare Node CI steps
-// might not). Avoids an explicit Buffer import to keep the bundle
-// browser-only when transpiled.
+// might not). The browser bundle never reaches these branches.
 interface NodeBufferShim {
   from(input: string, encoding: string): { toString(encoding: string): string };
 }
@@ -157,11 +179,17 @@ export function decodeTactic(s: string): SharedTactic | null {
   };
 }
 
-// Build a shareable URL pointing at the play page. Hash-only payload
-// so the share link doesn't pollute server logs or analytics — the
-// tactic stays purely client-side.
-export function buildTacticShareUrl(origin: string, t: SharedTactic): string {
-  return `${origin.replace(/\/+$/, '')}/play.html#tactic=${encodeTactic(t)}`;
+// Build a shareable URL pointing at the play page, resolved relative
+// to the caller's current URL. Using the URL constructor with a base
+// keeps the share link valid under subpath deployments
+// (`/games/hive/`) and behind reverse proxies — `new URL('play.html',
+// 'https://example.com/games/hive/index.html')` correctly resolves
+// to `https://example.com/games/hive/play.html`. The hash payload
+// keeps the tactic purely client-side.
+export function buildTacticShareUrl(currentUrl: string, t: SharedTactic): string {
+  const url = new URL('play.html', currentUrl);
+  url.hash = `tactic=${encodeTactic(t)}`;
+  return url.toString();
 }
 
 // Pull a tactic out of the current page's URL hash, if any. Idempotent
