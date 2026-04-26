@@ -655,6 +655,26 @@ export function registerClan(app: FastifyInstance): void {
           WHERE id = $1::uuid`,
         [playerId, sugarReward, leafReward],
       );
+      // Credit the REQUESTER's donation inventory so the donated
+      // units actually reach their next raid deck. The jsonb_set
+      // path increments an existing kind count or initialises it to
+      // `give` if the key wasn't there before. RaidScene merges this
+      // map into the deck on raid start; /raid/submit clears it on
+      // a successful submit so donations are war-army-style (refill
+      // per raid, expire whether-or-not used).
+      await client.query(
+        `UPDATE players
+            SET donation_inventory = jsonb_set(
+              COALESCE(donation_inventory, '{}'::jsonb),
+              ARRAY[$2::text],
+              to_jsonb(
+                COALESCE((donation_inventory->>$2)::int, 0) + $3::int
+              ),
+              true
+            )
+          WHERE id = $1::uuid`,
+        [r.requester_id, r.unit_kind, give],
+      );
       // System chat message visible to the whole clan.
       const donorName = donorMem.rows[0]!.display_name;
       const note = closed

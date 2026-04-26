@@ -131,6 +131,10 @@ interface PlayerRow {
   tutorial_stage: number;
   campaign_chapter: number;
   campaign_progress: number;
+  // Bank of clanmate-donated units waiting for the player's next
+  // raid. Map of unit kind → count. Credited by /clan/donate;
+  // cleared by /raid/submit on success. See migrations/0018.
+  donation_inventory: Record<string, number>;
 }
 
 interface BaseRow {
@@ -431,6 +435,11 @@ export function registerPlayer(app: FastifyInstance): void {
               lootCap: lootCapForRank(rank),
             };
           })(),
+          // Clanmate-donated units waiting to be deployed in the next
+          // raid. RaidScene merges these into the deck on raid start;
+          // /raid/submit zeroes them on success (war-army-style:
+          // refilled per raid, expire whether-or-not used).
+          donationInventory: player.donation_inventory ?? {},
         },
         base: base.snapshot,
         offlineTrickle: {

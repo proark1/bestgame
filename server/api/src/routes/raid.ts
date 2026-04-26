@@ -225,7 +225,12 @@ export function registerRaid(app: FastifyInstance): void {
                 season_milestones_claimed = CASE
                                    WHEN season_id = $6 THEN season_milestones_claimed
                                    ELSE '{}'::int[]
-                                 END
+                                 END,
+                -- Donations are war-army-style: refilled by clanmates
+                -- between raids, expire (whether or not the player
+                -- deployed them) at submit time. Clearing here means
+                -- a player can't bank donations across multiple raids.
+                donation_inventory = '{}'::jsonb
           WHERE id = $1
       RETURNING trophies, sugar, leaf_bits, aphid_milk, season_xp`,
         [
