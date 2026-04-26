@@ -4,7 +4,7 @@ import { BUILDING_BEHAVIOR, UNIT_STATS } from '../stats.js';
 import type { SimState } from '../state.js';
 import type { PheromonePath } from '../../types/pheromone.js';
 import type { Unit } from '../../types/units.js';
-import { AMBUSH_TICKS } from '../../types/pheromone.js';
+import { AMBUSH_TICKS, DIG_TICKS } from '../../types/pheromone.js';
 
 // Apply a path modifier to a unit at the moment it arrives at the
 // marker waypoint. Returns true if the unit should stop processing its
@@ -33,11 +33,16 @@ function applyPathModifierOnArrival(u: Unit, path: PheromonePath): boolean {
     // still consumed so we don't keep checking).
     const stats = UNIT_STATS[u.kind];
     if (stats.canDig) {
-      u.layer = u.layer === 0 ? 1 : 0;
-      // Edge flag for AI rules — `onCrossLayerEntry` reads this in
-      // the same tick. pheromone_follow clears it at the top of the
-      // next tick before any new layer flips can occur.
-      u.layerCrossedThisTick = true;
+      // Start the dig animation. Unit holds position while digging
+      // (handled by the diggingTicks check at the top of the system)
+      // and remains visible to surface defenders so they get a
+      // window to interrupt the breach. Layer flip happens when
+      // diggingTicks reaches 0 (see below).
+      u.diggingTicks = DIG_TICKS;
+      u.diggingTargetLayer = u.layer === 0 ? 1 : 0;
+      // Hold position this tick — caller breaks out of the path walk
+      // because the unit is now occupied by the dig animation.
+      return true;
     }
     return false;
   }
@@ -82,6 +87,22 @@ export function pheromoneFollowSystem(state: SimState): void {
     // so a unit that lands on the marker pauses for AMBUSH_TICKS full
     // sim ticks before resuming the polyline.
     if (u.ambushTicks && u.ambushTicks > 0) continue;
+    // Digging units hold position too. combat.ts decrements
+    // diggingTicks; on the tick it crosses 0 we flip the unit's
+    // layer here (so the layer change is observable on the same
+    // tick as the cross-layer edge flag, matching the legacy
+    // instant-dig semantics for ai_rules).
+    if (u.diggingTicks && u.diggingTicks > 0) continue;
+    if (u.diggingTargetLayer !== undefined && (!u.diggingTicks || u.diggingTicks <= 0)) {
+      // Dig animation just finished — flip layer now. Delete the
+      // bookkeeping fields rather than setting to undefined to keep
+      // exactOptionalPropertyTypes happy (and the serialised state
+      // stays small).
+      u.layer = u.diggingTargetLayer;
+      u.layerCrossedThisTick = true;
+      delete u.diggingTargetLayer;
+      delete u.diggingTicks;
+    }
     if (u.pathId < 0) continue;
     if (u.targetBuildingId !== 0) continue; // combat owns it now
 

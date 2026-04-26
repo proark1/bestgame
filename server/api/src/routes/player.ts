@@ -35,6 +35,7 @@ import {
   lootCapForRank,
 } from '@hive/shared/sim';
 import { applyPlacementProgress, refreshIfStale } from '../game/quests.js';
+import { normalizeBaseLayers } from '../game/migrateLayers.js';
 import { resolveStreak, rewardForDay, STREAK_REWARDS, COMEBACK_REWARD } from '../game/streaks.js';
 import { QUEEN_SKINS, skinById, scanUnlockedSkins } from '../game/queenSkins.js';
 import {
@@ -244,6 +245,20 @@ export function registerPlayer(app: FastifyInstance): void {
         if (!b.pendingCompletesAt || !b.pendingToLevel) continue;
         if (Date.parse(b.pendingCompletesAt) > nowMs) continue;
         if (finalizePendingUpgrade(b)) snapshotMutated = true;
+      }
+      // Lazy ALLOWED_LAYERS migration. The layer roster shifted (e.g.
+      // traps moved underground-only); any base saved before the
+      // shift may have buildings on a now-illegal layer. Walk + fix
+      // here so the next save is in compliance. Idempotent —
+      // already-clean bases skip the UPDATE entirely.
+      const layerNorm = normalizeBaseLayers(base.snapshot);
+      if (layerNorm.mutated) {
+        base.snapshot = layerNorm.base;
+        snapshotMutated = true;
+        app.log.info(
+          { playerId, events: layerNorm.events },
+          'normalized base layers (relocated/demolished buildings to match new ALLOWED_LAYERS)',
+        );
       }
       if (snapshotMutated) {
         base.snapshot = {

@@ -121,13 +121,52 @@ describe('path modifiers', () => {
       },
     };
     const state = createInitialState(cfg);
-    for (let i = 0; i < 90; i++) {
+    // Step long enough for the dig animation to complete. Walk to
+    // marker (~few ticks) + DIG_TICKS=90 + small buffer for the
+    // post-dig layer-flip to register. 200 ticks is comfortable.
+    for (let i = 0; i < 200; i++) {
       step(state, cfg, i + 1 === input.tick ? [input] : []);
       if (state.outcome !== 'ongoing') break;
     }
     const dug = state.units.filter((u) => u.hasDug);
     expect(dug.length).toBeGreaterThanOrEqual(1);
     for (const u of dug) expect(u.layer).toBe(1);
+  });
+
+  it('dig is not instantaneous — diggers hold position for the dig window', () => {
+    // Sample the digger state mid-dig (well before DIG_TICKS=90
+    // would elapse) and confirm it's still on the surface, with
+    // diggingTicks > 0. The full-flip behavior is exercised by the
+    // earlier "dig flips the layer" test.
+    const input: SimInput = {
+      type: 'deployPath',
+      tick: 1,
+      ownerSlot: 0,
+      path: {
+        pathId: 0,
+        spawnLayer: 0,
+        unitKind: 'DirtDigger',
+        count: 1,
+        points: [
+          { x: fromInt(0), y: fromInt(8) },
+          { x: fromFloat(3), y: fromInt(8) },
+          { x: fromInt(10), y: fromInt(8) },
+        ],
+        modifier: { kind: 'dig', pointIndex: 1 },
+      },
+    };
+    const state = createInitialState(cfg);
+    // Walk to marker (~60 ticks at speed 0.05 over 3 tiles) plus a
+    // short buffer so the dig has been running for ~30 ticks.
+    for (let i = 0; i < 95; i++) {
+      step(state, cfg, i + 1 === input.tick ? [input] : []);
+      if (state.outcome !== 'ongoing') break;
+    }
+    const mid = state.units.find((u) => u.kind === 'DirtDigger');
+    expect(mid).toBeDefined();
+    expect(mid!.hasDug).toBe(true);
+    expect(mid!.layer).toBe(0); // still surface, dig in progress
+    expect((mid!.diggingTicks ?? 0)).toBeGreaterThan(0);
   });
 
   it('produces identical hashes on two runs (modifiers stay deterministic)', () => {

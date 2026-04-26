@@ -24,19 +24,25 @@ export const ALLOWED_LAYERS: Record<Types.BuildingKind, readonly Types.Layer[]> 
   MushroomTurret: [0],
   LeafWall: [0],
   PebbleBunker: [0],
-  DungeonTrap: [0, 1],
+  // Traps now read as TUNNEL ambushes — placed only underground so
+  // surface raids can't be insta-snared, and the attacker who digs
+  // through to the loot vault has to walk through the trap field.
+  // Pairs with the new layer-flow design: surface = wall + turret
+  // killbox, underground = trap-rich loot heart.
+  DungeonTrap: [1],
   DewCollector: [0],
   LarvaNursery: [1],
   SugarVault: [1],
   TunnelJunction: [0, 1],
   // Expanded defensive roster. AcidSpitter + SporeTower + HiddenStinger
   // are surface-only (they shoot into the open air). SpiderNest lives
-  // underground — defenders crawl up tunnels to fight. RootSnare works
-  // on either layer (same as DungeonTrap). ThornHedge is surface-only
-  // (it's a wall).
+  // underground — defenders crawl up tunnels to fight. ThornHedge is
+  // surface-only (it's a wall). RootSnare moves underground with the
+  // other traps so surface stays "walls + turrets" and underground is
+  // the trap-and-loot zone.
   AcidSpitter: [0],
   SporeTower: [0],
-  RootSnare: [0, 1],
+  RootSnare: [1],
   HiddenStinger: [0],
   SpiderNest: [1],
   ThornHedge: [0],
