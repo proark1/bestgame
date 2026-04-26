@@ -436,6 +436,49 @@ export class Api {
     return (await res.json()) as { ok: true; id: string };
   }
 
+  // Clan unit donation system — request → donate → close. The
+  // requester opens a slot for N units of one kind; clanmates fulfill
+  // partial or full counts in exchange for a small sugar+leaf reward.
+  // Drives the daily "ask & give" loop that's traditionally the social
+  // glue in Clash-of-Clans-style games.
+  async clanRequestUnits(
+    unitKind: Types.UnitKind,
+    count: number,
+  ): Promise<{ ok: true; requestId: number }> {
+    const res = await this.authedFetch('/clan/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ unitKind, count }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/request');
+    return (await res.json()) as { ok: true; requestId: number };
+  }
+
+  async clanDonate(
+    requestId: number,
+    count: number,
+  ): Promise<{
+    ok: true;
+    donated: number;
+    fulfilled: number;
+    closed: boolean;
+    reward: { sugar: number; leafBits: number };
+  }> {
+    const res = await this.authedFetch('/clan/donate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requestId, count }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/donate');
+    return (await res.json()) as Awaited<ReturnType<Api['clanDonate']>>;
+  }
+
+  async clanRequests(): Promise<{ requests: ClanUnitRequest[] }> {
+    const res = await this.authedFetch('/clan/requests');
+    if (!res.ok) throw await errorFromResponse(res, 'clan/requests');
+    return (await res.json()) as { requests: ClanUnitRequest[] };
+  }
+
   async upgradeUnit(kind: Types.UnitKind): Promise<UpgradeUnitResponse> {
     const res = await this.authedFetch('/player/upgrade-unit', {
       method: 'POST',
@@ -934,6 +977,21 @@ export interface ClanMyResponse {
   myRole?: 'leader' | 'member';
   members?: ClanMember[];
   messages?: ClanMessage[];
+}
+
+// Open-request snapshot returned by GET /clan/requests. `canDonate`
+// is server-computed (false when the requester is the caller), so the
+// client doesn't have to thread playerId through the render path.
+export interface ClanUnitRequest {
+  id: number;
+  requesterId: string;
+  requesterName: string;
+  unitKind: Types.UnitKind;
+  requestedCount: number;
+  fulfilledCount: number;
+  remaining: number;
+  createdAt: string;
+  canDonate: boolean;
 }
 
 async function errorFromResponse(res: Response, fallback: string): Promise<Error> {
