@@ -641,9 +641,16 @@ export class SpriteCard {
         mimeType: cleaned.mimeType,
       };
       const stripPng = await compositeWalkStrip([frame1, cleanedFrame]);
+      // Respect the admin's configured compression quality (card-level
+      // override falls back to the global default). Floored at 0.85 to
+      // match generateWalkCycle()'s rationale: walk-cycle frames need
+      // enough fidelity for the leg/wing motion to read as movement
+      // rather than mush, even if the rest of the asset library is set
+      // to lower quality.
+      const cfg = this.cardCompression ?? this.opts.getCompression();
       const compressed = await compressBase64Image(stripPng, 'image/png', {
         format: ext,
-        quality: 0.9,
+        quality: Math.max(0.85, cfg.quality),
         maxDimension: WALK_STRIP_WIDTH,
       });
       await saveSprite({
