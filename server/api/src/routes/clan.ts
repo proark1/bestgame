@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Types } from '@hive/shared';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import { sanitizeSafeText } from '../util/safeText.js';
 
 // Clans + chat routes.
 //
@@ -68,14 +69,13 @@ interface DonateUnitsBody {
   count: number;
 }
 
-function sanitizeChat(s: string): string {
-  // Strip control chars and collapse runs of whitespace. Keeps emoji
-  // and unicode letters.
-  return s
-    .replace(/[\x00-\x1f\x7f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_CHAT_LEN);
+// Clan chat is text-only by design — no images, no links, no
+// embedded HTML / Markdown. The shared sanitiser in util/safeText.ts
+// owns the rules so /clan/message and /replay/:id/comments stay in
+// lockstep. Returns the cleaned content or an error reason; the
+// route surfaces the latter as 400.
+function sanitizeChat(raw: unknown): { ok: true; content: string } | { ok: false; error: string } {
+  return sanitizeSafeText(raw, { maxLength: MAX_CHAT_LEN });
 }
 
 export function registerClan(app: FastifyInstance): void {
@@ -401,11 +401,12 @@ export function registerClan(app: FastifyInstance): void {
       reply.code(503);
       return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
-    const content = sanitizeChat(req.body?.content ?? '');
-    if (content.length === 0) {
+    const sanitised = sanitizeChat(req.body?.content);
+    if (!sanitised.ok) {
       reply.code(400);
-      return { error: 'content required' };
+      return { error: sanitised.error };
     }
+    const content = sanitised.content;
     const clanRow = await pool.query<{ clan_id: string }>(
       'SELECT clan_id FROM clan_members WHERE player_id = $1',
       [playerId],
