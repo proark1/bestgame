@@ -9,6 +9,7 @@ import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -58,6 +59,26 @@ interface SavedTactic {
 
 const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
 const TACTICS_LIMIT = 8; // tight cap — keeps the panel readable
+// First-run drill flag. Bumped whenever the drill steps change in a
+// way that's worth re-teaching (e.g., adding a fourth step). Until
+// the player completes the full drill, we re-show the coachmarks
+// every time they enter RaidScene — that way a player who bails on
+// step 1 still gets coached on the next attempt.
+const COACHMARK_DONE_KEY = 'hive:coachmarks:raid:v1';
+
+function shouldShowRaidCoachmarks(): boolean {
+  try {
+    return localStorage.getItem(COACHMARK_DONE_KEY) !== '1';
+  } catch {
+    return false; // private mode: don't nag
+  }
+}
+
+function markRaidCoachmarksDone(): void {
+  try {
+    localStorage.setItem(COACHMARK_DONE_KEY, '1');
+  } catch { /* ignore */ }
+}
 // Per-tactic point cap — matches the live-draw cap in pointermove. A
 // tactic the player draws can't exceed it; any larger stored polyline
 // is treated as malformed (corrupted localStorage) and dropped.
@@ -349,6 +370,12 @@ export class RaidScene extends Phaser.Scene {
   private saveTacticBtn!: Phaser.GameObjects.Container;
   private saveTacticBg!: Phaser.GameObjects.Graphics;
   private saveTacticLabel!: Phaser.GameObjects.Text;
+  // First-run coachmark drill — see runCoachmarkDrill(). Each step
+  // gates on the gameplay event it teaches (deck tap, deploy commit,
+  // modifier toggle); the tracker advances when the relevant handler
+  // fires the matching step name.
+  private coachmarkStep: 'deck' | 'spawn' | 'modifier' | 'done' = 'done';
+  private activeCoachmark: CoachmarkHandle | null = null;
 
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
@@ -549,6 +576,15 @@ export class RaidScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
     this.scale.on('resize', this.layout, this);
     this.layout();
+
+    // Coachmark drill — only on the first raid the player attempts.
+    // Skipped entirely in replay mode (the player is watching, not
+    // playing) and on any subsequent run after the drill completes.
+    if (!this.replayContext && shouldShowRaidCoachmarks()) {
+      this.coachmarkStep = 'deck';
+      // Deferred so the deck tray's interactive cards have laid out.
+      this.time.delayedCall(220, () => this.runCoachmarkStep());
+    }
 
     this.started = true;
   }
@@ -1037,6 +1073,7 @@ export class RaidScene extends Phaser.Scene {
       this.raidInputs.push(input);
       const start = this.drawingPoints[0];
       if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
+      this.advanceCoachmark('spawn');
 
       // fade the committed trail
       this.tweens.add({
@@ -1053,6 +1090,94 @@ export class RaidScene extends Phaser.Scene {
 
   private currentDeckEntry(): DeckEntry {
     return this.deckEntries[this.selectedDeckIdx]!;
+  }
+
+  // ---------- First-run coachmark drill ----------
+  //
+  // Three guided steps that teach the genre-specific mechanics in
+  // context: pick a unit (deck), drag from a glowing edge (path),
+  // try the Dig modifier (cross-layer hook). Each step gates on the
+  // gameplay event it teaches — the player can't skip ahead by
+  // tapping a bubble. Persists 'done' to localStorage only after
+  // step 3 completes; bailing out before then leaves the drill
+  // armed for the next visit.
+
+  private runCoachmarkStep(): void {
+    if (!this.scene.isActive()) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    if (this.coachmarkStep === 'deck') {
+      const card = this.deckContainers[this.selectedDeckIdx];
+      if (!card) return;
+      const r = card.getBounds();
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: r.x, y: r.y, w: r.width, h: r.height },
+        prefer: 'above',
+        title: 'Pick your swarm',
+        body: 'Tap any card to ready that unit. Each card shows the role and remaining count.',
+      });
+    } else if (this.coachmarkStep === 'spawn') {
+      // Halo the spawn-zone label area in scene coordinates.
+      const scaleX = this.boardContainer.scaleX || 1;
+      const screenX = this.boardContainer.x;
+      const screenY = this.boardContainer.y;
+      const w = SPAWN_ZONE_W * scaleX;
+      const h = (BOARD_H * scaleX) - 20;
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: screenX, y: screenY, w, h },
+        prefer: 'below',
+        title: 'Draw a path',
+        body: 'Drag from a glowing edge into the base. Your swarm walks the trail you draw.',
+      });
+    } else if (this.coachmarkStep === 'modifier') {
+      // Highlight the Dig modifier button (4th in the row).
+      const digBtn = this.modifierButtons.find((b) => b.kind === 'dig');
+      if (!digBtn) {
+        this.completeCoachmarkDrill();
+        return;
+      }
+      const r = digBtn.container.getBounds();
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: r.x, y: r.y, w: r.width, h: r.height },
+        prefer: 'below',
+        title: 'Try Dig',
+        body: 'Toggle Dig and your unit burrows mid-path. The dual-layer hook is what makes this game weird.',
+      });
+    }
+  }
+
+  // Advance the drill when the gameplay event matching the current
+  // step fires. Caller passes the step it just satisfied; if it
+  // matches, we acknowledge and move on.
+  private advanceCoachmark(satisfied: 'deck' | 'spawn' | 'modifier'): void {
+    if (this.coachmarkStep !== satisfied) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.acknowledge();
+      this.activeCoachmark = null;
+    }
+    if (satisfied === 'deck') {
+      this.coachmarkStep = 'spawn';
+    } else if (satisfied === 'spawn') {
+      this.coachmarkStep = 'modifier';
+    } else {
+      this.completeCoachmarkDrill();
+      return;
+    }
+    this.time.delayedCall(420, () => this.runCoachmarkStep());
+  }
+
+  private completeCoachmarkDrill(): void {
+    this.coachmarkStep = 'done';
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    markRaidCoachmarksDone();
   }
 
   // ---------- Path modifier toolbar + saved tactics ----------
@@ -1157,6 +1282,12 @@ export class RaidScene extends Phaser.Scene {
         ? 'Direct path — units walk straight through.'
         : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
     );
+    // Step 3 of the drill is "try Dig" — toggling any modifier kind
+    // counts (the goal is teaching the bar exists; the player can
+    // experiment with split/ambush from here on their own).
+    if (kind !== 'none') {
+      this.advanceCoachmark('modifier');
+    }
   }
 
   private flashModifierStamp(
@@ -1459,6 +1590,7 @@ export class RaidScene extends Phaser.Scene {
       });
     }
     this.refreshDeckUi();
+    this.advanceCoachmark('deck');
   }
 
   private redrawDeckCard(index: number): void {
