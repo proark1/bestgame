@@ -855,13 +855,17 @@ export function registerClan(app: FastifyInstance): void {
         reply.code(400);
         return { error: "can't link to yourself" };
       }
-      // Same-clan gate. One round-trip joining both members against
-      // the same clan_id.
+      // Same-clan gate via a single self-join. Cheaper than three
+      // subquery scans — one index lookup per side, then EXISTS
+      // short-circuits the moment a matching row is found.
       const sameClan = await pool.query<{ shared: boolean }>(
-        `SELECT (SELECT clan_id FROM clan_members WHERE player_id = $1::uuid) IS NOT NULL
-            AND (SELECT clan_id FROM clan_members WHERE player_id = $1::uuid) =
-                (SELECT clan_id FROM clan_members WHERE player_id = $2::uuid)
-                AS shared`,
+        `SELECT EXISTS (
+           SELECT 1
+             FROM clan_members m1
+             JOIN clan_members m2 ON m1.clan_id = m2.clan_id
+            WHERE m1.player_id = $1::uuid
+              AND m2.player_id = $2::uuid
+         ) AS shared`,
         [playerId, targetId],
       );
       if (!sameClan.rows[0]?.shared) {

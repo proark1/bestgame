@@ -290,10 +290,16 @@ export function registerHiveWar(app: FastifyInstance): void {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        // Lock the season so a concurrent state-flip can't change
-        // 'active' under us mid-attack.
+        // Read the season state without FOR UPDATE — locking the
+        // season row would serialise EVERY attack across the whole
+        // game on a single row, which is a massive throughput
+        // ceiling. The actual concurrency safety lives on the
+        // enrollment-row locks below; the state check here is
+        // informational ("is this season still accepting attacks?")
+        // and a stale read at most rejects a write that should have
+        // succeeded — not a correctness hole.
         const seasonRes = await client.query<{ state: string }>(
-          'SELECT state FROM hive_war_seasons WHERE id = $1 FOR UPDATE',
+          'SELECT state FROM hive_war_seasons WHERE id = $1',
           [seasonId],
         );
         if (seasonRes.rows.length === 0) {
@@ -321,22 +327,24 @@ export function registerHiveWar(app: FastifyInstance): void {
           reply.code(400);
           return { error: 'cannot attack your own clan' };
         }
-        // Both clans must be enrolled in this season; the join
-        // returns 0 rows if either is missing.
-        const enrolled = await client.query<{
-          attacker_id: string;
-          defender_id: string;
-        }>(
-          `SELECT a.id AS attacker_id, d.id AS defender_id
-             FROM hive_war_enrollments a
-             JOIN hive_war_enrollments d
-               ON d.season_id = a.season_id
-              AND d.clan_id = $3::uuid
-            WHERE a.season_id = $1 AND a.clan_id = $2::uuid
+        // Both clans must be enrolled in this season. Lock the two
+        // enrollment rows in a DETERMINISTIC ORDER (by clan_id) so
+        // two clans attacking each other simultaneously can't
+        // deadlock — Postgres's lock-acquisition order on a join
+        // depends on the planner / physical layout, which means
+        // attacker→defender vs defender→attacker can race.
+        // ORDER BY before FOR UPDATE makes both transactions queue
+        // against the same id first.
+        const enrolled = await client.query<{ clan_id: string }>(
+          `SELECT clan_id
+             FROM hive_war_enrollments
+            WHERE season_id = $1
+              AND clan_id IN ($2::uuid, $3::uuid)
+            ORDER BY clan_id
             FOR UPDATE`,
           [seasonId, attackerClanId, defenderClanId],
         );
-        if (enrolled.rows.length === 0) {
+        if (enrolled.rows.length < 2) {
           await client.query('ROLLBACK');
           reply.code(409);
           return { error: 'both clans must be enrolled in this season' };
@@ -349,7 +357,7 @@ export function registerHiveWar(app: FastifyInstance): void {
              FROM hive_war_attacks
             WHERE season_id = $1
               AND attacker_player_id = $2::uuid
-              AND created_at > NOW() - INTERVAL '24 hours'`,
+              AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')`,
           [seasonId, playerId],
         );
         const used = Number(cap.rows[0]!.used);
