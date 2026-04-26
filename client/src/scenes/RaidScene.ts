@@ -72,7 +72,11 @@ interface SavedTactic {
 // the player completes the full drill, we re-show the coachmarks
 // every time they enter RaidScene — that way a player who bails on
 // step 1 still gets coached on the next attempt.
-const COACHMARK_DONE_KEY = 'hive:coachmarks:raid:v1';
+//
+// v2 — drill expanded to teach split / ambush / dig as three discrete
+// steps with mechanic explanations (the v1 drill only halo'd "Dig"
+// once). Bumping the key replays the new walkthrough for everyone.
+const COACHMARK_DONE_KEY = 'hive:coachmarks:raid:v2';
 
 function shouldShowRaidCoachmarks(): boolean {
   try {
@@ -171,6 +175,31 @@ const MODIFIER_LABEL: Record<Types.PathModifierKind | 'none', string> = {
   split: 'Split',
   ambush: 'Ambush',
   dig: 'Dig',
+};
+
+// Coachmark copy for the three modifiers. Plain-language explanation
+// of what the marker actually does in-sim — these mechanics aren't
+// otherwise surfaced in the UI, so the tutorial is the only place a
+// new player learns the difference between an ambush and a split.
+const MODIFIER_TUTORIAL: Record<
+  'split' | 'ambush' | 'dig',
+  { title: string; body: string }
+> = {
+  split: {
+    title: 'Try Split',
+    body:
+      'Half your swarm peels off at the marker to hit the nearest building; the other half keeps walking. Great for chipping a turret while the rest reaches the Queen.',
+  },
+  ambush: {
+    title: 'Try Ambush',
+    body:
+      'Units pause for ~2 seconds at the marker. Use it to stagger waves so the second burst arrives just as defences trigger their reload.',
+  },
+  dig: {
+    title: 'Try Dig',
+    body:
+      'Diggers and termites flip layer at the marker — slip past surface walls into the underground or pop up behind a turret line. The dual-layer hook only triggers on dig-capable units.',
+  },
 };
 
 // Full attacker roster with default deck counts. The scene filters
@@ -400,7 +429,13 @@ export class RaidScene extends Phaser.Scene {
   // gates on the gameplay event it teaches (deck tap, deploy commit,
   // modifier toggle); the tracker advances when the relevant handler
   // fires the matching step name.
-  private coachmarkStep: 'deck' | 'spawn' | 'modifier' | 'done' = 'done';
+  private coachmarkStep:
+    | 'deck'
+    | 'spawn'
+    | 'split'
+    | 'ambush'
+    | 'dig'
+    | 'done' = 'done';
   private activeCoachmark: CoachmarkHandle | null = null;
 
   // UI widgets.
@@ -775,10 +810,25 @@ export class RaidScene extends Phaser.Scene {
     bgSprite.setDisplaySize(BOARD_W, BOARD_H);
     bgSprite.setDepth(DEPTHS.boardUnder);
 
-    // Minimal grid - very subtle for alignment only
-    const grid = this.add.graphics({ lineStyle: { width: 0.5, color: 0x1d3a1a, alpha: 0.15 } });
-    for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
-    for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
+    // Grass underlay so the board reads as actual grass, matching
+    // HomeScene. The painterly board sprite still shows through at
+    // ~45% but the green tone dominates.
+    const grass = this.add.graphics();
+    grass.fillStyle(0x6cbf6a, 0.55);
+    grass.fillRect(0, 0, BOARD_W, BOARD_H);
+
+    // Per-tile grid box outlines — small green boxes so the player
+    // can see the grid the buildings + units are aligned to. The old
+    // continuous full-board lines at 0.15 alpha were nearly invisible
+    // and didn't communicate "this is a grid". A 1 px stroke per cell
+    // at 0.45 alpha is readable without competing with art.
+    const grid = this.add.graphics();
+    grid.lineStyle(1, 0x2d5e2a, 0.45);
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        grid.strokeRect(x * TILE + 0.5, y * TILE + 0.5, TILE - 1, TILE - 1);
+      }
+    }
 
     this.spawnZoneGraphics = this.add.graphics().setDepth(2);
 
@@ -860,6 +910,7 @@ export class RaidScene extends Phaser.Scene {
 
     this.boardContainer.add([
       bgSprite,
+      grass,
       this.spawnZoneGraphics,
       grid,
       this.spawnZoneCue,
@@ -876,11 +927,14 @@ export class RaidScene extends Phaser.Scene {
       const y = b.anchorY * TILE + (b.h * TILE) / 2;
       const spr = this.add.image(x, y, `building-${b.kind}`);
       spr.setOrigin(0.5, 0.75);
-      // Bumped the minimum visible footprint from 1.6× tile → 1.85×
-      // so buildings read bigger on the board; matches HomeScene's
-      // same bump. Source sprites are 128 px, so at 89 px display
-      // we're at a cleaner 0.69 downscale (less blur).
-      spr.setDisplaySize(TILE * Math.max(b.w, 1.85), TILE * Math.max(b.h, 1.85));
+      // Buildings render at exactly footprint × TILE so they fit
+      // inside their grid cells. Three readable size tiers fall out
+      // of the data: 2×2 chamber-class (QueenChamber, AcidSpitter,
+      // SpiderNest), 1×1 default (turrets, walls, vaults), and the
+      // 1×1 visually-tiny class (RootSnare with hp=1). Matches
+      // HomeScene's grid-fit treatment so a building looks the same
+      // size in editor + raid.
+      spr.setDisplaySize(b.w * TILE, b.h * TILE);
       this.boardContainer.add(spr);
       this.buildingSprites.set(b.id, spr);
 
@@ -1183,20 +1237,25 @@ export class RaidScene extends Phaser.Scene {
         title: 'Draw a path',
         body: 'Drag from a glowing edge into the base. Your swarm walks the trail you draw.',
       });
-    } else if (this.coachmarkStep === 'modifier') {
-      // Highlight the Dig modifier button (4th in the row).
-      const digBtn = this.modifierButtons.find((b) => b.kind === 'dig');
-      if (!digBtn) {
+    } else if (
+      this.coachmarkStep === 'split' ||
+      this.coachmarkStep === 'ambush' ||
+      this.coachmarkStep === 'dig'
+    ) {
+      const kind = this.coachmarkStep;
+      const btn = this.modifierButtons.find((b) => b.kind === kind);
+      if (!btn) {
         this.completeCoachmarkDrill();
         return;
       }
-      const r = digBtn.container.getBounds();
+      const r = btn.container.getBounds();
+      const copy = MODIFIER_TUTORIAL[kind];
       this.activeCoachmark = showCoachmark({
         scene: this,
         target: { x: r.x, y: r.y, w: r.width, h: r.height },
         prefer: 'below',
-        title: 'Try Dig',
-        body: 'Toggle Dig and your unit burrows mid-path. The dual-layer hook is what makes this game weird.',
+        title: copy.title,
+        body: copy.body,
       });
     }
   }
@@ -1204,20 +1263,33 @@ export class RaidScene extends Phaser.Scene {
   // Advance the drill when the gameplay event matching the current
   // step fires. Caller passes the step it just satisfied; if it
   // matches, we acknowledge and move on.
-  private advanceCoachmark(satisfied: 'deck' | 'spawn' | 'modifier'): void {
+  private advanceCoachmark(
+    satisfied:
+      | 'deck'
+      | 'spawn'
+      | 'split'
+      | 'ambush'
+      | 'dig',
+  ): void {
     if (this.coachmarkStep !== satisfied) return;
     if (this.activeCoachmark) {
       this.activeCoachmark.acknowledge();
       this.activeCoachmark = null;
     }
+    let next: typeof this.coachmarkStep;
     if (satisfied === 'deck') {
-      this.coachmarkStep = 'spawn';
+      next = 'spawn';
     } else if (satisfied === 'spawn') {
-      this.coachmarkStep = 'modifier';
+      next = 'split';
+    } else if (satisfied === 'split') {
+      next = 'ambush';
+    } else if (satisfied === 'ambush') {
+      next = 'dig';
     } else {
       this.completeCoachmarkDrill();
       return;
     }
+    this.coachmarkStep = next;
     this.time.delayedCall(420, () => this.runCoachmarkStep());
   }
 
@@ -1351,18 +1423,32 @@ export class RaidScene extends Phaser.Scene {
   private setModifierMode(kind: Types.PathModifierKind | 'none'): void {
     this.currentModifierMode = kind;
     this.refreshModifierBar();
-    this.deckHintText.setText(
-      kind === 'none'
-        ? 'Direct path — units walk straight through.'
-        : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
-    );
+    // Hint text explains what each modifier does on every toggle, not
+    // just on first encounter, so a player who forgets can re-tap to
+    // refresh the explanation.
+    let hint: string;
+    if (kind === 'none') {
+      hint = 'Direct path — units walk straight through.';
+    } else if (kind === 'split') {
+      hint = 'Split armed — half the swarm peels off at midpoint to hit the nearest building.';
+    } else if (kind === 'ambush') {
+      hint = 'Ambush armed — units pause ~2s at midpoint so follow-up bursts catch up.';
+    } else {
+      hint = 'Dig armed — diggers/termites flip layer at midpoint (walls above, tunnels below).';
+    }
+    this.deckHintText.setText(hint);
     haptic(8);
     sfxModifierTick();
-    // Step 3 of the drill is "try Dig" — toggling any modifier kind
-    // counts (the goal is teaching the bar exists; the player can
-    // experiment with split/ambush from here on their own).
-    if (kind !== 'none') {
-      this.advanceCoachmark('modifier');
+    // Steps 3–5 of the drill teach the three modifiers. Each is only
+    // satisfied when the player toggles the matching button — partial
+    // credit for picking a different modifier could let someone skip
+    // ahead before they understand the mechanic the bubble explained.
+    if (kind === 'split') {
+      this.advanceCoachmark('split');
+    } else if (kind === 'ambush') {
+      this.advanceCoachmark('ambush');
+    } else if (kind === 'dig') {
+      this.advanceCoachmark('dig');
     }
   }
 
@@ -1943,6 +2029,11 @@ export class RaidScene extends Phaser.Scene {
     const enabled = this.animationEnabled[kind] !== false;
     const sheetKey = `unit-${kind}-walk`;
     const animKey = `walk-${kind}`;
+    // Units render at 32×32 (≈ ⅔ of a tile) so two adjacent units fit
+    // side-by-side in a single grid cell during a swarm. The previous
+    // 36 px size pushed every unit slightly past its tile and made
+    // packed columns look mushed against neighbouring buildings.
+    const UNIT_SIZE = 32;
     if (
       isAnimatedKind &&
       enabled &&
@@ -1951,14 +2042,14 @@ export class RaidScene extends Phaser.Scene {
     ) {
       const spr = this.add
         .sprite(x, y, sheetKey)
-        .setDisplaySize(36, 36)
+        .setDisplaySize(UNIT_SIZE, UNIT_SIZE)
         .setOrigin(0.5, 0.7);
       spr.play(animKey);
       return spr;
     }
     return this.add
       .image(x, y, `unit-${kind}`)
-      .setDisplaySize(36, 36)
+      .setDisplaySize(UNIT_SIZE, UNIT_SIZE)
       .setOrigin(0.5, 0.7);
   }
 

@@ -1064,6 +1064,18 @@ export class HomeScene extends Phaser.Scene {
     bgSprite.setDepth(DEPTHS.boardUnder);
     this.boardContainer.add(bgSprite);
 
+    // Grass underlay — a saturated green wash so the surface layer
+    // reads as actual grass underneath the painterly board art. Sits
+    // ABOVE the board sprite (so the green dominates) but below the
+    // grid + decorations + buildings. Underground keeps the warm-tan
+    // feel via the board sprite alone — no overlay there.
+    if (this.layer === 0) {
+      const grass = this.add.graphics();
+      grass.fillStyle(0x6cbf6a, 0.55);
+      grass.fillRect(0, 0, BOARD_W, BOARD_H);
+      this.boardContainer.add(grass);
+    }
+
     // Corner vignette — darkens the edges so the eye focuses on the
     // center of the base. Four triangular gradients built out of
     // overlapping alpha-rects, cheap and GPU-friendly.
@@ -1101,15 +1113,17 @@ export class HomeScene extends Phaser.Scene {
       deco.fillCircle(x, y, r);
     }
 
-    // Grid lines, softened.
-    const grid = this.add.graphics({
-      lineStyle: { width: 1, color: palette.grid, alpha: 0.5 },
-    });
-    for (let x = 0; x <= GRID_W; x++) {
-      grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
-    }
-    for (let y = 0; y <= GRID_H; y++) {
-      grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
+    // Grid lines — drawn as crisp small box outlines so each tile reads
+    // as a discrete cell against the grass. The previous render used
+    // continuous full-board lines at low alpha; a per-tile stroke with
+    // a slightly inset rect keeps the box visible without bleeding the
+    // grid color across building art.
+    const grid = this.add.graphics();
+    grid.lineStyle(1, palette.grid, 0.55);
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        grid.strokeRect(x * TILE + 0.5, y * TILE + 0.5, TILE - 1, TILE - 1);
+      }
     }
 
     // Thick CoC-style wooden frame around the playable area. Two-
@@ -1183,11 +1197,11 @@ export class HomeScene extends Phaser.Scene {
     if (this.pickerContainer) return;
 
     const g = this.add.graphics();
-    // Soft brass "+" — readable against the green/dirt tile but never
-    // loud enough to fight the buildings for attention. Set the line
-    // style once, outside the loop, since every "+" uses the same
-    // stroke.
-    g.lineStyle(2, COLOR.brass, 0.55);
+    // Tiny brass "+" — small enough to disappear behind a building
+    // sprite but visible on bare grass. Smaller than before (3 px
+    // arms instead of 5, hairline stroke) so the grid stays the
+    // primary structure on the board.
+    g.lineStyle(1, COLOR.brass, 0.45);
 
     let drewAny = false;
     for (let y = 0; y < GRID_H; y++) {
@@ -1195,8 +1209,8 @@ export class HomeScene extends Phaser.Scene {
         if (this.isTileOccupied(x, y, this.layer)) continue;
         const cx = x * TILE + TILE / 2;
         const cy = y * TILE + TILE / 2;
-        g.lineBetween(cx - 5, cy, cx + 5, cy);
-        g.lineBetween(cx, cy - 5, cx, cy + 5);
+        g.lineBetween(cx - 3, cy, cx + 3, cy);
+        g.lineBetween(cx, cy - 3, cx, cy + 3);
         drewAny = true;
       }
     }
@@ -1239,12 +1253,17 @@ export class HomeScene extends Phaser.Scene {
       for (const b of STARTER_BUILDINGS) {
         const spansBoth = b.kind === 'QueenChamber';
         if (!spansBoth && b.layer !== this.layer) continue;
-        const x = b.x * TILE + TILE;
-        const y = b.y * TILE + TILE;
+        // Match createBuildingSprite: chamber 2×2 fills four cells,
+        // every other starter is 1×1. Sprites display at exact
+        // footprint × TILE so they line up with the grid.
+        const fw = spansBoth ? 2 : 1;
+        const fh = spansBoth ? 2 : 1;
+        const x = b.x * TILE + (fw * TILE) / 2;
+        const y = b.y * TILE + (fh * TILE) / 2;
         const spr = this.add.image(x, y, `building-${b.kind}`);
         spr.setOrigin(0.5, 0.75);
         spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
-        spr.setDisplaySize(112, 112);
+        spr.setDisplaySize(fw * TILE, fh * TILE);
         this.tweens.add({
           targets: spr,
           scale: { from: spr.scale, to: spr.scale * 1.03 },
@@ -1278,12 +1297,14 @@ export class HomeScene extends Phaser.Scene {
     const spr = this.add.image(x, y, buildingTextureKey(b.kind, rot));
     spr.setOrigin(0.5, 0.75);
     spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
-    const tiles = Math.max(b.footprint.w, b.footprint.h);
-    // 1.4× tile scaling: building sprites are 128×128 source, so a
-    // 1-tile building renders at 67 px — a cleaner 0.52 ratio than
-    // the previous 1.2× (57 px / 0.45 ratio). Bigger + closer to
-    // an integer-multiple downscale means less blur.
-    spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
+    // Buildings render at exactly footprint × TILE so each kind
+    // sits inside its grid cells instead of bleeding across the
+    // surrounding lines. This makes the grid the single source of
+    // truth for building scale: a 1×1 fits one tile, a 2×2
+    // (QueenChamber, AcidSpitter, SpiderNest) fills four, and the
+    // size hierarchy chamber > medium > small reads cleanly without
+    // any oversize fudge factor.
+    spr.setDisplaySize(b.footprint.w * TILE, b.footprint.h * TILE);
     // For wall kinds rotation is encoded in the texture (LeafWall vs
     // LeafWallV). For any other rotatable kind we'd still map the 90°
     // step to a Phaser transform, but currently only walls rotate so
@@ -1560,12 +1581,32 @@ export class HomeScene extends Phaser.Scene {
       selectionGraphics.clear();
       if (!this.serverBase) return;
       const cur = this.serverBase.buildings.find((x) => x.id === b.id) ?? b;
+      // Validity gets a tiny corner glyph (small triangle) plus a
+      // hairline outline at low alpha. The previous full-tile fill at
+      // 0.16 alpha created a chunky red mosaic that competed with the
+      // grid; the outline+corner version is far less intrusive while
+      // still calling out invalid tiles.
       for (let y = 0; y <= GRID_H - fh; y++) {
         for (let x = 0; x <= GRID_W - fw; x++) {
           const valid = this.isMoveTargetValid(cur, x, y, this.layer);
           const color = valid ? 0x5ba445 : 0xd94c4c;
-          overlayGraphics.fillStyle(color, 0.16);
-          overlayGraphics.fillRect(x * TILE, y * TILE, fw * TILE, fh * TILE);
+          const px = x * TILE;
+          const py = y * TILE;
+          const w = fw * TILE;
+          const h = fh * TILE;
+          overlayGraphics.fillStyle(color, valid ? 0.10 : 0.07);
+          overlayGraphics.fillRect(px, py, w, h);
+          overlayGraphics.lineStyle(1, color, valid ? 0.55 : 0.35);
+          overlayGraphics.strokeRect(px + 1, py + 1, w - 2, h - 2);
+          // Tiny corner triangle marks the placement anchor without
+          // taking up the whole tile.
+          const corner = 6;
+          overlayGraphics.fillStyle(color, valid ? 0.85 : 0.55);
+          overlayGraphics.fillTriangle(
+            px, py,
+            px + corner, py,
+            px, py + corner,
+          );
         }
       }
       // Brass outline on the building's CURRENT tile so the player
