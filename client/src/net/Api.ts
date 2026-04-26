@@ -485,6 +485,22 @@ export class Api {
     return (await res.json()) as { requests: ClanUnitRequest[] };
   }
 
+  // Read-only "base tour" — fetch a clanmate's full base snapshot for
+  // tour-mode rendering. Server enforces same-clan membership; 403
+  // for outsiders, 404 for missing player. The first slice of the
+  // step-8 "shared underground tunnels" feature: tour today, sim
+  // integration on top later.
+  async getClanmateBase(playerId: string): Promise<{
+    playerId: string;
+    displayName: string;
+    trophies: number;
+    base: Types.Base;
+  }> {
+    const res = await this.authedFetch(`/clan/base/${encodeURIComponent(playerId)}`);
+    if (!res.ok) throw await errorFromResponse(res, 'clan/base');
+    return (await res.json()) as Awaited<ReturnType<Api['getClanmateBase']>>;
+  }
+
   async upgradeUnit(kind: Types.UnitKind): Promise<UpgradeUnitResponse> {
     const res = await this.authedFetch('/player/upgrade-unit', {
       method: 'POST',

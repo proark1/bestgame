@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { Types } from '@hive/shared';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
 
@@ -752,4 +753,73 @@ export function registerClan(app: FastifyInstance): void {
       })),
     };
   });
+
+  // -- Visit a clanmate's base (read-only base tour) ------------------------
+  // Returns the requested clanmate's base snapshot so the client can
+  // render a tour of their underground/surface layout. Auth gate: the
+  // viewer and target must be in the same clan. Returns 403 if not in
+  // a clan, 404 if the target isn't a clanmate. Foundation for the
+  // step-8 "shared underground tunnels" feature — tour first, then
+  // (eventually) cross-base unit transit on top.
+  app.get<{ Params: { playerId: string } }>(
+    '/clan/base/:playerId',
+    async (req, reply) => {
+      const viewerId = requirePlayer(req, reply);
+      if (!viewerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const targetId = String(req.params.playerId).trim();
+      if (!targetId) {
+        reply.code(400);
+        return { error: 'playerId required' };
+      }
+      // One round-trip: confirm both viewer + target sit in the
+      // same clan, then return the target's base snapshot. The
+      // SELF-clan check prevents an out-of-clan player from tour-
+      // viewing strangers — we want the base browser to feel like
+      // a clan privilege, not a public dossier.
+      const res = await pool.query<{
+        target_name: string | null;
+        target_trophies: number | null;
+        snapshot: Types.Base | null;
+        same_clan: boolean;
+      }>(
+        `WITH viewer AS (
+           SELECT clan_id FROM clan_members WHERE player_id = $1::uuid
+         ), target AS (
+           SELECT clan_id FROM clan_members WHERE player_id = $2::uuid
+         )
+         SELECT p.display_name AS target_name,
+                p.trophies AS target_trophies,
+                b.snapshot AS snapshot,
+                (
+                  EXISTS(SELECT 1 FROM viewer)
+                    AND EXISTS(SELECT 1 FROM target)
+                    AND (SELECT clan_id FROM viewer) = (SELECT clan_id FROM target)
+                ) AS same_clan
+           FROM players p
+           LEFT JOIN bases b ON b.player_id = p.id
+          WHERE p.id = $2::uuid`,
+        [viewerId, targetId],
+      );
+      if (res.rows.length === 0 || !res.rows[0]!.snapshot) {
+        reply.code(404);
+        return { error: 'player or base not found' };
+      }
+      const row = res.rows[0]!;
+      if (!row.same_clan) {
+        reply.code(403);
+        return { error: 'not in the same clan' };
+      }
+      return {
+        playerId: targetId,
+        displayName: row.target_name ?? 'Unknown',
+        trophies: row.target_trophies ?? 0,
+        base: row.snapshot,
+      };
+    },
+  );
 }
