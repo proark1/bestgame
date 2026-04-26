@@ -32,13 +32,16 @@ export function applyDeploy(
 
   state.deployCapRemaining[ownerSlot] = capRemaining - count;
 
-  // Persist the path so pheromoneFollow can walk it each tick.
+  // Persist the path so pheromoneFollow can walk it each tick. The
+  // optional `modifier` is copied through verbatim — pheromone_follow
+  // reads it on each waypoint arrival.
   const storedPath: PheromonePath = {
     pathId: state.nextPathId++,
     spawnLayer: path.spawnLayer,
     unitKind: path.unitKind,
     count,
     points: path.points,
+    ...(path.modifier ? { modifier: path.modifier } : {}),
   };
   state.paths.push(storedPath);
 

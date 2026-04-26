@@ -60,6 +60,18 @@ export interface Unit {
   // clamped to 0 in pheromoneFollow). Set when a RootSnare triggers on
   // this unit. Zero or absent = free to move.
   rootedTicks?: number;
+  // Player-authored ambush marker — set when the unit arrives at a
+  // pheromone path's `ambush` modifier. Counted down each tick in
+  // combat.ts; while > 0, pheromone_follow holds position.
+  ambushTicks?: number;
+  // Latches set by pheromone_follow when a path modifier has fired on
+  // this unit. Forward-only motion makes the segIdx threshold a
+  // sufficient single-fire guard, but storing the latch keeps the
+  // intent explicit and survives any future segment re-walks (e.g.
+  // pull-back effects).
+  hasSplit?: boolean;
+  hasDug?: boolean;
+  hasAmbushed?: boolean;
 }
 
 export interface UnitStats {

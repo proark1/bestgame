@@ -43,6 +43,67 @@ interface DeckEntry {
   label: string;
 }
 
+// A saved tactic captures a finished path geometry so the player can
+// re-deploy it with one tap. Stored in localStorage; never sent to the
+// server (the server only sees the resulting `deployPath` SimInput).
+interface SavedTactic {
+  name: string;
+  unitKind: Types.UnitKind;
+  // Polyline in TILE coordinates (so the geometry survives any future
+  // grid resize and is independent of the on-screen board scale).
+  pointsTile: Array<{ x: number; y: number }>;
+  modifier?: Types.PathModifier;
+  spawnEdge: SpawnEdge;
+}
+
+const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
+const TACTICS_LIMIT = 8; // tight cap — keeps the panel readable
+const MODIFIER_BAR_H = 44;
+
+function loadSavedTactics(): SavedTactic[] {
+  try {
+    const raw = localStorage.getItem(TACTICS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    // Light schema check — anything malformed is dropped silently
+    // rather than crashing the scene.
+    return parsed.filter(
+      (t): t is SavedTactic =>
+        typeof t === 'object' &&
+        t !== null &&
+        typeof (t as SavedTactic).name === 'string' &&
+        typeof (t as SavedTactic).unitKind === 'string' &&
+        Array.isArray((t as SavedTactic).pointsTile),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedTactics(list: SavedTactic[]): void {
+  try {
+    localStorage.setItem(TACTICS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Quota or private mode — non-fatal, tactics just won't persist
+    // across sessions.
+  }
+}
+
+const MODIFIER_GLYPH: Record<Types.PathModifierKind | 'none', string> = {
+  none: '∅',
+  split: '⑂',
+  ambush: '◆',
+  dig: '↧',
+};
+
+const MODIFIER_LABEL: Record<Types.PathModifierKind | 'none', string> = {
+  none: 'Direct',
+  split: 'Split',
+  ambush: 'Ambush',
+  dig: 'Dig',
+};
+
 // Full attacker roster with default deck counts. The scene filters
 // this down to the kinds the player has unlocked at their current
 // Queen Chamber level — unlock thresholds live on the server in
@@ -215,6 +276,25 @@ export class RaidScene extends Phaser.Scene {
   private isDrawing = false;
   private lastSpawnEdge: SpawnEdge = 'left';
 
+  // Pheromone path modifier state. The player picks a mode here BEFORE
+  // drawing; on commit, the chosen modifier is auto-attached at the
+  // path's midpoint waypoint. 'none' = vintage straight-shot path.
+  private currentModifierMode: Types.PathModifierKind | 'none' = 'none';
+  private modifierBar!: Phaser.GameObjects.Container;
+  private modifierButtons: Array<{
+    kind: Types.PathModifierKind | 'none';
+    container: Phaser.GameObjects.Container;
+    bg: Phaser.GameObjects.Graphics;
+    label: Phaser.GameObjects.Text;
+  }> = [];
+  private modifierStamp!: Phaser.GameObjects.Container;
+  // Saved tactics — local-only, persisted to localStorage. Each entry
+  // is a finished pheromone path the player liked enough to keep:
+  // unit kind, modifier, and the polyline in tile space.
+  private tacticsPanel: Phaser.GameObjects.Container | null = null;
+  private lastDraft: SavedTactic | null = null;
+  private saveTacticBtn!: Phaser.GameObjects.Container;
+
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
   private starsText!: Phaser.GameObjects.Text;
@@ -309,6 +389,10 @@ export class RaidScene extends Phaser.Scene {
     this.drawingPoints = [];
     this.isDrawing = false;
     this.matchContext = null;
+    this.currentModifierMode = 'none';
+    this.modifierButtons = [];
+    this.lastDraft = null;
+    this.tacticsPanel = null;
 
     // Start the scene synchronously against the hard-coded bot so there's
     // never a white flash; if a matchmaking response arrives shortly
@@ -377,6 +461,12 @@ export class RaidScene extends Phaser.Scene {
     this.drawBuildingsFromState();
     this.trailGraphics = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     this.boardContainer.add(this.trailGraphics);
+    // Modifier stamp lives inside the boardContainer so it scales with
+    // the board on mobile. Hidden by default; shown briefly after a
+    // commit, fades with the trail.
+    this.modifierStamp = this.add.container(0, 0).setDepth(DEPTHS.boardOverlay + 1).setVisible(false);
+    this.boardContainer.add(this.modifierStamp);
+    this.drawModifierBar();
     this.drawDeckTray();
     this.drawDeck();
 
@@ -776,7 +866,12 @@ export class RaidScene extends Phaser.Scene {
       this.drawingPoints = [local];
       this.boardGuide.setVisible(false);
       const burst = Math.min(this.currentDeckEntry().count, 5);
-      this.deckHintText.setText(`Draw through the base, then release to deploy up to ${burst}.`);
+      const modSuffix = this.currentModifierMode === 'none'
+        ? ''
+        : ` (${MODIFIER_LABEL[this.currentModifierMode]} marker active)`;
+      this.deckHintText.setText(
+        `Draw through the base, then release to deploy up to ${burst}.${modSuffix}`,
+      );
       this.renderTrailPreview();
     });
 
@@ -817,6 +912,16 @@ export class RaidScene extends Phaser.Scene {
       }
       this.refreshDeckUi();
 
+      // Auto-attach the active modifier at the polyline's midpoint
+      // waypoint. We never use index 0 (spawn) — pheromone_follow only
+      // fires modifiers on arrival, so 0 would be inert.
+      const modifier: Types.PathModifier | undefined =
+        this.currentModifierMode === 'none' || tilePoints.length < 3
+          ? undefined
+          : {
+              kind: this.currentModifierMode,
+              pointIndex: Math.max(1, Math.floor((tilePoints.length - 1) / 2)),
+            };
       const input: Types.SimInput = {
         type: 'deployPath',
         tick: this.state.tick + 1,
@@ -827,9 +932,28 @@ export class RaidScene extends Phaser.Scene {
           unitKind: entry.kind,
           count: burst,
           points: tilePoints,
+          ...(modifier ? { modifier } : {}),
         },
       };
       this.pendingInputs.push(input);
+      // Save as a draft so the player can hit "Save tactic" right after
+      // a successful commit without re-drawing.
+      this.lastDraft = {
+        name: `${entry.label} ${MODIFIER_LABEL[this.currentModifierMode]}`,
+        unitKind: entry.kind,
+        pointsTile: this.drawingPoints.map((p) => ({
+          x: p.x / TILE,
+          y: p.y / TILE,
+        })),
+        ...(modifier ? { modifier } : {}),
+        spawnEdge: this.lastSpawnEdge,
+      };
+      this.refreshSaveTacticEnabled();
+      // Stamp the modifier glyph on the trail at the marker waypoint.
+      if (modifier) {
+        const markerPx = this.drawingPoints[modifier.pointIndex];
+        if (markerPx) this.flashModifierStamp(markerPx.x, markerPx.y, this.currentModifierMode);
+      }
       // Replay timeline for server submission — every deploy the player
       // commits is recorded. Defeat/timeout endings submit this list
       // via /api/raid/submit, where the shared sim re-runs it to verify
@@ -853,6 +977,351 @@ export class RaidScene extends Phaser.Scene {
 
   private currentDeckEntry(): DeckEntry {
     return this.deckEntries[this.selectedDeckIdx]!;
+  }
+
+  // ---------- Path modifier toolbar + saved tactics ----------
+
+  private drawModifierBar(): void {
+    this.modifierBar = this.add.container(0, 0).setDepth(32);
+    const bg = this.add.graphics();
+    this.modifierBar.add(bg);
+    // Background panel — re-painted in layout() at the right width.
+    (this.modifierBar as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics })._bg = bg;
+
+    const order: Array<Types.PathModifierKind | 'none'> = ['none', 'split', 'ambush', 'dig'];
+    const buttonW = 96;
+    const buttonH = 32;
+    const gap = 6;
+    let cursorX = 0;
+    for (const kind of order) {
+      const containerBtn = this.add.container(cursorX, 0);
+      const btnBg = this.add.graphics();
+      const label = this.add
+        .text(buttonW / 2, buttonH / 2, `${MODIFIER_GLYPH[kind]}  ${MODIFIER_LABEL[kind]}`, {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '13px',
+          color: '#e6f5d2',
+        })
+        .setOrigin(0.5);
+      containerBtn.add([btnBg, label]);
+      containerBtn.setSize(buttonW, buttonH);
+      containerBtn.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, buttonW, buttonH),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      containerBtn.on('pointerdown', () => this.setModifierMode(kind));
+      this.modifierBar.add(containerBtn);
+      this.modifierButtons.push({ kind, container: containerBtn, bg: btnBg, label });
+      cursorX += buttonW + gap;
+    }
+
+    // Save & Tactics action buttons share the bar's right side.
+    const actionW = 110;
+    const saveContainer = this.add.container(cursorX + 8, 0);
+    const saveBg = this.add.graphics();
+    const saveLabel = this.add
+      .text(actionW / 2, buttonH / 2, '★ Save', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+    saveContainer.add([saveBg, saveLabel]);
+    saveContainer.setSize(actionW, buttonH);
+    saveContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, actionW, buttonH),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    saveContainer.on('pointerdown', () => this.handleSaveTactic());
+    (saveContainer as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics; _label?: Phaser.GameObjects.Text })._bg = saveBg;
+    (saveContainer as Phaser.GameObjects.Container & { _bg?: Phaser.GameObjects.Graphics; _label?: Phaser.GameObjects.Text })._label = saveLabel;
+    this.modifierBar.add(saveContainer);
+    this.saveTacticBtn = saveContainer;
+    cursorX += actionW + 8;
+
+    const tacContainer = this.add.container(cursorX + 8, 0);
+    const tacBg = this.add.graphics();
+    const tacLabel = this.add
+      .text(actionW / 2, buttonH / 2, '☰ Tactics', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+    tacContainer.add([tacBg, tacLabel]);
+    tacContainer.setSize(actionW, buttonH);
+    tacContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, actionW, buttonH),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    tacContainer.on('pointerdown', () => this.toggleTacticsPanel());
+    this.paintActionButton(tacBg, false);
+    this.modifierBar.add(tacContainer);
+
+    this.refreshModifierBar();
+    this.refreshSaveTacticEnabled();
+  }
+
+  private paintActionButton(bg: Phaser.GameObjects.Graphics, pressed: boolean): void {
+    bg.clear();
+    bg.fillStyle(pressed ? 0x2a4530 : 0x1a2b1a, 1);
+    bg.lineStyle(2, COLOR.brassDeep, 1);
+    bg.fillRoundedRect(0, 0, 110, 32, 8);
+    bg.strokeRoundedRect(0, 0, 110, 32, 8);
+  }
+
+  private refreshModifierBar(): void {
+    for (const b of this.modifierButtons) {
+      const selected = b.kind === this.currentModifierMode;
+      b.bg.clear();
+      b.bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
+      b.bg.lineStyle(2, selected ? 0xffd98a : COLOR.brassDeep, 1);
+      b.bg.fillRoundedRect(0, 0, 96, 32, 8);
+      b.bg.strokeRoundedRect(0, 0, 96, 32, 8);
+      b.label.setColor(selected ? '#fff' : '#e6f5d2');
+    }
+  }
+
+  private setModifierMode(kind: Types.PathModifierKind | 'none'): void {
+    this.currentModifierMode = kind;
+    this.refreshModifierBar();
+    this.deckHintText.setText(
+      kind === 'none'
+        ? 'Direct path — units walk straight through.'
+        : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
+    );
+  }
+
+  private flashModifierStamp(
+    px: number,
+    py: number,
+    kind: Types.PathModifierKind | 'none',
+  ): void {
+    if (kind === 'none') return;
+    this.modifierStamp.removeAll(true);
+    const ring = this.add.graphics();
+    ring.lineStyle(3, 0xffd98a, 1);
+    ring.strokeCircle(0, 0, 16);
+    ring.fillStyle(0x162216, 0.85);
+    ring.fillCircle(0, 0, 16);
+    const glyph = this.add
+      .text(0, 0, MODIFIER_GLYPH[kind], {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '20px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+    this.modifierStamp.add([ring, glyph]);
+    this.modifierStamp.setPosition(px, py);
+    this.modifierStamp.setVisible(true);
+    this.modifierStamp.setAlpha(1);
+    this.tweens.killTweensOf(this.modifierStamp);
+    this.tweens.add({
+      targets: this.modifierStamp,
+      alpha: 0,
+      duration: 900,
+      delay: 300,
+      onComplete: () => this.modifierStamp.setVisible(false),
+    });
+  }
+
+  private refreshSaveTacticEnabled(): void {
+    const btn = this.saveTacticBtn as Phaser.GameObjects.Container & {
+      _bg?: Phaser.GameObjects.Graphics;
+      _label?: Phaser.GameObjects.Text;
+    };
+    const enabled = !!this.lastDraft;
+    if (btn._bg) {
+      btn._bg.clear();
+      btn._bg.fillStyle(enabled ? 0x3a3520 : 0x1a1a16, 1);
+      btn._bg.lineStyle(2, enabled ? 0xffd98a : 0x554d2c, 1);
+      btn._bg.fillRoundedRect(0, 0, 110, 32, 8);
+      btn._bg.strokeRoundedRect(0, 0, 110, 32, 8);
+    }
+    if (btn._label) btn._label.setAlpha(enabled ? 1 : 0.45);
+  }
+
+  private handleSaveTactic(): void {
+    if (!this.lastDraft) return;
+    const list = loadSavedTactics();
+    const auto = `${this.lastDraft.name} #${list.length + 1}`;
+    const next: SavedTactic = { ...this.lastDraft, name: auto };
+    list.push(next);
+    while (list.length > TACTICS_LIMIT) list.shift();
+    persistSavedTactics(list);
+    this.spawnDeployPopup(this.scale.width / 2, HUD_H + MODIFIER_BAR_H + 12, 'Saved', 1);
+    if (this.tacticsPanel) {
+      this.closeTacticsPanel();
+      this.openTacticsPanel();
+    }
+  }
+
+  private toggleTacticsPanel(): void {
+    if (this.tacticsPanel) {
+      this.closeTacticsPanel();
+    } else {
+      this.openTacticsPanel();
+    }
+  }
+
+  private openTacticsPanel(): void {
+    const list = loadSavedTactics();
+    const w = Math.min(this.scale.width - 32, 360);
+    const h = Math.min(this.scale.height - HUD_H - 80, 320);
+    const panel = this.add.container(this.scale.width / 2, HUD_H + 60).setDepth(80);
+    const bg = this.add.graphics();
+    drawPanel(bg, -w / 2, 0, w, h, {
+      topColor: 0x172117,
+      botColor: 0x0a120b,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 14,
+      shadowOffset: 5,
+      shadowAlpha: 0.4,
+    });
+    panel.add(bg);
+    const title = this.add
+      .text(0, 14, 'Saved Tactics', displayTextStyle(15, '#ffd98a', 3))
+      .setOrigin(0.5, 0);
+    panel.add(title);
+    const closeBtn = this.add
+      .text(w / 2 - 18, 14, '✕', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5, 0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.closeTacticsPanel());
+    panel.add(closeBtn);
+    if (list.length === 0) {
+      const empty = this.add
+        .text(0, 60, 'Draw a path, then hit ★ Save to bank a tactic.', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '12px',
+          color: '#9fc79a',
+          align: 'center',
+          wordWrap: { width: w - 40 },
+        })
+        .setOrigin(0.5, 0);
+      panel.add(empty);
+    } else {
+      const rowH = 38;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i]!;
+        const rowY = 50 + i * (rowH + 4);
+        const row = this.add.container(0, rowY);
+        const rowBg = this.add.graphics();
+        rowBg.fillStyle(0x1a2b1a, 1);
+        rowBg.lineStyle(1, COLOR.brassDeep, 1);
+        rowBg.fillRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        rowBg.strokeRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        const text = this.add
+          .text(-w / 2 + 22, rowH / 2, t.name, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '12px',
+            color: '#e6f5d2',
+          })
+          .setOrigin(0, 0.5);
+        const meta = `${t.unitKind}${t.modifier ? ' · ' + MODIFIER_GLYPH[t.modifier.kind] : ''}`;
+        const metaText = this.add
+          .text(w / 2 - 90, rowH / 2, meta, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '11px',
+            color: '#9fc79a',
+          })
+          .setOrigin(0, 0.5);
+        const useBtn = this.add
+          .text(w / 2 - 24, rowH / 2, '▶', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '14px',
+            color: '#ffd98a',
+          })
+          .setOrigin(0.5, 0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            this.deployTactic(t);
+            this.closeTacticsPanel();
+          });
+        row.add([rowBg, text, metaText, useBtn]);
+        panel.add(row);
+      }
+    }
+    this.tacticsPanel = panel;
+  }
+
+  private closeTacticsPanel(): void {
+    if (this.tacticsPanel) {
+      this.tacticsPanel.destroy(true);
+      this.tacticsPanel = null;
+    }
+  }
+
+  private deployTactic(t: SavedTactic): void {
+    // Find a deck slot for this kind with stock; fall back silently if
+    // the player has none of the unit type left.
+    const idx = this.deckEntries.findIndex((d) => d.kind === t.unitKind && d.count > 0);
+    if (idx < 0) {
+      this.deckHintText.setText(`No ${t.unitKind} left for that tactic.`);
+      return;
+    }
+    this.selectedDeckIdx = idx;
+    const entry = this.deckEntries[idx]!;
+    const burst = Math.min(entry.count, 5);
+    const tilePoints: Types.PheromonePoint[] = t.pointsTile.map((p) => ({
+      x: Sim.fromFloat(p.x),
+      y: Sim.fromFloat(p.y),
+    }));
+    entry.count -= burst;
+    this.refreshDeckUi();
+    const input: Types.SimInput = {
+      type: 'deployPath',
+      tick: this.state.tick + 1,
+      ownerSlot: 0,
+      path: {
+        pathId: 0,
+        spawnLayer: 0,
+        unitKind: entry.kind,
+        count: burst,
+        points: tilePoints,
+        ...(t.modifier ? { modifier: t.modifier } : {}),
+      },
+    };
+    this.pendingInputs.push(input);
+    this.raidInputs.push(input);
+    // Brief preview trail in screen-pixel space so the player sees what
+    // the tactic actually drew on the board.
+    this.trailGraphics.clear();
+    this.trailGraphics.lineStyle(4, 0xffd98a, 0.95);
+    this.trailGraphics.beginPath();
+    for (let i = 0; i < t.pointsTile.length; i++) {
+      const px = t.pointsTile[i]!.x * TILE;
+      const py = t.pointsTile[i]!.y * TILE;
+      if (i === 0) this.trailGraphics.moveTo(px, py);
+      else this.trailGraphics.lineTo(px, py);
+    }
+    this.trailGraphics.strokePath();
+    this.tweens.add({
+      targets: this.trailGraphics,
+      alpha: { from: 1, to: 0 },
+      duration: 700,
+      onComplete: () => {
+        this.trailGraphics.clear();
+        this.trailGraphics.setAlpha(1);
+      },
+    });
+    if (t.modifier) {
+      const markerTile = t.pointsTile[t.modifier.pointIndex];
+      if (markerTile) {
+        this.flashModifierStamp(
+          markerTile.x * TILE,
+          markerTile.y * TILE,
+          t.modifier.kind,
+        );
+      }
+    }
   }
 
   private drawDeckTray(): void {
@@ -1913,20 +2382,39 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private layout(): void {
-    // Mobile-aware board sizing. Reserve HUD + deck, scale board to
-    // fit the remaining rectangle, center with padding. Everything
-    // else (units, buildings, trail graphics) lives inside the
-    // container so they scale together; pointer math unscales.
+    // Mobile-aware board sizing. Reserve HUD + modifier bar + deck,
+    // scale board to fit the remaining rectangle, center with padding.
+    // Everything else (units, buildings, trail graphics) lives inside
+    // the container so they scale together; pointer math unscales.
     const deckLayout = this.deckLayoutMetrics();
     const availW = this.scale.width - 24;
-    const availH = this.scale.height - HUD_H - deckLayout.trayHeight - 40;
+    const availH = this.scale.height - HUD_H - MODIFIER_BAR_H - deckLayout.trayHeight - 40;
     const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
     this.boardContainer.setScale(scale);
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
     const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
-    const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
+    const yOffset = HUD_H + MODIFIER_BAR_H + Math.max(8, (availH - scaledH) / 2);
     this.boardContainer.setPosition(xOffset, yOffset);
+
+    // Modifier bar — positioned between HUD and the board. Re-paint
+    // its background each layout in case scale.width changed.
+    if (this.modifierBar) {
+      // Bar contents: 4 modifier buttons (96 wide), 2 action buttons (110 wide)
+      // with gaps. Re-center the whole strip on every layout pass so it
+      // tracks viewport resizes.
+      const groupW = 4 * 96 + 3 * 6 + 8 + 110 + 8 + 110;
+      const startX = Math.max(12, (this.scale.width - groupW) / 2);
+      this.modifierBar.setPosition(startX, HUD_H + 6);
+      const bg = (this.modifierBar as Phaser.GameObjects.Container & {
+        _bg?: Phaser.GameObjects.Graphics;
+      })._bg;
+      if (bg) {
+        bg.clear();
+        bg.fillStyle(0x0a120b, 0.6);
+        bg.fillRoundedRect(-12, -4, groupW + 24, 40, 10);
+      }
+    }
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
