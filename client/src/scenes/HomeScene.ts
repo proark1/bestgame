@@ -830,73 +830,143 @@ export class HomeScene extends Phaser.Scene {
       close,
     ]);
 
-    // Action list. Same set as the desktop footer, plus a Fullscreen
-    // toggle and the Codex shortcut so the drawer is a complete nav
-    // menu. Each entry is a full-width secondary button — big tap
-    // target, one action per line, comfortable for thumb reach.
+    // Action list — 17+ entries grouped into 4 categories so the
+    // drawer reads as sections instead of a wall of buttons. Each
+    // section header is a tiny label rendered at startY, and the
+    // entries below follow the same layout/pacing.
     type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
-    const entries: Entry[] = [
-      {
-        label: this.layer === 0 ? '↓ Underground' : '↑ Surface',
-        onPress: () => {
-          this.closeBurgerDrawer();
-          // Move mode's overlay lives on boardContainer; flipping the
-          // layer destroys it. Exit cleanly first so the banner/sprite
-          // alpha also get restored.
-          this.exitMoveMode();
-          this.layer = this.layer === 0 ? 1 : 0;
-          this.boardContainer.removeAll(true);
-          this.drawBoard();
-          this.drawBuildings();
-        },
+    type Section = { title: string; entries: Entry[] };
+    const flipLayer: Entry = {
+      label: this.layer === 0 ? '↓ Switch to Underground' : '↑ Switch to Surface',
+      onPress: () => {
+        this.closeBurgerDrawer();
+        // Move mode's overlay lives on boardContainer; flipping the
+        // layer destroys it. Exit cleanly first so the banner/sprite
+        // alpha also get restored.
+        this.exitMoveMode();
+        this.layer = this.layer === 0 ? 1 : 0;
+        this.boardContainer.removeAll(true);
+        this.drawBoard();
+        this.drawBuildings();
       },
-      { label: '⚔  Raid a base', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
-      { label: '📖  Campaign', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
-      { label: '🏰  Clan wars', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
-      { label: '🌐  Hive war',  onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
-      { label: '🎬  Top raids', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
-      { label: '👑  Queen',    onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
-      { label: '🌳  Queen path', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
-      { label: '⏳  Builders', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
-      { label: '🗓  Quests', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
-      { label: '🧠  Defender AI', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
-      { label: '🏆  Ranks', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
-      { label: '📜  Recent', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidHistoryScene'); } },
-      { label: '⚙  Upgrades', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'UpgradeScene'); } },
-      { label: '👥  Clan', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
-      { label: '🏟  Arena', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
-      { label: '📖  Codex', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
-      { label: '⚙️  Settings', onPress: () => { this.closeBurgerDrawer(); openSettings(); } },
-      { label: '❓  Help', onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
+    };
+    const sections: Section[] = [
       {
-        label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
-        onPress: () => {
-          this.closeBurgerDrawer();
-          // iOS Safari refuses this — silent no-op there.
-          if (this.scale.isFullscreen) this.scale.stopFullscreen();
-          else this.scale.startFullscreen();
-        },
+        title: 'COMBAT',
+        entries: [
+          { label: '⚔  Raid a base', variant: 'primary',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
+          { label: '📖  Campaign',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
+          { label: '🏟  Arena',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
+          { label: '📜  Recent raids',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidHistoryScene'); } },
+        ],
+      },
+      {
+        title: 'WARS & FEED',
+        entries: [
+          { label: '🏰  Clan wars',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
+          { label: '🌐  Hive war',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
+          { label: '🎬  Top raids',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
+        ],
+      },
+      {
+        title: 'PROGRESSION',
+        entries: [
+          { label: '🌳  Queen path',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
+          { label: '👑  Queen',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
+          { label: '⚙  Upgrades',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'UpgradeScene'); } },
+          { label: '🗓  Quests',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
+          { label: '⏳  Builders',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
+        ],
+      },
+      {
+        title: 'BASE & SOCIAL',
+        entries: [
+          { label: '🧠  Defender AI',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
+          { label: '👥  Clan',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
+          { label: '🏆  Ranks',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
+          { label: '📖  Codex',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
+        ],
+      },
+      {
+        title: 'SYSTEM',
+        entries: [
+          { label: '❓  Help',
+            onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
+          { label: '⚙️  Settings',
+            onPress: () => { this.closeBurgerDrawer(); openSettings(); } },
+          {
+            label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
+            onPress: () => {
+              this.closeBurgerDrawer();
+              // iOS Safari refuses this — silent no-op there.
+              if (this.scale.isFullscreen) this.scale.stopFullscreen();
+              else this.scale.startFullscreen();
+            },
+          },
+        ],
       },
     ];
-    if (entries[1]) entries[1].variant = 'primary';
     const btnH = 48;
     const btnW = W - 32;
     const startY = 110;
-    const gap = 8;
-    entries.forEach((e, i) => {
-      const y = startY + i * (btnH + gap) + btnH / 2;
+    const gap = 6;
+    const sectionGap = 18;
+    const headerH = 22;
+    let cursorY = startY;
+    // Quick layer flip lives above the sections — it's the
+    // most-used non-CTA action and shouldn't share a header.
+    {
+      const y = cursorY + btnH / 2;
       const btn = makeHiveButton(this, {
-        x: W / 2,
-        y,
-        width: btnW,
-        height: btnH,
-        label: e.label,
-        variant: e.variant ?? 'secondary',
-        fontSize: 15,
-        onPress: e.onPress,
+        x: W / 2, y, width: btnW, height: btnH,
+        label: flipLayer.label,
+        variant: 'secondary',
+        fontSize: 14,
+        onPress: flipLayer.onPress,
       });
       container.add(btn.container);
-    });
+      cursorY += btnH + sectionGap;
+    }
+    for (const section of sections) {
+      // Section header — uppercase tag-style label.
+      const header = crispText(this, 16, cursorY, section.title,
+        labelTextStyle(10, COLOR.textGold))
+        .setOrigin(0, 0);
+      container.add(header);
+      cursorY += headerH;
+      for (const e of section.entries) {
+        const y = cursorY + btnH / 2;
+        const btn = makeHiveButton(this, {
+          x: W / 2,
+          y,
+          width: btnW,
+          height: btnH,
+          label: e.label,
+          variant: e.variant ?? 'secondary',
+          fontSize: 15,
+          onPress: e.onPress,
+        });
+        container.add(btn.container);
+        cursorY += btnH + gap;
+      }
+      cursorY += sectionGap - gap;
+    }
 
     // Slide-in tween. Start off-screen to the left, ease in.
     container.setPosition(-W, 0);
