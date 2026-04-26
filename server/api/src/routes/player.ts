@@ -985,8 +985,11 @@ export function registerPlayer(app: FastifyInstance): void {
           [playerId, JSON.stringify(next)],
         );
         // Refund. Sugar/leaf are bigint columns; pass as string-
-        // safe positive integers. total_invested is decremented so
-        // colony rank stays honest about lifetime spend.
+        // safe positive integers. total_invested mirrors what the
+        // placement endpoint added (sugar + leaf only — milk is
+        // tracked separately and not part of the colony-rank
+        // running total). Including milk here would silently drift
+        // the running total downward over time on every undo.
         const refundRes = await client.query<{
           sugar: string;
           leaf_bits: string;
@@ -996,7 +999,7 @@ export function registerPlayer(app: FastifyInstance): void {
               SET sugar = sugar + $2,
                   leaf_bits = leaf_bits + $3,
                   aphid_milk = aphid_milk + $4,
-                  total_invested = GREATEST(0, total_invested - ($2 + $3 + $4))
+                  total_invested = GREATEST(0, total_invested - ($2 + $3))
             WHERE id = $1
         RETURNING sugar, leaf_bits, aphid_milk`,
           [playerId, cost.sugar, cost.leafBits, cost.aphidMilk],
