@@ -16,6 +16,7 @@ import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { haptic } from '../ui/haptics.js';
+import { buildTacticShareUrl } from '../codex/tacticShare.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -196,7 +197,11 @@ function queenLevelFromBase(base: Types.Base | undefined): number {
   return Math.max(1, Math.min(5, Math.floor(lvl)));
 }
 
-function buildDeck(attackerQueenLevel: number): DeckEntry[] {
+function buildDeck(
+  attackerQueenLevel: number,
+  donationInventory?: Record<string, number>,
+): DeckEntry[] {
+  const donations = donationInventory ?? {};
   return ALL_DECK
     .filter((d) => d.unlockQueenLevel <= attackerQueenLevel)
     .map((d) => {
@@ -204,6 +209,13 @@ function buildDeck(attackerQueenLevel: number): DeckEntry[] {
       // logic keys off of {kind, count, icon, label} only.
       const { unlockQueenLevel: _unlock, ...rest } = d;
       void _unlock;
+      // Merge in any clanmate-donated units of this kind. Donations
+      // ride on top of the base count so the player feels them as a
+      // free bonus rather than a replacement budget.
+      const donatedCount = donations[d.kind] ?? 0;
+      if (donatedCount > 0) {
+        return { ...rest, count: rest.count + donatedCount };
+      }
       return rest;
     });
 }
@@ -451,7 +463,13 @@ export class RaidScene extends Phaser.Scene {
     // roster and keeps raid UI uncluttered at low tiers.
     const initRuntime = this.registry.get('runtime') as HiveRuntime | undefined;
     this.attackerQueenLevel = queenLevelFromBase(initRuntime?.player?.base);
-    this.deckEntries = buildDeck(this.attackerQueenLevel);
+    // Pull the donation bank off the cached /me response so clanmate
+    // gifts merge into the deck on raid start. The server zeroes it
+    // on /raid/submit, so a successful raid empties the bank for
+    // next time regardless of how many donated units were actually
+    // deployed.
+    const donationInventory = initRuntime?.player?.player.donationInventory ?? {};
+    this.deckEntries = buildDeck(this.attackerQueenLevel, donationInventory);
     this.deckContainers = [];
     this.deckLabels = [];
     this.buildingSprites.clear();
@@ -1547,12 +1565,24 @@ export class RaidScene extends Phaser.Scene {
           .setOrigin(0, 0.5);
         const meta = `${t.unitKind}${t.modifier ? ' · ' + MODIFIER_GLYPH[t.modifier.kind] : ''}`;
         const metaText = this.add
-          .text(w / 2 - 90, rowH / 2, meta, {
+          .text(w / 2 - 116, rowH / 2, meta, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '11px',
             color: '#9fc79a',
           })
           .setOrigin(0, 0.5);
+        // Share — copy a deep-link URL with the tactic encoded into
+        // the hash. Recipient's BootScene reads the hash on load and
+        // imports the tactic into their saved set automatically.
+        const shareBtn = this.add
+          .text(w / 2 - 50, rowH / 2, '📋', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '14px',
+            color: '#c3e8b0',
+          })
+          .setOrigin(0.5, 0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => { void this.shareTactic(t); });
         const useBtn = this.add
           .text(w / 2 - 24, rowH / 2, '▶', {
             fontFamily: 'ui-monospace, monospace',
@@ -1565,7 +1595,7 @@ export class RaidScene extends Phaser.Scene {
             this.deployTactic(t);
             this.closeTacticsPanel();
           });
-        row.add([rowBg, text, metaText, useBtn]);
+        row.add([rowBg, text, metaText, shareBtn, useBtn]);
         panel.add(row);
       }
     }
@@ -1576,6 +1606,40 @@ export class RaidScene extends Phaser.Scene {
     if (this.tacticsPanel) {
       this.tacticsPanel.destroy(true);
       this.tacticsPanel = null;
+    }
+  }
+
+  // Build a share URL for the tactic, write it to the clipboard, and
+  // surface a confirmation toast. Falls back to inline display when
+  // the clipboard API is unavailable (mostly older mobile WebViews
+  // without a user-gesture-bound clipboard permission).
+  private async shareTactic(t: SavedTactic): Promise<void> {
+    const url = buildTacticShareUrl(window.location.origin, {
+      name: t.name,
+      unitKind: t.unitKind,
+      pointsTile: t.pointsTile,
+      spawnEdge: t.spawnEdge,
+      ...(t.modifier ? { modifier: t.modifier } : {}),
+    });
+    let copied = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    this.spawnDeployPopup(
+      this.scale.width / 2,
+      HUD_H + MODIFIER_BAR_H + 12,
+      copied ? 'Link copied' : 'Copy this URL',
+      1,
+    );
+    // If we couldn't copy, prompt() at least gives the player a way
+    // to grab it manually. Skipped when the copy succeeded.
+    if (!copied) {
+      window.prompt('Copy and share this tactic URL:', url);
     }
   }
 

@@ -84,6 +84,12 @@ export interface PlayerState {
     rank: number;
     lootCap: { sugar: number; leafBits: number };
   };
+  // Donated units waiting for the player's next raid. Map of unit
+  // kind → count, credited by clanmates via /clan/donate. RaidScene
+  // merges this into the deck on raid start; /raid/submit clears it
+  // on success. Optional so older servers stay compatible (treated
+  // as empty by the client).
+  donationInventory?: Record<string, number>;
 }
 
 export interface DailyQuestState {
