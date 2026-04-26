@@ -151,6 +151,59 @@ function ensureStyle(): void {
   document.head.append(el);
 }
 
+export interface AccountInfoOptions {
+  username: string;
+  // Called when the user clicks "Log out". Caller is responsible for
+  // clearing the session (auth.logout()) and reloading the scene /
+  // page. This modal just confirms the intent and closes itself.
+  onLogout: () => void;
+  onClose?: () => void;
+}
+
+// Logged-in account modal — shows the username and a Log out button.
+// The login/register modal (openAccountModal) is for the guest path
+// only; mixing the two into a single modal is confusing because the
+// "Register" tab makes no sense for an already-registered user.
+export function openAccountInfoModal(opts: AccountInfoOptions): () => void {
+  ensureStyle();
+  const overlay = document.createElement('div');
+  overlay.className = 'hive-account-overlay';
+  overlay.innerHTML = `
+    <div class="hive-account-card" role="dialog" aria-label="Account">
+      <h2>Hive Wars · Account</h2>
+      <p class="hint">Logged in as <b>@${escapeHtml(opts.username)}</b>.</p>
+      <p class="hint">Logging out clears your session on this device. You can sign back in any time using your username + password.</p>
+      <div class="hive-account-actions">
+        <button type="button" class="hive-account-btn ghost" data-act="cancel">Stay signed in</button>
+        <button type="button" class="hive-account-btn" data-act="logout">Log out</button>
+      </div>
+    </div>
+  `;
+  document.body.append(overlay);
+
+  const close = (): void => {
+    overlay.remove();
+    opts.onClose?.();
+  };
+  overlay.querySelector('[data-act="cancel"]')?.addEventListener('click', close);
+  overlay.querySelector('[data-act="logout"]')?.addEventListener('click', () => {
+    overlay.remove();
+    opts.onLogout();
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  return close;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export function openAccountModal(opts: AccountModalOptions): () => void {
   ensureStyle();
   let mode: 'register' | 'login' = opts.mode ?? 'register';

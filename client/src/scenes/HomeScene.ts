@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import { crispText } from '../ui/text.js';
-import { openAccountModal } from '../ui/accountModal.js';
+import { openAccountModal, openAccountInfoModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
 import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
@@ -57,6 +57,19 @@ const KINDS_WITH_V_VARIANTS: ReadonlySet<Types.BuildingKind> = new Set(['LeafWal
 // run sideways and look broken) we swap to the V variant so weave
 // stays perpendicular to the long axis. Even rotation values (0, 2)
 // render horizontal; odd values (1, 3) render vertical.
+// Stable identity for a "what next?" suggestion so dismissals are
+// scoped. A campaign nudge for chapter 2 is a different banner than
+// chapter 3, and a "run a raid" nudge is distinct from both.
+function whatNextIdentity(
+  s: { sceneKey: string },
+  ps: { campaign?: { chapter?: number } | null },
+): string {
+  if (s.sceneKey === 'CampaignScene') {
+    return `campaign-${ps.campaign?.chapter ?? 'unknown'}`;
+  }
+  return s.sceneKey;
+}
+
 function buildingTextureKey(kind: Types.BuildingKind, rotation: 0 | 1 | 2 | 3 = 0): string {
   if (KINDS_WITH_V_VARIANTS.has(kind) && rotation % 2 === 1) {
     return `building-${kind}V`;
@@ -1361,6 +1374,18 @@ export class HomeScene extends Phaser.Scene {
         p.downX, p.downY, p.upX, p.upY,
       );
       if (dragDist > HomeScene.TAP_THRESHOLD_PX) return;
+      // While in move mode, tapping a different building switches the
+      // move target rather than opening the info modal — staying in
+      // move mode lets the player relocate several buildings without
+      // re-entering edit mode each time. enterMoveMode() exits the
+      // current target (line ~1557 self-check) and rebuilds the
+      // overlay/arrows/drag bindings against the new target.
+      if (this.moveMode) {
+        if (this.moveMode.building.id !== b.id) {
+          this.enterMoveMode(b);
+        }
+        return;
+      }
       this.openBuildingInfo(b);
     });
     this.boardContainer.add(spr);
@@ -2060,10 +2085,17 @@ export class HomeScene extends Phaser.Scene {
     // CTA when there's a concrete next action the player hasn't
     // taken yet. Silently skipped when the other banners already
     // cover the most valuable action (comeback, streak claim,
-    // revenge) so we never repeat nudges.
+    // revenge) so we never repeat nudges. Also skipped when the
+    // player has explicitly dismissed this specific suggestion: each
+    // suggestion has a stable identity (sceneKey + chapter where
+    // applicable) so dismissing "Campaign chapter 2" doesn't
+    // suppress "Run a raid" or "Campaign chapter 3".
     const suggestion = this.pickNextSuggestion(ps);
     if (suggestion) {
-      topY = this.drawWhatNextBanner(topY, suggestion);
+      const suggestionId = whatNextIdentity(suggestion, ps);
+      if (!isBannerDismissed('whatNext', suggestionId)) {
+        topY = this.drawWhatNextBanner(topY, suggestion, suggestionId);
+      }
     }
     void topY;
   }
@@ -2099,6 +2131,7 @@ export class HomeScene extends Phaser.Scene {
   private drawWhatNextBanner(
     topY: number,
     s: { title: string; body: string; cta: string; sceneKey: string },
+    suggestionId: string,
   ): number {
     const maxW = Math.min(520, this.scale.width - 24);
     const x = (this.scale.width - maxW) / 2;
@@ -2117,11 +2150,11 @@ export class HomeScene extends Phaser.Scene {
     crispText(this, x + 14, topY + 26,
       s.body,
       bodyTextStyle(12, COLOR.textPrimary),
-    ).setDepth(DEPTHS.boardOverlay).setWordWrapWidth(maxW - 160, true);
+    ).setDepth(DEPTHS.boardOverlay).setWordWrapWidth(maxW - 200, true);
     const btn = makeHiveButton(this, {
-      x: x + maxW - 80,
+      x: x + maxW - 96,
       y: topY + h / 2,
-      width: 140,
+      width: 130,
       height: 34,
       label: s.cta,
       variant: 'primary',
@@ -2129,6 +2162,13 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => fadeToScene(this, s.sceneKey),
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    // Dismiss × — every banner the user sees should be closeable so
+    // they can clear the top of the screen at will. Uses the same
+    // dismissBanner persistence the comeback/streak/nemesis banners
+    // do, keyed on the suggestion identity so a dismissed "campaign
+    // chapter 2" nudge stays gone but a fresh "campaign chapter 3"
+    // appears later.
+    this.addBannerCloseButton(x, maxW, topY, 'whatNext', suggestionId);
     return topY + h + 8;
   }
 
@@ -3385,14 +3425,37 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
-  // Open the DOM-overlay register/login modal. On success we reload
-  // /player/me so the HUD reflects whichever player the session now
-  // points at — either the same one (guest→user claim) or a different
-  // one (login restored a previous account). Cheapest way to get the
-  // whole scene back in sync is to restart it.
-  private openAccountMenu(): void {
+  // Open the right account modal based on session state. Guests see
+  // the Register/Login modal (claim or swap accounts); logged-in users
+  // see the Account modal with a Log out button — putting "Register"
+  // under the chip of an already-registered user reads as a bug.
+  // fetchMe() is small (cached server-side) so calling it on every
+  // chip tap is fine; we still fall back to the guest modal if the
+  // call fails so the chip is never inert.
+  private async openAccountMenu(): Promise<void> {
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!rt) return;
+    let me: Awaited<ReturnType<typeof rt.auth.fetchMe>> = null;
+    try {
+      me = await rt.auth.fetchMe();
+    } catch {
+      // Network blip — fall through to the guest modal so the user
+      // still has an action they can take.
+    }
+    if (me && !me.isGuest && me.username) {
+      openAccountInfoModal({
+        username: me.username,
+        onLogout: () => {
+          rt.auth.logout();
+          // Hard reload so every cached snapshot in scenes (player,
+          // base, donations, clan) is rebuilt against the next
+          // freshly-minted guest session. scene.restart() alone would
+          // leave HiveRuntime stale.
+          window.location.reload();
+        },
+      });
+      return;
+    }
     openAccountModal({
       auth: rt.auth,
       mode: 'register',

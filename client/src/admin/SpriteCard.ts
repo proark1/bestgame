@@ -15,6 +15,7 @@ import {
   type SpriteHistoryEntry,
 } from './api.js';
 import { removeBackground, removeNearWhite } from './removeBackground.js';
+import { autoCropAndCenter } from './cropImage.js';
 import {
   WALK_FRAME_COUNT,
   WALK_STRIP_WIDTH,
@@ -64,6 +65,8 @@ export class SpriteCard {
   private generateBtn!: HTMLButtonElement;
   private removeBgBtn!: HTMLButtonElement;
   private removeGraysBtn!: HTMLButtonElement;
+  private cropBtn!: HTMLButtonElement;
+  private cropFitBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
   private downloadBtn!: HTMLButtonElement;
   private historyBtn!: HTMLButtonElement;
@@ -446,12 +449,26 @@ export class SpriteCard {
     this.removeGraysBtn = button('Remove grays', 'btn', () =>
       void this.removeNearWhite(),
     );
+    // Auto-trim transparent space around the subject and re-center
+    // it. Two flavours: "Crop" preserves the subject's native scale
+    // (just removes empty side margin); "Crop + fit" also scales the
+    // subject up to ~90% of the canvas — useful when the source has
+    // heavy padding. Both are idempotent so the admin can click again
+    // to refine after a Remove BG / Remove grays pass.
+    this.cropBtn = button('Crop', 'btn', () =>
+      void this.cropSubject('preserve'),
+    );
+    this.cropFitBtn = button('Crop + fit', 'btn', () =>
+      void this.cropSubject('fit'),
+    );
     this.saveBtn = button('Save', 'btn primary', () => void this.save());
     this.downloadBtn = button('Download', 'btn', () => void this.download());
     this.historyBtn = button('History', 'btn', () => void this.openHistory());
     const delBtn = button('Delete', 'btn ghost danger', () => void this.delete());
     this.removeBgBtn.disabled = true;
     this.removeGraysBtn.disabled = true;
+    this.cropBtn.disabled = true;
+    this.cropFitBtn.disabled = true;
     this.saveBtn.disabled = true;
     this.downloadBtn.disabled = true;
     // History is enabled whenever the sprite exists on disk (or has
@@ -462,6 +479,8 @@ export class SpriteCard {
       this.generateBtn,
       this.removeBgBtn,
       this.removeGraysBtn,
+      this.cropBtn,
+      this.cropFitBtn,
       this.saveBtn,
       this.downloadBtn,
       this.historyBtn,
@@ -801,6 +820,50 @@ export class SpriteCard {
     this.downloadBtn.disabled = this.selectedIdx < 0;
     this.removeBgBtn.disabled = this.selectedIdx < 0;
     this.removeGraysBtn.disabled = this.selectedIdx < 0;
+    this.cropBtn.disabled = this.selectedIdx < 0;
+    this.cropFitBtn.disabled = this.selectedIdx < 0;
+  }
+
+  // Auto-trim transparent space around the subject and re-center it
+  // in the original canvas. Use 'preserve' to keep the subject's
+  // native scale (just remove side padding) or 'fit' to scale up to
+  // ~90% of the canvas. Idempotent — re-clicking after a Remove BG
+  // pass will tighten further if more pixels were cleared.
+  async cropSubject(mode: 'preserve' | 'fit'): Promise<void> {
+    if (this.busy || this.selectedIdx < 0) return;
+    const src = this.candidates[this.selectedIdx];
+    if (!src) return;
+    this.setBusy(true);
+    const label = mode === 'fit' ? 'cropping + fitting' : 'cropping';
+    this.opts.showStatus(`${label} ${this.key}…`);
+    try {
+      const cropped = await autoCropAndCenter(src.data, src.mimeType, { mode });
+      if (!cropped) {
+        this.opts.showStatus(
+          `${this.key}: nothing to crop (image is fully transparent)`,
+          'error',
+        );
+        return;
+      }
+      this.candidates[this.selectedIdx] = {
+        data: cropped.base64,
+        mimeType: cropped.mimeType,
+      };
+      this.renderCandidates();
+      await this.prepareCompressed();
+      const { w, h } = cropped.subjectBox;
+      this.opts.showStatus(
+        `Cropped ${this.key} (subject ${w}×${h}, centered)`,
+        'success',
+      );
+    } catch (err) {
+      this.opts.showStatus(
+        `crop failed: ${(err as Error).message}`,
+        'error',
+      );
+    } finally {
+      this.setBusy(false);
+    }
   }
 
   async removeBackground(): Promise<void> {
