@@ -541,7 +541,7 @@ button {
   transform: translateX(-50%);
   background: var(--panel);
   border: 1px solid var(--border);
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: 999px;
   color: var(--text);
   font-family: var(--font);
@@ -551,8 +551,26 @@ button {
   z-index: 1000;
   pointer-events: none;
   max-width: 80%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .status.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.status-close {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.status-close:hover {
   opacity: 1;
 }
 .status.error {

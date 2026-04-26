@@ -3177,7 +3177,10 @@ export class HomeScene extends Phaser.Scene {
 
   private toast: Phaser.GameObjects.Container | null = null;
   private flashToast(msg: string): void {
-    this.toast?.destroy();
+    if (this.toast) {
+      this.tweens.killTweensOf(this.toast);
+      this.toast.destroy();
+    }
     const width = Math.min(
       Math.max(180, msg.length * 8 + 56),
       this.scale.width - 28,
@@ -3219,7 +3222,22 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0.5, 0.5)
       .setWordWrapWidth(width - 36, true)
       .setAlign('center');
-    container.add([bg, accent, text]);
+    // Close button (X)
+    const closeBtn = crispText(
+      this,
+      width / 2 - 12,
+      -height / 2 + 8,
+      '✕',
+      bodyTextStyle(16, COLOR.textPrimary),
+    )
+      .setOrigin(0.5, 0.5)
+      .setInteractive();
+    closeBtn.on('pointerdown', () => {
+      this.tweens.killTweensOf(container);
+      container.destroy();
+      if (this.toast === container) this.toast = null;
+    });
+    container.add([bg, accent, text, closeBtn]);
     this.toast = container;
     this.tweens.add({
       targets: container,

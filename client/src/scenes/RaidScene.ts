@@ -1885,22 +1885,30 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private flashShareToast(msg: string): void {
+    const container = this.add
+      .container(this.scale.width / 2, this.scale.height - 40)
+      .setDepth(DEPTHS.toast);
     const t = this.add
-      .text(this.scale.width / 2, this.scale.height - 40, msg, {
+      .text(0, 0, msg, {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
         color: '#0f1b10',
         backgroundColor: '#ffd98a',
         padding: { left: 10, right: 10, top: 6, bottom: 6 },
       })
-      .setOrigin(0.5)
-      .setDepth(DEPTHS.toast);
+      .setOrigin(0.5);
+    container.add(t);
+    container.setSize(t.width, t.height).setInteractive({ useHandCursor: true });
+    container.on('pointerdown', () => {
+      this.tweens.killTweensOf(container);
+      container.destroy();
+    });
     this.tweens.add({
-      targets: t,
+      targets: container,
       alpha: { from: 1, to: 0 },
       delay: 1600,
       duration: 400,
-      onComplete: () => t.destroy(),
+      onComplete: () => container.destroy(),
     });
   }
 

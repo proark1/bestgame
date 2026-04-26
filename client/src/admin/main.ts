@@ -88,11 +88,15 @@ function statusToast(msg: string, kind: 'info' | 'error' | 'success' = 'info'): 
     document.body.append(el);
   }
   el.className = `status visible ${kind === 'info' ? '' : kind}`;
-  el.textContent = msg;
+  el.innerHTML = '<button class="status-close" title="Dismiss">✕</button>';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  el.prepend(span);
+  const closeBtn = el.querySelector('.status-close') as HTMLButtonElement;
+  const dismissToast = () => el!.classList.remove('visible');
+  closeBtn.addEventListener('click', dismissToast);
   clearTimeout((statusToast as unknown as { _t?: number })._t);
-  (statusToast as unknown as { _t?: number })._t = window.setTimeout(() => {
-    el!.classList.remove('visible');
-  }, 3000);
+  (statusToast as unknown as { _t?: number })._t = window.setTimeout(dismissToast, 3000);
 }
 
 function showAuthModal(): void {
