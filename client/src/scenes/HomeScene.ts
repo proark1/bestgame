@@ -6,6 +6,22 @@ import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
 import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
+import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
+
+// First-visit drill flag. Bumped whenever the steps change shape
+// (e.g., adding a third step). Until the player completes the
+// drill, we re-show on every entry — bailing early stays armed.
+const HOME_COACHMARK_DONE_KEY = 'hive:coachmarks:home:v1';
+function shouldShowHomeCoachmarks(): boolean {
+  try {
+    return localStorage.getItem(HOME_COACHMARK_DONE_KEY) !== '1';
+  } catch {
+    return false;
+  }
+}
+function markHomeCoachmarksDone(): void {
+  try { localStorage.setItem(HOME_COACHMARK_DONE_KEY, '1'); } catch { /* ignore */ }
+}
 import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
@@ -183,6 +199,25 @@ export class HomeScene extends Phaser.Scene {
     if (shouldShowTutorial()) {
       this.time.delayedCall(350, () => openTutorial());
     }
+
+    // Interactive coachmark drill — only on the first visit. Steps:
+    //   1. Tap an empty tile → opens the building picker
+    //   2. Hit ⚔ Raid → starts the first match
+    // Replaces the static text-modal-only onboarding with something
+    // gated on the gameplay events that teach the loop. localStorage
+    // flag bumped if drill steps ever change shape.
+    if (shouldShowHomeCoachmarks() && !this.replayContextActive()) {
+      this.coachmarkStep = 'tile';
+      this.time.delayedCall(700, () => this.runCoachmarkStep());
+    }
+  }
+
+  // Tracks whether we're currently being entered from a replay
+  // context where the player is in spectate mode (no need to coach
+  // them about placement). HomeScene doesn't have a real replay
+  // mode today, so this is a future-proof hook.
+  private replayContextActive(): boolean {
+    return false;
   }
 
   private catalog: Record<
@@ -2410,6 +2445,73 @@ export class HomeScene extends Phaser.Scene {
   private footerButtons: HiveButton[] = [];
 
   private mobileRaidCta: HiveButton | null = null;
+
+  // First-visit coachmark drill state. Each step gates on the
+  // gameplay event it teaches; the tracker advances when the
+  // matching handler fires advanceCoachmark(stepName). Steps:
+  //   - 'tile'  → tap an empty tile to open the building picker
+  //   - 'raid'  → hit ⚔ Raid to start the first match
+  //   - 'done'  → drill complete; flag written, never re-shown
+  private coachmarkStep: 'tile' | 'raid' | 'done' = 'done';
+  private activeCoachmark: CoachmarkHandle | null = null;
+
+  private runCoachmarkStep(): void {
+    if (!this.scene.isActive()) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    if (this.coachmarkStep === 'tile') {
+      // Halo the centre of the board so the eye snaps to "tap
+      // anywhere in here". boardContainer is offset by HUD_H so
+      // its world position picks up the right Y origin.
+      const bx = this.boardContainer.x;
+      const by = this.boardContainer.y;
+      const w = GRID_W * TILE * (this.boardContainer.scaleX || 1);
+      const h = GRID_H * TILE * (this.boardContainer.scaleY || 1);
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: bx + w / 4, y: by + h / 3, w: w / 2, h: h / 3 },
+        prefer: 'below',
+        title: 'Place a building',
+        body: 'Tap any empty tile to open the picker. Defenders go on the surface; economy + storage go underground.',
+      });
+    } else if (this.coachmarkStep === 'raid') {
+      // Halo whichever Raid CTA is live for the current layout —
+      // mobileRaidCta on phones, the first footer button on desktop.
+      let target = { x: 16, y: 16, w: 120, h: 48 };
+      if (this.mobileRaidCta) {
+        const r = this.mobileRaidCta.container.getBounds();
+        target = { x: r.x, y: r.y, w: r.width, h: r.height };
+      } else if (this.footerButtons[0]) {
+        const r = this.footerButtons[0].container.getBounds();
+        target = { x: r.x, y: r.y, w: r.width, h: r.height };
+      }
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target,
+        prefer: 'above',
+        title: 'Try a raid',
+        body: 'Tap to attack another colony. Drag a pheromone path on the battlefield to deploy your swarm.',
+      });
+    }
+  }
+
+  private advanceCoachmark(satisfied: 'tile' | 'raid'): void {
+    if (this.coachmarkStep !== satisfied) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.acknowledge();
+      this.activeCoachmark = null;
+    }
+    if (satisfied === 'tile') {
+      this.coachmarkStep = 'raid';
+    } else {
+      this.coachmarkStep = 'done';
+      markHomeCoachmarksDone();
+      return;
+    }
+    this.time.delayedCall(380, () => this.runCoachmarkStep());
+  }
   private footerChrome: Phaser.GameObjects.Graphics | null = null;
 
   private drawMobileRaidCta(): void {
@@ -2430,7 +2532,10 @@ export class HomeScene extends Phaser.Scene {
       label: 'Raid →',
       variant: 'primary',
       fontSize: 16,
-      onPress: () => fadeToScene(this, 'RaidScene'),
+      onPress: () => {
+        this.advanceCoachmark('raid');
+        fadeToScene(this, 'RaidScene');
+      },
     });
     btn.container.setDepth(DEPTHS.hud);
     this.tweens.add({
@@ -2865,6 +2970,10 @@ export class HomeScene extends Phaser.Scene {
       }
       if (this.isTileOccupied(tx, ty, this.layer)) return;
       this.openPicker(tx, ty);
+      // First-visit drill — opening the building picker satisfies
+      // step 1 ("Place a building"). Step 2 (the Raid CTA) lands
+      // automatically on the next runCoachmarkStep call.
+      this.advanceCoachmark('tile');
     });
 
     // Safety net: if a touch is interrupted (pointer leaves the game,
