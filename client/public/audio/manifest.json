@@ -1,0 +1,62 @@
+[
+  {
+    "key": "click",
+    "src": "click.wav"
+  },
+  {
+    "key": "hover",
+    "src": "hover.wav"
+  },
+  {
+    "key": "earn",
+    "src": "earn.wav"
+  },
+  {
+    "key": "upgrade",
+    "src": "upgrade.wav"
+  },
+  {
+    "key": "victory",
+    "src": "victory.wav"
+  },
+  {
+    "key": "defeat",
+    "src": "defeat.wav"
+  },
+  {
+    "key": "deploy",
+    "src": "deploy.wav"
+  },
+  {
+    "key": "dig",
+    "src": "dig.wav"
+  },
+  {
+    "key": "ambush",
+    "src": "ambush.wav"
+  },
+  {
+    "key": "split",
+    "src": "split.wav"
+  },
+  {
+    "key": "modifierTick",
+    "src": "modifierTick.wav"
+  },
+  {
+    "key": "buildingHit",
+    "src": "buildingHit.wav"
+  },
+  {
+    "key": "buildingDestroyed",
+    "src": "buildingDestroyed.wav"
+  },
+  {
+    "key": "queenDestroyed",
+    "src": "queenDestroyed.wav"
+  },
+  {
+    "key": "unitDeath",
+    "src": "unitDeath.wav"
+  }
+]

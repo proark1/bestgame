@@ -823,4 +823,195 @@ export function registerClan(app: FastifyInstance): void {
       };
     },
   );
+
+  // -- Tunnel links (audit step 8 social foundation) -------------------------
+  // A pair of clanmates can request a "tunnel link" between their
+  // bases. v1 is data-only: the link records the pairing + accepted-
+  // at; sim integration (cross-base transit, passive buffs, shared
+  // underground rendering) is a deferred follow-on. The endpoints
+  // below ship the social half so the player-facing feature is live
+  // and so the sim hook has a stable model to read against.
+
+  // POST /clan/tunnel/request — ask a clanmate to pair tunnels.
+  // Validates: in same clan, not self, no existing link in either
+  // direction. Idempotent: re-requesting an already-pending link
+  // returns the same row.
+  app.post<{ Body: { targetPlayerId?: string } }>(
+    '/clan/tunnel/request',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const targetId = String(req.body?.targetPlayerId ?? '').trim();
+      if (!targetId) {
+        reply.code(400);
+        return { error: 'targetPlayerId required' };
+      }
+      if (targetId === playerId) {
+        reply.code(400);
+        return { error: "can't link to yourself" };
+      }
+      // Same-clan gate via a single self-join. Cheaper than three
+      // subquery scans — one index lookup per side, then EXISTS
+      // short-circuits the moment a matching row is found.
+      const sameClan = await pool.query<{ shared: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM clan_members m1
+             JOIN clan_members m2 ON m1.clan_id = m2.clan_id
+            WHERE m1.player_id = $1::uuid
+              AND m2.player_id = $2::uuid
+         ) AS shared`,
+        [playerId, targetId],
+      );
+      if (!sameClan.rows[0]?.shared) {
+        reply.code(403);
+        return { error: 'must be in the same clan' };
+      }
+      // Canonicalise — store the lower id as player_a.
+      const [a, b] = playerId < targetId
+        ? [playerId, targetId]
+        : [targetId, playerId];
+      try {
+        const ins = await pool.query<{
+          id: string;
+          state: string;
+          requester_id: string;
+        }>(
+          `INSERT INTO clan_tunnel_links (player_a, player_b, requester_id)
+           VALUES ($1::uuid, $2::uuid, $3::uuid)
+           ON CONFLICT (player_a, player_b) DO UPDATE
+             SET id = clan_tunnel_links.id  -- no-op so RETURNING fires
+           RETURNING id, state, requester_id`,
+          [a, b, playerId],
+        );
+        const row = ins.rows[0]!;
+        return {
+          ok: true,
+          linkId: Number(row.id),
+          state: row.state as 'pending' | 'active',
+          alreadyExisted: row.requester_id !== playerId || row.state === 'active',
+        };
+      } catch (err) {
+        app.log.error({ err }, 'tunnel/request failed');
+        reply.code(500);
+        return { error: 'request failed' };
+      }
+    },
+  );
+
+  // POST /clan/tunnel/accept — accept a pending link from a clanmate.
+  // Caller must be the OTHER side of the pair (not the original
+  // requester). Flips state → active and stamps accepted_at.
+  app.post<{ Body: { fromPlayerId?: string } }>(
+    '/clan/tunnel/accept',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const fromId = String(req.body?.fromPlayerId ?? '').trim();
+      if (!fromId) {
+        reply.code(400);
+        return { error: 'fromPlayerId required' };
+      }
+      const [a, b] = playerId < fromId ? [playerId, fromId] : [fromId, playerId];
+      const upd = await pool.query<{ id: string }>(
+        `UPDATE clan_tunnel_links
+            SET state = 'active', accepted_at = NOW()
+          WHERE player_a = $1::uuid
+            AND player_b = $2::uuid
+            AND state = 'pending'
+            AND requester_id = $3::uuid
+          RETURNING id`,
+        [a, b, fromId],
+      );
+      if (upd.rows.length === 0) {
+        reply.code(404);
+        return { error: 'no pending link from that player' };
+      }
+      return { ok: true, linkId: Number(upd.rows[0]!.id) };
+    },
+  );
+
+  // GET /clan/tunnel/my — list the viewer's links + pending-incoming.
+  app.get('/clan/tunnel/my', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const res = await pool.query<{
+      id: string;
+      partner_id: string;
+      partner_name: string | null;
+      state: string;
+      requester_id: string;
+      created_at: Date;
+      accepted_at: Date | null;
+    }>(
+      `SELECT l.id,
+              CASE WHEN l.player_a = $1::uuid THEN l.player_b ELSE l.player_a END
+                AS partner_id,
+              p.display_name AS partner_name,
+              l.state, l.requester_id, l.created_at, l.accepted_at
+         FROM clan_tunnel_links l
+         LEFT JOIN players p
+           ON p.id = CASE WHEN l.player_a = $1::uuid THEN l.player_b ELSE l.player_a END
+        WHERE l.player_a = $1::uuid OR l.player_b = $1::uuid
+        ORDER BY (l.state = 'active') DESC, l.created_at DESC`,
+      [playerId],
+    );
+    return {
+      links: res.rows.map((r) => ({
+        id: Number(r.id),
+        partnerId: r.partner_id,
+        partnerName: r.partner_name ?? 'Unknown',
+        state: r.state as 'pending' | 'active',
+        // True iff the viewer initiated this link (and so is waiting
+        // on the OTHER side to accept).
+        iRequested: r.requester_id === playerId,
+        createdAt: r.created_at.toISOString(),
+        acceptedAt: r.accepted_at ? r.accepted_at.toISOString() : null,
+      })),
+    };
+  });
+
+  // DELETE /clan/tunnel/:partnerId — break the link (or cancel a
+  // pending request). Either side can call. Idempotent.
+  app.delete<{ Params: { partnerId: string } }>(
+    '/clan/tunnel/:partnerId',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const partnerId = String(req.params.partnerId).trim();
+      if (!partnerId) {
+        reply.code(400);
+        return { error: 'partnerId required' };
+      }
+      const [a, b] = playerId < partnerId
+        ? [playerId, partnerId]
+        : [partnerId, playerId];
+      await pool.query(
+        `DELETE FROM clan_tunnel_links
+          WHERE player_a = $1::uuid AND player_b = $2::uuid`,
+        [a, b],
+      );
+      return { ok: true };
+    },
+  );
 }

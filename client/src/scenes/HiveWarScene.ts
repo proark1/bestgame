@@ -128,9 +128,25 @@ export class HiveWarScene extends Phaser.Scene {
     );
     const ends = new Date(this.seasonData.season.endsAt);
     const hoursLeft = Math.max(0, Math.floor((ends.getTime() - Date.now()) / 3_600_000));
+    // Attacks-remaining-today pill, only when the cap is known
+    // AND the viewer is actually enrolled (no point teasing the
+    // count to spectators).
+    let attacksLine = `${hoursLeft} h remaining · ${this.seasonData.enrollments.length}/${this.seasonData.season.boardW * this.seasonData.season.boardH} clans enrolled`;
+    if (
+      this.seasonData.attackCapPerDay !== undefined &&
+      this.seasonData.myEnrollment !== null &&
+      this.seasonData.season.state === 'active'
+    ) {
+      const remaining = Math.max(
+        0,
+        this.seasonData.attackCapPerDay -
+          (this.seasonData.attacksUsedToday ?? 0),
+      );
+      attacksLine += ` · ⚔ ${remaining}/${this.seasonData.attackCapPerDay} attacks today`;
+    }
     this.container.add(
       crispText(this, x + 16, y + 64,
-        `${hoursLeft} h remaining · ${this.seasonData.enrollments.length}/${this.seasonData.season.boardW * this.seasonData.season.boardH} clans enrolled`,
+        attacksLine,
         bodyTextStyle(12, COLOR.textPrimary)),
     );
 
@@ -219,6 +235,61 @@ export class HiveWarScene extends Phaser.Scene {
       crispText(this, cx, cy + 10, `${e.score}`,
         labelTextStyle(8, '#cee1b4')).setOrigin(0.5, 0.5),
     );
+    // Enemy nodes are tappable when the season is active and the
+    // viewer is enrolled — opens a small attack flow.
+    if (
+      !isMe &&
+      this.seasonData?.season?.state === 'active' &&
+      this.seasonData?.myEnrollment !== null
+    ) {
+      const hit = this.add
+        .zone(cx, cy, 50, 50)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => { void this.openAttackPrompt(e); });
+      this.container.add(hit);
+    }
+  }
+
+  private async openAttackPrompt(e: HiveWarEnrollment): Promise<void> {
+    if (!this.seasonData?.season) return;
+    const remaining =
+      (this.seasonData.attackCapPerDay ?? 0) -
+      (this.seasonData.attacksUsedToday ?? 0);
+    if (this.seasonData.attackCapPerDay !== undefined && remaining <= 0) {
+      this.statusText = crispText(
+        this, this.scale.width / 2, this.scale.height - 32,
+        'Daily attack cap reached — try tomorrow.',
+        bodyTextStyle(12, COLOR.textGold),
+      ).setOrigin(0.5, 0.5);
+      return;
+    }
+    // v1 self-reported flow: ask for stars 0..3 via window.prompt.
+    // Once /raid/submit becomes hive-war-aware, this scene flips to
+    // launching a real raid against a defender from the target clan
+    // and the result lands automatically.
+    const ans = window.prompt(
+      `Attack [${e.clanTag}] ${e.clanName}?\nReport stars earned (0-3):`,
+      '3',
+    );
+    if (ans === null) return;
+    const stars = Math.max(0, Math.min(3, Math.floor(Number(ans))));
+    if (!Number.isFinite(stars)) return;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      await runtime.api.hiveWarAttack(
+        this.seasonData.season.id,
+        e.clanId,
+        stars as 0 | 1 | 2 | 3,
+      );
+      // Refresh so the map score + attacks-used counter update.
+      this.seasonData = await runtime.api.getHiveWarSeason();
+      if (!this.scene.isActive()) return;
+      this.renderScene(runtime);
+    } catch (err) {
+      window.alert(`Attack failed: ${(err as Error).message}`);
+    }
   }
 
   private renderLeaderboard(): void {

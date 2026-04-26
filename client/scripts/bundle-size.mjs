@@ -33,6 +33,12 @@ function isInitialChunk(name) {
   if (/(arena|clan|raid)-[^/]+\.js$/.test(name)) return false;
   if (/^admin(\.html|[-_./])/.test(name)) return false;
   if (/assets\/admin[-_.]/.test(name)) return false;
+  // Audio assets are fetched + decoded by initAudioAssets() in
+  // parallel with Phaser boot via the manifest pipeline. First
+  // paint doesn't block on them (the synth fallback covers any
+  // cue that fires before the buffer is ready), so they don't
+  // count toward the first-load budget.
+  if (/^audio\//.test(name)) return false;
   return true;
 }
 

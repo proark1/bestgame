@@ -6,3 +6,4 @@ packages:
   - protocol
   - tools/gemini-art
   - tools/bot-tester
+  - tools/audio-gen

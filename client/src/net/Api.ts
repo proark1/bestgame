@@ -507,6 +507,81 @@ export class Api {
     return (await res.json()) as Awaited<ReturnType<Api['hiveWarEnroll']>>;
   }
 
+  async hiveWarAttack(
+    seasonId: number,
+    defenderClanId: string,
+    stars: 0 | 1 | 2 | 3,
+  ): Promise<{
+    ok: true;
+    stars: number;
+    scoreDelta: number;
+    attacksUsed: number;
+    cap: number;
+  }> {
+    const res = await this.authedFetch(
+      `/hivewar/season/${encodeURIComponent(String(seasonId))}/attack`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ defenderClanId, stars }),
+      },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'hivewar/attack');
+    return (await res.json()) as Awaited<ReturnType<Api['hiveWarAttack']>>;
+  }
+
+  async hiveWarStart(seasonId: number): Promise<{ ok: true }> {
+    const res = await this.authedFetch(
+      `/hivewar/season/${encodeURIComponent(String(seasonId))}/start`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'hivewar/start');
+    return (await res.json()) as { ok: true };
+  }
+
+  // Clanmate tunnel links — foundation for the audit's "shared
+  // underground tunnels" feature. v1 ships the social pairing
+  // (request → accept → linked) with no sim hook yet; the linked
+  // pair shows up as a "🌐 Linked" badge in ClanScene member rows.
+  async clanTunnelRequest(
+    targetPlayerId: string,
+  ): Promise<{ ok: true; linkId: number; state: 'pending' | 'active'; alreadyExisted: boolean }> {
+    const res = await this.authedFetch('/clan/tunnel/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetPlayerId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/tunnel/request');
+    return (await res.json()) as Awaited<ReturnType<Api['clanTunnelRequest']>>;
+  }
+
+  async clanTunnelAccept(
+    fromPlayerId: string,
+  ): Promise<{ ok: true; linkId: number }> {
+    const res = await this.authedFetch('/clan/tunnel/accept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fromPlayerId }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'clan/tunnel/accept');
+    return (await res.json()) as Awaited<ReturnType<Api['clanTunnelAccept']>>;
+  }
+
+  async clanTunnelMy(): Promise<{ links: ClanTunnelLink[] }> {
+    const res = await this.authedFetch('/clan/tunnel/my');
+    if (!res.ok) throw await errorFromResponse(res, 'clan/tunnel/my');
+    return (await res.json()) as { links: ClanTunnelLink[] };
+  }
+
+  async clanTunnelBreak(partnerId: string): Promise<{ ok: true }> {
+    const res = await this.authedFetch(
+      `/clan/tunnel/${encodeURIComponent(partnerId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'clan/tunnel/break');
+    return (await res.json()) as { ok: true };
+  }
+
   // Read-only "base tour" — fetch a clanmate's full base snapshot for
   // tour-mode rendering. Server enforces same-clan membership; 403
   // for outsiders, 404 for missing player. The first slice of the
@@ -1084,6 +1159,25 @@ export interface HiveWarSeasonResponse {
     attacksMade: number;
     attacksReceived: number;
   } | null;
+  // Per-viewer daily-attack-cap state. Optional so older servers
+  // (before migrations/0021) still load — the client treats absent
+  // as no-cap and hides the remaining-attacks pill.
+  attacksUsedToday?: number;
+  attackCapPerDay?: number;
+}
+
+// Tunnel link — shared-underground pair between two clanmates.
+// 'pending' = one side requested, other hasn't accepted yet.
+// 'active' = both accepted; the sim hook (deferred) will read these
+// rows to inject cross-base effects when it lands.
+export interface ClanTunnelLink {
+  id: number;
+  partnerId: string;
+  partnerName: string;
+  state: 'pending' | 'active';
+  iRequested: boolean;
+  createdAt: string;
+  acceptedAt: string | null;
 }
 
 export interface ClanUnitRequest {
