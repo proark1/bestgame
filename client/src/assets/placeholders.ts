@@ -729,6 +729,34 @@ const PLACEHOLDER_BUILDINGS: Record<
   },
 };
 
+// -- Board background placeholder ------------------------------------------
+
+function drawBoardBackground(scene: Phaser.Scene): void {
+  const key = 'board-background';
+  if (scene.textures.exists(key)) return;
+  const BOARD_BG_SIZE = 256;
+  const g = makeGraphics(scene);
+  // Simple tileable grass/earth pattern
+  g.fillStyle(PALETTE.leaf.body, 1);
+  g.fillRect(0, 0, BOARD_BG_SIZE, BOARD_BG_SIZE);
+  // Darker earth patches for variation
+  g.fillStyle(PALETTE.earth.body, 0.4);
+  for (let y = 0; y < BOARD_BG_SIZE; y += 32) {
+    for (let x = 0; x < BOARD_BG_SIZE; x += 48) {
+      g.fillRect(x, y, 24, 24);
+    }
+  }
+  // Lighter grass highlights
+  g.fillStyle(PALETTE.neutral.accent, 0.2);
+  for (let i = 0; i < 12; i++) {
+    const x = (i * 73) % BOARD_BG_SIZE;
+    const y = ((i * 119) % (BOARD_BG_SIZE - 10)) + 5;
+    g.fillCircle(x, y, 3 + (i % 3));
+  }
+  g.generateTexture(key, BOARD_BG_SIZE, BOARD_BG_SIZE);
+  g.destroy();
+}
+
 // -- UI placeholders --------------------------------------------------------
 
 function drawUi(scene: Phaser.Scene, key: string): void {
@@ -789,7 +817,8 @@ export function generateMissingPlaceholders(
   keys: readonly string[],
 ): void {
   for (const key of keys) {
-    if (key.startsWith('unit-')) drawUnit(scene, key);
+    if (key === 'board-background') drawBoardBackground(scene);
+    else if (key.startsWith('unit-')) drawUnit(scene, key);
     else if (key.startsWith('building-')) drawBuilding(scene, key);
     else if (key.startsWith('ui-')) drawUi(scene, key);
   }

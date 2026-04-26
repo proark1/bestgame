@@ -8,7 +8,7 @@ import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { crispText } from '../ui/text.js';
-import { COLOR, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { BUILDING_CODEX } from '../codex/codexData.js';
 
 // Live arena — 2-player Colyseus match on a neutral mirror base.
@@ -300,30 +300,24 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawBoard(): void {
-    const bg = this.add.graphics();
-    bg.fillStyle(COLOR.boardSurfaceLo, 1);
-    bg.fillRect(0, 0, BOARD_W, BOARD_H);
-    bg.fillStyle(COLOR.boardSurface, 1);
-    for (let y = 0; y < GRID_H; y++) {
-      for (let x = 0; x < GRID_W; x++) {
-        if ((x + y) % 2 === 0) bg.fillRect(x * TILE, y * TILE, TILE, TILE);
-      }
-    }
-    bg.fillStyle(0xffffff, 0.035);
-    bg.fillRect(0, 0, BOARD_W, 18);
-    bg.fillStyle(0x4b2f1c, 0.28);
-    bg.fillRect(0, BOARD_H - 18, BOARD_W, 18);
+    // Board background sprite (loaded by BootScene or rendered as placeholder)
+    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
+    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
+    bgSprite.setDepth(DEPTHS.boardUnder);
+
     const grid = this.add.graphics({
       lineStyle: { width: 1, color: 0x2c5a23, alpha: 0.5 },
     });
     for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
     for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
+
     const edge = this.add.graphics();
     edge.fillStyle(COLOR.brass, 0.18);
     edge.fillRect(0, 0, 8, BOARD_H);
     edge.fillStyle(COLOR.brass, 0.34);
     edge.fillRect(8, 0, 3, BOARD_H);
-    this.boardContainer.add([bg, grid, edge]);
+
+    this.boardContainer.add([bgSprite, grid, edge]);
   }
 
   private drawStartingBuildings(): void {

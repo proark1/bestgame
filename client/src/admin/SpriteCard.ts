@@ -523,13 +523,16 @@ export class SpriteCard {
       // Extract kind from this.key (e.g., "unit-ant" -> "ant")
       const kind = this.key.replace(/^unit-/, '');
       // Load animation strip with cache-bust. Animation files are named:
-      // unit-{kind}-walk.{ext} and contain two frames composited into 256×128
-      previewImg.src = `/assets/sprites/unit-${kind}-walk.webp?t=${Date.now()}`;
+      // unit-{kind}-walk.{ext} and contain two frames composited into 256×128.
+      // Use the sprite's format as primary to stay in sync; fall back to the other
+      // format if the primary doesn't exist (handles format changes gracefully).
+      const primaryExt = this.opts.fileMeta.ext ?? 'webp';
+      const fallbackExt = primaryExt === 'webp' ? 'png' : 'webp';
+      previewImg.src = `/assets/sprites/unit-${kind}-walk.${primaryExt}?t=${Date.now()}`;
       previewImg.alt = 'Walk cycle animation';
       previewImg.addEventListener('error', () => {
-        // Fallback if webp doesn't exist (e.g., first generation saved as png)
-        previewImg.src = `/assets/sprites/unit-${kind}-walk.png?t=${Date.now()}`;
-      });
+        previewImg.src = `/assets/sprites/unit-${kind}-walk.${fallbackExt}?t=${Date.now()}`;
+      }, { once: true });
       previewBox.append(previewImg);
       panel.append(previewBox);
     }

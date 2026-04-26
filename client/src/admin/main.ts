@@ -25,6 +25,7 @@ import {
   type UiOverrideSettings,
   type SpriteFile,
 } from './api.js';
+import { removeBackground, removeNearWhite } from './removeBackground.js';
 import { SpriteCard } from './SpriteCard.js';
 import { compressBase64Image, humanBytes } from './compress.js';
 import { renderPreviewPanel } from './PreviewPanel.js';
@@ -662,10 +663,18 @@ async function generateAnimationFromSprite(
   const b = imgsB[0];
   if (!b) throw new Error('Gemini returned no image for frame 2');
 
+  // Automatically remove background from frame 2 to match frame 1.
+  // Only background removal; gray-filler cleanup skipped to preserve
+  // intentional light details (pale wing edges, highlights).
+  onProgress?.(`${kind}: cleaning frame 2 (removing background)…`);
+  const bCleaned = await removeBackground(b.data, b.mimeType);
+
+  // Convert both frames to GeminiImage format for compositing.
+  // Frame 1 (sprite) stays as-is; frame 2 is now cleaned of backdrop.
   onProgress?.(`${kind}: compositing strip…`);
-  // Convert sprite to GeminiImage format for compositing
   const frameA: typeof b = { mimeType, data: spriteBase64 };
-  const stripPng = await compositeWalkStrip([frameA, b]);
+  const frameB: typeof b = { mimeType: 'image/png', data: bCleaned.base64 };
+  const stripPng = await compositeWalkStrip([frameA, frameB]);
 
   onProgress?.(`${kind}: compressing…`);
   const compressed = await compressBase64Image(stripPng, 'image/png', {
@@ -727,8 +736,21 @@ async function generateWalkCycle(
   const b = imgsB[0];
   if (!b) throw new Error('Gemini returned no image for pose B');
 
+  // Automatically remove background from both poses to ensure clean animation.
+  // Only background removal; gray-filler cleanup skipped to preserve
+  // intentional light details (pale wing edges, highlights).
+  onProgress?.(`${kind}: cleaning pose A (removing background)…`);
+  const aCleaned = await removeBackground(a.data, a.mimeType);
+
+  onProgress?.(`${kind}: cleaning pose B (removing background)…`);
+  const bCleaned = await removeBackground(b.data, b.mimeType);
+
+  // Convert both poses to GeminiImage format with cleaned data
+  const aFrame: typeof a = { mimeType: 'image/png', data: aCleaned.base64 };
+  const bFrame: typeof b = { mimeType: 'image/png', data: bCleaned.base64 };
+
   onProgress?.(`${kind}: compositing strip…`);
-  const stripPng = await compositeWalkStrip([a, b]);
+  const stripPng = await compositeWalkStrip([aFrame, bFrame]);
 
   onProgress?.(`${kind}: compressing…`);
   // Use global sprite compression settings; ensure quality high enough for animation detail
