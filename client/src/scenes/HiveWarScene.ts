@@ -148,7 +148,7 @@ export class HiveWarScene extends Phaser.Scene {
         label: 'Enroll my clan',
         variant: 'primary',
         fontSize: 13,
-        onPress: () => { void this.enroll(runtime); },
+        onPress: () => { void this.enroll(runtime, btn); },
       });
       this.container.add(btn.container);
     } else if (this.seasonData.myEnrollment) {
@@ -254,8 +254,12 @@ export class HiveWarScene extends Phaser.Scene {
     });
   }
 
-  private async enroll(runtime: HiveRuntime): Promise<void> {
+  private async enroll(
+    runtime: HiveRuntime,
+    btn?: ReturnType<typeof makeHiveButton>,
+  ): Promise<void> {
     if (!this.seasonData?.season) return;
+    btn?.setBusy(true);
     try {
       await runtime.api.hiveWarEnroll(this.seasonData.season.id);
       // Refresh; the server response gives us the slot but
@@ -265,6 +269,10 @@ export class HiveWarScene extends Phaser.Scene {
       this.renderScene(runtime);
     } catch (err) {
       this.statusText?.setText?.(`Enroll failed: ${(err as Error).message}`);
+      btn?.setBusy(false);
     }
+    // Note: the success path doesn't clear setBusy because
+    // renderScene tears down the button + makes a new one with
+    // myEnrollment set, so the spinner state is dropped with it.
   }
 }
