@@ -37,6 +37,12 @@ export interface HiveButton {
   setSize: (w: number, h: number) => HiveButton;
   setEnabled: (enabled: boolean) => HiveButton;
   setVariant: (variant: ButtonVariant) => HiveButton;
+  // Toggle the inline busy state — disables pointer events, dims the
+  // label slightly, and rotates a small spinner glyph overlaid on
+  // the right side. Use for async actions (raid submit, donate,
+  // hivewar enroll) so the player gets immediate visual feedback
+  // that the tap registered.
+  setBusy: (busy: boolean) => HiveButton;
   destroy: () => void;
 }
 
@@ -74,6 +80,21 @@ export function makeHiveButton(
   // and are re-shown automatically when paint() re-runs.
   let ninesliceBg: Phaser.GameObjects.NineSlice | null = null;
   const text = scene.add.text(0, 0, curLabel, {}).setOrigin(0.5, 0.5);
+  // Busy-state spinner — a small rotating glyph that overlays the
+  // label when an async action is in flight. Hidden by default; the
+  // setBusy(true) entry point reveals + spins it. Lives in the
+  // container's add-order between the body and the text so it
+  // paints on top of the body but doesn't push the label around.
+  const spinner = scene.add
+    .text(0, 0, '◐', {
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: '14px',
+      color: '#1f2148',
+    })
+    .setOrigin(0.5, 0.5)
+    .setVisible(false);
+  let busy = false;
+  let spinnerTween: Phaser.Tweens.Tween | null = null;
 
   // Map button variant → override key. Only primary/secondary have a
   // generated asset today; other variants fall through to Graphics.
@@ -289,7 +310,7 @@ export function makeHiveButton(
     paint();
   });
 
-  container.add([shadow, bg, highlight, gloss, text, hit]);
+  container.add([shadow, bg, highlight, gloss, text, spinner, hit]);
 
   const api: HiveButton = {
     container,
@@ -321,7 +342,46 @@ export function makeHiveButton(
       paint();
       return api;
     },
-    destroy: () => container.destroy(),
+    setBusy: (next) => {
+      busy = next;
+      // Position spinner near the right edge of the label so it
+      // doesn't shove the text around on toggle.
+      spinner.setPosition(curW / 2 - 14, 0);
+      spinner.setVisible(busy);
+      // Greyed label while spinning so the glance is "in flight" not
+      // "tappable". hit zone is suppressed via setInteractive(false).
+      text.setAlpha(busy ? 0.55 : 1);
+      const cursor = busy || !enabled ? false : true;
+      // Phaser's setInteractive() with a flag toggles event handling
+      // but ALSO honors the cursor hint we pass in. We re-bind on
+      // every state flip so a tap during a busy spinner is silently
+      // dropped without triggering the onPress.
+      if (busy) {
+        hit.disableInteractive();
+      } else {
+        hit.setInteractive({ useHandCursor: cursor });
+      }
+      if (busy && !spinnerTween) {
+        spinner.setRotation(0);
+        spinnerTween = scene.tweens.add({
+          targets: spinner,
+          rotation: Math.PI * 2,
+          duration: 900,
+          repeat: -1,
+          ease: 'Linear',
+        });
+      } else if (!busy && spinnerTween) {
+        spinnerTween.stop();
+        spinnerTween = null;
+        spinner.setRotation(0);
+      }
+      paint();
+      return api;
+    },
+    destroy: () => {
+      if (spinnerTween) spinnerTween.stop();
+      container.destroy();
+    },
   };
   return api;
 }

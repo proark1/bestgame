@@ -12,6 +12,7 @@ import {
 import { makeHiveButton } from '../ui/button.js';
 import { crispText } from '../ui/text.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import {
   COLOR,
   bodyTextStyle,
@@ -78,11 +79,15 @@ export class HiveWarScene extends Phaser.Scene {
     if (!this.seasonData) return;
     this.container.removeAll(true);
     if (!this.seasonData.season) {
-      this.container.add(
-        crispText(this, 16, 16, 'No active hive war season. A new one starts soon.',
-          bodyTextStyle(13, COLOR.textDim))
-          .setWordWrapWidth(this.scale.width - 32, true),
-      );
+      const w = Math.min(560, this.scale.width - 32);
+      const x = (this.scale.width - w) / 2;
+      const handle = drawEmptyState({
+        scene: this, x, y: 16, width: w,
+        glyph: '🌐',
+        title: 'No active hive war season',
+        body: 'The next season opens automatically — check back soon to enroll your clan on the map.',
+      });
+      this.container.add(handle.container);
       return;
     }
     this.renderHeader(runtime);
@@ -143,7 +148,7 @@ export class HiveWarScene extends Phaser.Scene {
         label: 'Enroll my clan',
         variant: 'primary',
         fontSize: 13,
-        onPress: () => { void this.enroll(runtime); },
+        onPress: () => { void this.enroll(runtime, btn); },
       });
       this.container.add(btn.container);
     } else if (this.seasonData.myEnrollment) {
@@ -249,8 +254,12 @@ export class HiveWarScene extends Phaser.Scene {
     });
   }
 
-  private async enroll(runtime: HiveRuntime): Promise<void> {
+  private async enroll(
+    runtime: HiveRuntime,
+    btn?: ReturnType<typeof makeHiveButton>,
+  ): Promise<void> {
     if (!this.seasonData?.season) return;
+    btn?.setBusy(true);
     try {
       await runtime.api.hiveWarEnroll(this.seasonData.season.id);
       // Refresh; the server response gives us the slot but
@@ -260,6 +269,10 @@ export class HiveWarScene extends Phaser.Scene {
       this.renderScene(runtime);
     } catch (err) {
       this.statusText?.setText?.(`Enroll failed: ${(err as Error).message}`);
+      btn?.setBusy(false);
     }
+    // Note: the success path doesn't clear setBusy because
+    // renderScene tears down the button + makes a new one with
+    // myEnrollment set, so the spinner state is dropped with it.
   }
 }

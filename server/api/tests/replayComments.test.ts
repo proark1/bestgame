@@ -37,25 +37,28 @@ describe('validateCommentContent', () => {
   });
 
   it('clamps overlong content to 280 chars', () => {
-    const long = 'x'.repeat(500);
+    // Use varied content so the anti-spam repeat-cap doesn't
+    // collapse the input below the length cap before the slice.
+    const long = 'lorem ipsum dolor sit amet '.repeat(60);
     const result = validateCommentContent(long);
     expect('content' in result).toBe(true);
     if ('content' in result) {
-      expect(result.content.length).toBe(280);
+      expect(result.content.length).toBeLessThanOrEqual(280);
+      expect(result.content.length).toBeGreaterThan(270);
     }
   });
 
   it('caps regex work on huge payloads (DoS pre-slice)', () => {
-    // 5 MB string — would be slow to regex-walk in full. The
-    // pre-slice clamps to 2× MAX_COMMENT_LEN before the regex runs,
-    // so the validator returns quickly even on hostile input.
+    // 5 MB of repeated character — anti-spam collapses it, but
+    // the test asserts the validator returns FAST regardless of
+    // payload size (pre-slice CPU guard does the work).
     const huge = 'a'.repeat(5_000_000);
     const start = Date.now();
     const result = validateCommentContent(huge);
     const elapsedMs = Date.now() - start;
     expect('content' in result).toBe(true);
     if ('content' in result) {
-      expect(result.content.length).toBe(280);
+      expect(result.content.length).toBeLessThanOrEqual(280);
     }
     // Generous bound — a regex-everything walk on 5 MB takes
     // hundreds of milliseconds; the pre-slice should keep us well

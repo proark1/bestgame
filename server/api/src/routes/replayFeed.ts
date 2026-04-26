@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import { sanitizeSafeText } from '../util/safeText.js';
 
 // Replay feed. Passive engagement loop: when a player is tired of
 // raiding themselves, they can scroll the "Top Raids" feed — watch
@@ -440,31 +441,18 @@ export function registerReplayFeed(app: FastifyInstance): void {
   );
 }
 
-// Comment-content validator — exported for unit tests so the rules
-// (length cap + control-char strip) are pinned without spinning up
-// the route. Mirrors sanitizeChat in clan.ts but stays local here so
-// the two surfaces evolve independently. Rate-limiting is done
-// entirely in SQL (see the POST handler) so we don't keep a JS-side
-// constant for the threshold.
+// Comment-content validator — delegates to the shared text-only
+// sanitiser in util/safeText.ts so /replay/:id/comments and
+// /clan/message stay in lockstep on URL/markdown/HTML stripping
+// and length caps. Pure wrapper exists so the existing call-site
+// shape (`{ content } | { error }`) doesn't churn.
 const MAX_COMMENT_LEN = 280;
 const MAX_COMMENT_FETCH = 100;
 
 export function validateCommentContent(
   raw: unknown,
 ): { content: string } | { error: string } {
-  if (typeof raw !== 'string') return { error: 'content required' };
-  // Pre-slice to a generous cap BEFORE running the regex pass.
-  // Without this a malicious caller could pass a multi-megabyte
-  // string and the regex engine would walk every byte before the
-  // final .slice() trims it down — a cheap CPU-DoS vector. Twice
-  // the legit max is plenty of headroom for whitespace runs that
-  // collapse on .replace().
-  const cleaned = raw
-    .slice(0, MAX_COMMENT_LEN * 2)
-    .replace(/[\x00-\x1f\x7f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_COMMENT_LEN);
-  if (cleaned.length === 0) return { error: 'content cannot be empty' };
-  return { content: cleaned };
+  const r = sanitizeSafeText(raw, { maxLength: MAX_COMMENT_LEN });
+  if (!r.ok) return { error: r.error };
+  return { content: r.content };
 }
