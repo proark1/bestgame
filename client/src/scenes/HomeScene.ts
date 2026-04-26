@@ -1003,8 +1003,6 @@ export class HomeScene extends Phaser.Scene {
     const palette =
       this.layer === 0
         ? {
-            baseA: 0xb6e6c0,   // bright mint top
-            baseB: 0x8edaa1,   // softer mint bottom
             grid: 0x4d9b5c,
             decorA: 0xd3f1d8,  // pale mint highlights
             decorB: 0x6cd47e,  // saturated mint dots
@@ -1012,8 +1010,6 @@ export class HomeScene extends Phaser.Scene {
             highlight: 0xe8fff0,
           }
         : {
-            baseA: 0xeacca8,   // peachy tan top
-            baseB: 0xd1ad88,   // warmer tan bottom
             grid: 0xb8a285,
             decorA: 0xfcdfc0,  // pale peach highlights
             decorB: 0xfdcd6a,  // butter-yellow dots
@@ -1021,78 +1017,16 @@ export class HomeScene extends Phaser.Scene {
             highlight: 0xfff5e3,
           };
 
-    // Solid base layer painted UNDER everything else so the playable
-    // area always reads as one continuous green surface, even when
-    // the generated board-tile art has semi-transparent edges or
-    // dark seams where repeats meet. Without this pad, the user
-    // sees the board as a 3×2 grid of chunks separated by dark
-    // lanes (the scene's ambient showing through tile gaps), not
-    // as a single field.
-    const basePad = this.add.graphics();
-    basePad.fillStyle(palette.baseA, 1);
-    basePad.fillRect(0, 0, BOARD_W, BOARD_H);
-    this.boardContainer.add(basePad);
-
-    const bg = this.add.graphics();
-    // If the admin has turned on the `ui-board-tile-surface` override
-    // AND the image is on disk, tile it across the board instead of
-    // the gradient-bands path. The image is designed at 128×128
-    // tileable, which lines up exactly with the 64-px grid tiles so
-    // the seam lands between cells. TileSprite handles the repeat
-    // natively and scales linearly — far cheaper than 90 hand-
-    // painted decoration circles.
-    const boardTileKey = 'ui-board-tile-surface';
-    const useTile = isUiOverrideActive(this, boardTileKey);
-    if (useTile) {
-      // Repeating TileSprite: the same tile texture is drawn over and
-      // over to form one continuous map (Clash-of-Clans style). Each
-      // repeat covers TILE_REPEAT × TILE_REPEAT pixels so the texture
-      // shows real detail instead of being stretched to BOARD_W × BOARD_H.
-      // The basePad layer underneath fills any sub-pixel seams that
-      // bilinear filtering might leave between repeats, so the player
-      // never sees gaps.
-      const TILE_REPEAT = TILE * 2; // 96px — two grid cells per pattern repeat
-      const bg2 = this.add
-        .tileSprite(0, 0, BOARD_W, BOARD_H, boardTileKey)
-        .setOrigin(0, 0);
-      // Scale the source texture down so each repeat occupies TILE_REPEAT.
-      // Phaser's tileScale multiplies the source-pixel size before tiling.
-      const tex = this.textures.get(boardTileKey);
-      const srcW = tex.getSourceImage().width || TILE_REPEAT;
-      const srcH = tex.getSourceImage().height || TILE_REPEAT;
-      bg2.tileScaleX = TILE_REPEAT / srcW;
-      bg2.tileScaleY = TILE_REPEAT / srcH;
-      this.boardContainer.add(bg2);
-    } else {
-      // Vertical gradient fake via stacked bands. `fillGradientStyle`
-      // would be ideal but Graphics' gradients draw solid on most
-      // backends; stacking 18 bands reads as a smooth ramp visually
-      // without per-pixel cost.
-      const BANDS = 18;
-      for (let i = 0; i < BANDS; i++) {
-        const t = i / (BANDS - 1);
-        const r1 = (palette.baseA >> 16) & 0xff;
-        const g1 = (palette.baseA >> 8) & 0xff;
-        const b1 = palette.baseA & 0xff;
-        const r2 = (palette.baseB >> 16) & 0xff;
-        const g2 = (palette.baseB >> 8) & 0xff;
-        const b2 = palette.baseB & 0xff;
-        const r = Math.round(r1 + (r2 - r1) * t);
-        const g = Math.round(g1 + (g2 - g1) * t);
-        const b = Math.round(b1 + (b2 - b1) * t);
-        bg.fillStyle((r << 16) | (g << 8) | b, 1);
-        bg.fillRect(
-          0,
-          Math.floor((i * BOARD_H) / BANDS),
-          BOARD_W,
-          Math.ceil(BOARD_H / BANDS) + 1,
-        );
-      }
-    }
+    // Board background sprite (loaded by BootScene or rendered as placeholder)
+    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
+    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
+    bgSprite.setDepth(DEPTHS.boardUnder);
+    this.boardContainer.add(bgSprite);
 
     // Corner vignette — darkens the edges so the eye focuses on the
     // center of the base. Four triangular gradients built out of
     // overlapping alpha-rects, cheap and GPU-friendly.
+    const bg = this.add.graphics();
     bg.fillStyle(0x000000, 0.28);
     for (let i = 0; i < 6; i++) {
       const edge = 6 - i;
@@ -1105,30 +1039,25 @@ export class HomeScene extends Phaser.Scene {
     // Deterministic decoration scatter. Seeded off the layer so the
     // pattern is different between surface and underground but stable
     // across redraws (no random flicker when you flip layers).
-    // Skipped when the tile override is on — the tile art carries
-    // its own painted texture and stacking the scatter on top would
-    // just look dirty.
     const deco = this.add.graphics();
-    if (!useTile) {
-      const seedBase = this.layer === 0 ? 0x12345 : 0x6789a;
-      let seed = seedBase;
-      const rnd = (): number => {
-        // 32-bit xorshift — good enough for pattern placement, avoids
-        // pulling in the shared PCG. Self-contained so the decoration
-        // never desyncs from anything gameplay-relevant.
-        seed ^= seed << 13;
-        seed ^= seed >>> 17;
-        seed ^= seed << 5;
-        return ((seed >>> 0) / 0xffffffff);
-      };
-      for (let i = 0; i < 90; i++) {
-        const x = rnd() * BOARD_W;
-        const y = rnd() * BOARD_H;
-        const r = 1 + rnd() * 2.5;
-        const useA = rnd() < 0.55;
-        deco.fillStyle(useA ? palette.decorA : palette.decorB, 0.22 + rnd() * 0.18);
-        deco.fillCircle(x, y, r);
-      }
+    const seedBase = this.layer === 0 ? 0x12345 : 0x6789a;
+    let seed = seedBase;
+    const rnd = (): number => {
+      // 32-bit xorshift — good enough for pattern placement, avoids
+      // pulling in the shared PCG. Self-contained so the decoration
+      // never desyncs from anything gameplay-relevant.
+      seed ^= seed << 13;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      return ((seed >>> 0) / 0xffffffff);
+    };
+    for (let i = 0; i < 90; i++) {
+      const x = rnd() * BOARD_W;
+      const y = rnd() * BOARD_H;
+      const r = 1 + rnd() * 2.5;
+      const useA = rnd() < 0.55;
+      deco.fillStyle(useA ? palette.decorA : palette.decorB, 0.22 + rnd() * 0.18);
+      deco.fillCircle(x, y, r);
     }
 
     // Grid lines, softened.

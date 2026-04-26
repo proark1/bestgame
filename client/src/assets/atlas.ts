@@ -61,6 +61,7 @@ export const BUILDING_SPRITE_KEYS = [
 ] as const;
 
 export const UI_SPRITE_KEYS = [
+  'board-background',
   'ui-resource-sugar',
   'ui-resource-leaf',
   'ui-resource-milk',

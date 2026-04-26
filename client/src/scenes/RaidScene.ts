@@ -536,14 +536,10 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private drawBoard(): void {
-    const bg = this.add.graphics();
-    // Single clean grass surface (no checkerboard noise)
-    bg.fillStyle(0x2c5a23, 1);
-    bg.fillRect(0, 0, BOARD_W, BOARD_H);
-    // edge vignette
-    bg.fillStyle(0x000000, 0.28);
-    bg.fillRect(0, 0, BOARD_W, 20);
-    bg.fillRect(0, BOARD_H - 20, BOARD_W, 20);
+    // Board background sprite (loaded by BootScene or rendered as placeholder)
+    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
+    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
+    bgSprite.setDepth(DEPTHS.boardUnder);
 
     // Minimal grid - very subtle for alignment only
     const grid = this.add.graphics({ lineStyle: { width: 0.5, color: 0x1d3a1a, alpha: 0.15 } });
@@ -629,7 +625,7 @@ export class RaidScene extends Phaser.Scene {
     });
 
     this.boardContainer.add([
-      bg,
+      bgSprite,
       this.spawnZoneGraphics,
       grid,
       this.spawnZoneCue,
