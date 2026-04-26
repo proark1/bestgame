@@ -477,6 +477,60 @@ export class ClanScene extends Phaser.Scene {
       if (e.key === 'Enter') void send();
     });
 
+    // Mobile keyboard handling. On iOS / Android the soft keyboard
+    // pops up over the bottom of the viewport when the input gains
+    // focus, hiding the chat history (and sometimes the input
+    // itself). Two small fixes:
+    //
+    //  1. On focus, scrollIntoView with a 200 ms delay so the input
+    //     ends up visible regardless of where the canvas was sitting
+    //     in the page. Block: 'center' so the keyboard's top edge
+    //     doesn't immediately re-cover it.
+    //  2. Listen on window.visualViewport for height changes (the
+    //     keyboard show/hide event on every modern mobile browser)
+    //     and bottom-anchor the input by tweaking its `top` so it
+    //     rides above the keyboard. Falls back to the existing
+    //     fixed top when visualViewport is unavailable (older
+    //     Safari, headless / desktop builds).
+    input.addEventListener('focus', () => {
+      // 200 ms covers the typical Android keyboard slide-in. iOS
+      // settles slightly faster but the extra wait is benign.
+      window.setTimeout(() => {
+        if (this.chatInputEl !== input) return;
+        try {
+          input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch {
+          /* old browsers */
+        }
+      }, 200);
+    });
+    const vv = (window as Window & { visualViewport?: VisualViewport })
+      .visualViewport;
+    if (vv) {
+      const baseTop = parseFloat(input.style.top || '0');
+      const onVV = (): void => {
+        if (this.chatInputEl !== input) return;
+        // visualViewport.height shrinks to viewport-minus-keyboard
+        // when the keyboard is up. Pin the input's bottom edge
+        // 8 px above that height so the keyboard never covers it.
+        const targetBottom = vv.height - 8;
+        const desiredTop = targetBottom - input.offsetHeight;
+        // Don't re-anchor higher than where the input naturally
+        // sits — only push it UP when the keyboard would cover.
+        input.style.top = `${Math.min(desiredTop, baseTop)}px`;
+      };
+      vv.addEventListener('resize', onVV);
+      vv.addEventListener('scroll', onVV);
+      // Tear down the listeners with the input itself; otherwise a
+      // scene rebuild leaks them.
+      const detach = (): void => {
+        vv.removeEventListener('resize', onVV);
+        vv.removeEventListener('scroll', onVV);
+      };
+      this.events.once('shutdown', detach);
+      this.events.once('destroy', detach);
+    }
+
     // Send button next to the input. Phaser-rendered so it lives
     // inside the scene lifecycle.
     const btn = this.add
