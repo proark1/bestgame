@@ -300,15 +300,12 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawBoard(): void {
-    // Board background sprite (loaded by BootScene or rendered as placeholder)
-    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
-    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
-    bgSprite.setDepth(DEPTHS.boardUnder);
-
-    // Grass underlay so the arena board reads as grass like the rest
-    // of the game.
+    // Solid grass underlay — same clean treatment HomeScene/RaidScene
+    // use. No board-background sprite so the painterly brown patches
+    // can't bleed through behind the grid.
     const grass = this.add.graphics();
-    grass.fillStyle(0x6cbf6a, 0.55);
+    grass.setDepth(DEPTHS.boardUnder);
+    grass.fillStyle(0x6cbf6a, 1);
     grass.fillRect(0, 0, BOARD_W, BOARD_H);
 
     // Per-tile grid box outlines. Mirrors RaidScene/HomeScene so the
@@ -328,7 +325,7 @@ export class ArenaScene extends Phaser.Scene {
     edge.fillStyle(COLOR.brass, 0.34);
     edge.fillRect(8, 0, 3, BOARD_H);
 
-    this.boardContainer.add([bgSprite, grass, grid, edge]);
+    this.boardContainer.add([grass, grid, edge]);
   }
 
   private drawStartingBuildings(): void {
@@ -342,7 +339,7 @@ export class ArenaScene extends Phaser.Scene {
       const x = b.anchorX * TILE + (b.w * TILE) / 2;
       const y = b.anchorY * TILE + (b.h * TILE) / 2;
       const spr = this.add.image(x, y, `building-${b.kind}`);
-      spr.setOrigin(0.5, 0.75);
+      spr.setOrigin(0.5, 0.5) /* center sprite within footprint cell so it never bleeds above the grid */;
       // Render at exact grid footprint, matching RaidScene/HomeScene.
       spr.setDisplaySize(b.w * TILE, b.h * TILE);
       this.boardContainer.add(spr);

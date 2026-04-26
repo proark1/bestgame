@@ -42,9 +42,16 @@ export interface SpriteCardOptions {
   // animation section that lets the admin generate a moving variant
   // (legs/wings) using the saved sprite as reference. Used for unit
   // sprites only — buildings/UI/branding skip animation.
+  //
+  // The prompt accessors surface the walkCycles[<kind>_poseB] prompt
+  // directly inside the card so the admin can tweak the variation
+  // language before clicking Generate animation, without opening the
+  // separate WalkCycleEditor below.
   animation?: {
     hasAnimation: () => boolean;
     onGenerate: (onProgress: (note: string) => void) => Promise<void>;
+    getPoseBPrompt?: () => string;
+    setPoseBPrompt?: (value: string) => Promise<void>;
   };
 }
 
@@ -579,6 +586,44 @@ export class SpriteCard {
       }, { once: true });
       previewBox.append(previewImg);
       panel.append(previewBox);
+
+      // Live looping preview — same trick the bottom-of-page strip
+      // editor uses: a div with the strip as background-image and a
+      // CSS steps(2) animation on background-position-x. Lets the
+      // admin see the walk in motion at the same 6 fps the game uses
+      // without leaving the card or running the game.
+      const loop = document.createElement('div');
+      loop.className = 'sprite-card-animation-loop';
+      loop.style.backgroundImage = `url('${previewImg.src}')`;
+      loop.title = `${kind} — looping at 6 fps (matches in-game)`;
+      panel.append(loop);
+    }
+
+    // Editable prompt — surfaces the variation prompt
+    // (walkCycles.<kind>_poseB) so the admin can tweak before
+    // clicking Generate. Autosaves on blur via the dep callback.
+    if (anim.getPoseBPrompt && anim.setPoseBPrompt) {
+      const promptLabel = document.createElement('label');
+      promptLabel.className = 'sprite-card-animation-prompt-label';
+      promptLabel.textContent = 'Variation prompt (frame 2)';
+      const promptArea = document.createElement('textarea');
+      promptArea.className = 'sprite-card-animation-prompt';
+      promptArea.rows = 3;
+      promptArea.placeholder =
+        'Describe what changes between frame 1 and frame 2 (e.g. "legs swap; everything else stays identical to the reference").';
+      promptArea.value = anim.getPoseBPrompt();
+      promptArea.addEventListener('change', async () => {
+        try {
+          await anim.setPoseBPrompt!(promptArea.value);
+          this.opts.showStatus(`Animation prompt saved`, 'success');
+        } catch (err) {
+          this.opts.showStatus(
+            `Prompt save failed: ${(err as Error).message}`,
+            'error',
+          );
+        }
+      });
+      panel.append(promptLabel, promptArea);
     }
 
     const actions = document.createElement('div');

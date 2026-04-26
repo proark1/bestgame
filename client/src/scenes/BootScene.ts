@@ -333,15 +333,17 @@ export class BootScene extends Phaser.Scene {
       );
     }
 
-    const sheetFrameConfig: Phaser.Types.Loader.FileTypes.ImageFrameConfig = {
-      frameWidth: WALK_CYCLE_FRAME_W,
-      frameHeight: WALK_CYCLE_FRAME_H,
-    };
+    // Walk-cycle strips load as PLAIN IMAGES, not spritesheets, so a
+    // corrupt / wrong-sized file on disk doesn't trip Phaser's
+    // "SpriteSheet frame dimensions will result in zero frames"
+    // warning (the loader fires it before any user code can guard).
+    // create() inspects each loaded image's actual dimensions and
+    // promotes it to a spritesheet via textures.addSpriteSheet ONLY
+    // when it matches the expected geometry.
     for (const sheet of m.sheets) {
-      this.load.spritesheet(
+      this.load.image(
         sheet.key,
         versioned(`assets/sprites/${sheet.key}.${sheet.ext}`),
-        sheetFrameConfig,
       );
     }
   }
@@ -363,17 +365,41 @@ export class BootScene extends Phaser.Scene {
       // canonical key. Nothing to promote. Just build the walk anims.
       for (const sheet of this.manifest.sheets) {
         const animKey = walkAnimKey(sheet.key);
-        if (this.textures.exists(sheet.key) && !this.anims.exists(animKey)) {
-          this.anims.create({
-            key: animKey,
-            frames: this.anims.generateFrameNumbers(sheet.key, {
-              start: 0,
-              end: WALK_CYCLE_FRAME_COUNT - 1,
-            }),
-            frameRate: WALK_CYCLE_FPS,
-            repeat: -1,
-          });
+        if (!this.textures.exists(sheet.key) || this.anims.exists(animKey)) continue;
+        // Defensive geometry check — if the on-disk file is corrupt
+        // or got saved at the wrong size (e.g. an admin upload that
+        // skipped the strip composite), Phaser would log noisy
+        // "zero frames" / "Frame X not found" errors. We loaded the
+        // sheet as a plain image (queueManifestLoads), so check the
+        // natural dimensions before promoting to a spritesheet.
+        const src = this.textures.get(sheet.key).getSourceImage() as
+          | HTMLImageElement
+          | HTMLCanvasElement;
+        const minW = WALK_CYCLE_FRAME_W * WALK_CYCLE_FRAME_COUNT;
+        if (!src || src.width < minW || src.height < WALK_CYCLE_FRAME_H) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[BootScene] skipping walk anim for ${sheet.key}: texture is ${src?.width ?? 0}×${src?.height ?? 0}, expected ≥${minW}×${WALK_CYCLE_FRAME_H}`,
+          );
+          continue;
         }
+        // Promote the plain image to a spritesheet so anim frame
+        // lookups work. Texture key stays the same — remove the
+        // image entry first to avoid a duplicate-key warning.
+        this.textures.remove(sheet.key);
+        this.textures.addSpriteSheet(sheet.key, src as HTMLImageElement, {
+          frameWidth: WALK_CYCLE_FRAME_W,
+          frameHeight: WALK_CYCLE_FRAME_H,
+        });
+        this.anims.create({
+          key: animKey,
+          frames: this.anims.generateFrameNumbers(sheet.key, {
+            start: 0,
+            end: WALK_CYCLE_FRAME_COUNT - 1,
+          }),
+          frameRate: WALK_CYCLE_FPS,
+          repeat: -1,
+        });
       }
     } else {
       // Legacy fallback path (manifest fetch failed / old server). In

@@ -1042,10 +1042,49 @@ button {
 .sprite-card-animation-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .sprite-card-animation-actions .btn {
   font-size: 12px;
   padding: 6px 12px;
+}
+/* Looping preview inside the per-card animation panel — same pattern
+ * as .admin-animation-preview-loop but sized to fit the narrower
+ * card column. */
+.sprite-card-animation-loop {
+  width: 96px;
+  height: 96px;
+  margin: 6px auto 0;
+  background-repeat: no-repeat;
+  background-size: 192px 96px;
+  background-position: 0 0;
+  image-rendering: pixelated;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 4px;
+  animation: sprite-card-walk-loop 0.333s steps(2) infinite;
+}
+@keyframes sprite-card-walk-loop {
+  to { background-position: -192px 0; }
+}
+.sprite-card-animation-prompt-label {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim, #99c799);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sprite-card-animation-prompt {
+  width: 100%;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  color: var(--text, #e6f5d2);
+  resize: vertical;
 }
 
 .admin-animation-editor-actions {

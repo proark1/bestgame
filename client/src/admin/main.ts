@@ -285,70 +285,14 @@ function render(): void {
     return;
   }
 
-  // Sprites tab (default) — sprite grid with categories + inline animation
+  // Sprites tab (default) — sprite grid with categories + inline animation.
+  // renderSpritesTab() owns the toolbar, the category filter, the
+  // sprite grid, the UI-overrides panel, and the animation panel —
+  // every sub-control needed for sprite editing. The style-lock
+  // editor below is a sibling at the render() level rather than
+  // inside renderSpritesTab so future tabs (Preview, Users) can
+  // share or hide it without touching the sprite tab body.
   root.append(renderSpritesTab());
-
-  // -- Toolbar --------------------------------------------------------------
-  const toolbar = document.createElement('div');
-  toolbar.className = 'toolbar';
-
-  const fmtLabel = document.createElement('label');
-  fmtLabel.innerHTML = `<span>format</span>`;
-  const fmtSel = document.createElement('select');
-  for (const f of ['webp', 'png']) {
-    const opt = document.createElement('option');
-    opt.value = f;
-    opt.textContent = f.toUpperCase();
-    fmtSel.append(opt);
-  }
-  fmtSel.value = state.compression.format;
-  fmtSel.addEventListener('change', () => {
-    state.compression.format = fmtSel.value as 'webp' | 'png';
-  });
-  fmtLabel.append(fmtSel);
-
-  const qLabel = document.createElement('label');
-  qLabel.innerHTML = `<span>quality</span>`;
-  const qInput = document.createElement('input');
-  qInput.type = 'range';
-  qInput.min = '0.4';
-  qInput.max = '1';
-  qInput.step = '0.05';
-  qInput.value = String(state.compression.quality);
-  const qVal = document.createElement('span');
-  qVal.textContent = qInput.value;
-  qInput.addEventListener('input', () => {
-    state.compression.quality = Number(qInput.value);
-    qVal.textContent = qInput.value;
-  });
-  qLabel.append(qInput, qVal);
-
-  const dLabel = document.createElement('label');
-  dLabel.innerHTML = `<span>max dim (px)</span>`;
-  const dInput = document.createElement('input');
-  dInput.type = 'number';
-  dInput.min = '64';
-  dInput.max = '1024';
-  dInput.step = '32';
-  dInput.value = String(state.compression.maxDim);
-  dInput.addEventListener('change', () => {
-    state.compression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
-    dInput.value = String(state.compression.maxDim);
-  });
-  dLabel.append(dInput);
-
-  toolbar.append(fmtLabel, qLabel, dLabel);
-
-  // Summary counters
-  const summary = document.createElement('label');
-  summary.style.marginLeft = 'auto';
-  const totalSize = state.files.reduce((acc, f) => acc + f.size, 0);
-  summary.innerHTML = `<span style="color: var(--text)">${state.files.length} saved · ${humanBytes(
-    totalSize,
-  )}</span>`;
-  toolbar.append(summary);
-
-  root.append(toolbar);
 
   // -- Style-lock editor ----------------------------------------------------
   // The textarea's native `change` event only fires on blur, which isn't
@@ -445,74 +389,6 @@ function render(): void {
 
   styleBox.append(styleTxt, styleActions);
   root.append(styleBox);
-
-  // -- Sprite grid ----------------------------------------------------------
-  const grid = document.createElement('div');
-  grid.className = 'grid';
-  state.cards = [];
-
-  const fileByKey = new Map<string, SpriteFile>();
-  for (const f of state.files) {
-    const base = f.name.replace(/\.(png|webp)$/i, '');
-    fileByKey.set(base, f);
-  }
-
-  const mk = (
-    kind: 'unit' | 'building' | 'menuUi',
-    baseName: string,
-  ): SpriteCard => {
-    // Menu UI keys already carry the 'ui-' prefix so the DB filename
-    // and the Phaser texture key are the same string. Unit / building
-    // keys follow the legacy `${kind}-${name}` scheme.
-    const key = kind === 'menuUi' ? baseName : `${kind}-${baseName}`;
-    const file = fileByKey.get(key);
-    const ext = file ? (file.name.endsWith('.webp') ? 'webp' : 'png') : null;
-    const bucket =
-      kind === 'unit'
-        ? 'units'
-        : kind === 'building'
-          ? 'buildings'
-          : 'menuUi';
-    const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
-    return new SpriteCard({
-      key,
-      initialPrompt,
-      fileMeta: {
-        exists: !!file,
-        size: file?.size ?? 0,
-        ext,
-      },
-      composePrompt: (desc) => composePrompt(desc, kind, key),
-      getCompression: () => state.compression,
-      onPromptSave: async (value) => {
-        await updatePrompt({ category: bucket, key: baseName, value });
-        if (state.prompts) {
-          if (!state.prompts[bucket]) state.prompts[bucket] = {};
-          state.prompts[bucket]![baseName] = value;
-        }
-      },
-      onSaved: () => {},
-      showStatus: statusToast,
-    });
-  };
-
-  for (const u of UNIT_KEYS) {
-    const card = mk('unit', u);
-    state.cards.push(card);
-    grid.append(card.root);
-  }
-  for (const b of BUILDING_KEYS) {
-    const card = mk('building', b);
-    state.cards.push(card);
-    grid.append(card.root);
-  }
-  for (const u of MENU_UI_KEYS) {
-    const card = mk('menuUi', u);
-    state.cards.push(card);
-    grid.append(card.root);
-  }
-
-  root.append(grid);
 }
 
 // Menu UI asset keys. Kept in sync with tools/gemini-art/prompts.json
@@ -877,11 +753,20 @@ function renderSpritesTab(): HTMLElement {
     fileByKey.set(base, f);
   }
 
-  // O(1) lookup via the prebuilt fileByKey map (keys are the base
-  // filename without extension). state.files.some() would be O(N)
-  // and is called once per unit card on every render.
-  const hasAnimationFile = (kind: string): boolean =>
-    fileByKey.has(`unit-${kind}-walk`);
+  // Live scan of state.files, NOT the cached fileByKey snapshot —
+  // after a Generate animation refreshes state.files via
+  // fetchStatus(), the card's hasAnimation() callback needs to see
+  // the freshly-saved walk strip on the next renderAnimationPanel
+  // call. fileByKey is built once at renderSpritesTab() entry and
+  // would otherwise stay stale until a hard reload.
+  const hasAnimationFile = (kind: string): boolean => {
+    const exact = `unit-${kind}-walk`;
+    for (const f of state.files) {
+      const base = f.name.replace(/\.(png|webp)$/i, '');
+      if (base === exact) return true;
+    }
+    return false;
+  };
 
   const mk = (
     kind: 'unit' | 'building' | 'menuUi',
@@ -929,6 +814,7 @@ function renderSpritesTab(): HTMLElement {
     // Only unit sprites get inline animation support — buildings,
     // UI elements, and branding don't animate.
     if (kind === 'unit') {
+      const poseBKey = `${baseName}_poseB`;
       opts.animation = {
         hasAnimation: () => hasAnimationFile(baseName),
         onGenerate: async (onProgress: (note: string) => void) => {
@@ -939,6 +825,22 @@ function renderSpritesTab(): HTMLElement {
             state.files = s.files;
           } catch {
             // ignore — cosmetic
+          }
+        },
+        // Surface the per-unit variation prompt directly inside the
+        // SpriteCard's animation panel so the admin can tweak it
+        // before clicking Generate without opening the WalkCycleEditor.
+        getPoseBPrompt: () =>
+          state.prompts?.walkCycles?.[poseBKey] ?? '',
+        setPoseBPrompt: async (value: string) => {
+          await updatePrompt({
+            category: 'walkCycles',
+            key: poseBKey,
+            value,
+          });
+          if (state.prompts) {
+            if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
+            state.prompts.walkCycles[poseBKey] = value;
           }
         },
       };
