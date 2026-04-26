@@ -267,16 +267,33 @@ export function registerPlayer(app: FastifyInstance): void {
         ),
       );
       const tick = incomePerSecond(base.snapshot);
+      // Tunnel-link passive buff. Each active link gives both
+      // partners +10% production while the link is active; caps at
+      // +30% so a clan-wide link party doesn't break the econ. We
+      // count from the player's perspective, both directions of the
+      // link table contribute. Cheap one-shot count query — the
+      // links table is small and the index covers it.
+      const linkCount = await client.query<{ active_links: string }>(
+        `SELECT COUNT(*)::text AS active_links
+           FROM clan_tunnel_links
+          WHERE state = 'active'
+            AND (player_a = $1::uuid OR player_b = $1::uuid)`,
+        [playerId],
+      );
+      const activeLinks = Math.min(3, Number(linkCount.rows[0]?.active_links ?? 0));
+      const linkMultiplier = 1 + 0.10 * activeLinks; // 1.0 .. 1.3
       // Sugar + leaf are integer rates × integer elapsedSec, so they
       // bank cleanly with no flooring needed. Milk is fractional
       // (AphidFarm at 0.2 × level / sec), so we add the previously-
       // unbanked residual, floor for the integer credit, and write the
       // new residual back. This means polling cadence does not affect
       // total milk earned over time — every fraction eventually rolls
-      // over into a whole credit on a future /me.
-      const rawGainedSugar = tick.sugar * elapsedSec;
-      const rawGainedLeaf = tick.leafBits * elapsedSec;
-      const milkProduced = tick.aphidMilk * elapsedSec + (player.aphid_milk_residual ?? 0);
+      // over into a whole credit on a future /me. Tunnel buff applies
+      // to all three rates uniformly (Math.floor on the sugar/leaf
+      // products keeps them integer-clean).
+      const rawGainedSugar = Math.floor(tick.sugar * elapsedSec * linkMultiplier);
+      const rawGainedLeaf = Math.floor(tick.leafBits * elapsedSec * linkMultiplier);
+      const milkProduced = tick.aphidMilk * elapsedSec * linkMultiplier + (player.aphid_milk_residual ?? 0);
       const gainedMilk = Math.floor(milkProduced);
       const newMilkResidual = milkProduced - gainedMilk;
 
@@ -440,6 +457,13 @@ export function registerPlayer(app: FastifyInstance): void {
           // /raid/submit zeroes them on success (war-army-style:
           // refilled per raid, expire whether-or-not used).
           donationInventory: player.donation_inventory ?? {},
+          // Tunnel-link state — surfaced so the HUD can render a
+          // "🌐 +20%" pill alongside the resource pills. Capped at
+          // 3 active links so the multiplier maxes at 1.3×.
+          tunnels: {
+            activeLinkCount: activeLinks,
+            productionMultiplier: linkMultiplier,
+          },
         },
         base: base.snapshot,
         offlineTrickle: {

@@ -90,6 +90,13 @@ export interface PlayerState {
   // on success. Optional so older servers stay compatible (treated
   // as empty by the client).
   donationInventory?: Record<string, number>;
+  // Active-tunnel-link production buff. activeLinkCount caps at 3,
+  // productionMultiplier = 1 + 0.10 * count (so 1.0..1.3). Optional
+  // for older servers; client treats absent as no-buff.
+  tunnels?: {
+    activeLinkCount: number;
+    productionMultiplier: number;
+  };
 }
 
 export interface DailyQuestState {
