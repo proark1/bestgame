@@ -107,6 +107,14 @@ export interface SimState {
   // Loot accumulators for the attacker. In arena, these are star counters.
   attackerSugarLooted: number;
   attackerLeafBitsLooted: number;
+  // Count of building kills where the killer's spawn layer differed
+  // from the kill's layer — i.e., the swarm crossed layers (typically
+  // via the dig modifier or a defender's forceLayerSwap trapdoor) and
+  // then killed something on the other side. Surfaced in raid result
+  // for UI / quest progress; the per-kill loot bump is applied at the
+  // moment of kill in combat.ts. Optional so legacy replays without
+  // the field deserialise as zero.
+  attackerCrossLayerKills?: number;
   // Per-owner deploy capacity. Players can't dump infinite units; paths
   // that exceed capacity are rejected at input-ingest.
   deployCapRemaining: [number, number];

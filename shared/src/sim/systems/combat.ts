@@ -34,6 +34,31 @@ function buildingCenterY(b: SimBuilding): Fixed {
   return add(fromInt(b.anchorY), fromInt(b.h) >> 1);
 }
 
+// Per-kill cross-layer combo bonus. A unit that spawned on layer X
+// and killed a building on layer Y (where X !== Y, AND the building
+// isn't a layer-spanning structure like the queen) earns a flat
+// sugar bonus on top of the normal drop. Reads `spawnLayer`
+// (recorded by deploy.ts at unit-creation time) so the comparison is
+// robust to the dig modifier or a forceLayerSwap trapdoor flipping
+// `u.layer` mid-raid. The base drop is unchanged so existing balance
+// is intact; this is purely additive on the cross-layer combo.
+const CROSS_LAYER_KILL_SUGAR_BONUS = 40;
+
+function applyCrossLayerKillBonus(
+  state: SimState,
+  killer: Unit,
+  building: SimBuilding,
+): void {
+  const spawn = killer.spawnLayer ?? killer.layer;
+  if (spawn === building.layer) return;
+  // Layer-spanning buildings (queen, anything with spans) are
+  // available from either side, so a kill there isn't a real
+  // "swarm went underground to crack this" play. Skip.
+  if (building.spans && building.spans.length >= 2) return;
+  state.attackerSugarLooted += CROSS_LAYER_KILL_SUGAR_BONUS;
+  state.attackerCrossLayerKills = (state.attackerCrossLayerKills ?? 0) + 1;
+}
+
 // Building is targetable by attacker-owned units iff it exists, has hp,
 // AND either isn't stealth or has already revealed. Stealth buildings
 // stay invisible to target acquisition until the reveal latches.
@@ -204,6 +229,11 @@ export function combatSystem(
         state.attackerSugarLooted += bstats.dropsSugarOnDestroy;
         state.attackerLeafBitsLooted += bstats.dropsLeafBitsOnDestroy;
         state.buildingsDestroyedThisTick = (state.buildingsDestroyedThisTick ?? 0) + 1;
+        // Cross-layer combo bonus — direct-kill path. The unit `u`
+        // is the killer; if their spawn layer differs from the
+        // building's layer (and the building isn't a layer-spanning
+        // structure available from either side), award the bonus.
+        applyCrossLayerKillBonus(state, u, b);
       }
     }
   }

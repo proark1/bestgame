@@ -68,6 +68,12 @@ export function applyDeploy(
       kind: path.unitKind,
       owner: ownerSlot,
       layer: path.spawnLayer,
+      // Stable record of the layer this unit started on. Reading
+      // u.layer at kill time is unreliable because the dig modifier
+      // and forceLayerSwap trapdoor both flip it; spawnLayer is set
+      // exactly once so combat.ts can compare "where you came from"
+      // to "where you killed this building".
+      spawnLayer: path.spawnLayer,
       x: first.x,
       y: add(first.y, yOffset),
       hp,

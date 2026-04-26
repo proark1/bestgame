@@ -2687,7 +2687,61 @@ export class RaidScene extends Phaser.Scene {
       });
       this.replayControls?.add(btn.container);
     });
+
+    // 💬 Comment button — opens a tiny prompt-based comment flow
+    // against /replay/:id/comments. Pragmatic v1: window.prompt is
+    // ugly but works on every browser without dragging in a full
+    // modal. A richer threaded-view UI can replace this once we know
+    // the loop is used.
+    const commentBtn = makeHiveButton(this, {
+      x: center + 10 + 3 * 60 + 12,
+      y: barY,
+      width: 110,
+      height: 32,
+      label: '💬 Comment',
+      variant: 'ghost',
+      fontSize: 11,
+      onPress: () => { void this.commentOnReplay(); },
+    });
+    this.replayControls.add(commentBtn.container);
   }
+
+  // Quick comment flow on the replay we're currently watching. Shows
+  // the latest 5 existing comments first (so the player has context
+  // before adding their own), then a prompt for the new comment.
+  private async commentOnReplay(): Promise<void> {
+    if (!this.replayContext) return;
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    let preview = 'No comments yet — be the first.';
+    try {
+      const list = await runtime.api.replayComments(this.replayContext.id, 0, 5);
+      if (list.comments.length > 0) {
+        preview = list.comments
+          .map((c) => `[${c.authorName}] ${c.content}`)
+          .join('\n');
+      }
+    } catch {
+      // best effort — fall through to the input prompt anyway
+    }
+    const draft = window.prompt(
+      `Recent comments:\n${preview}\n\nAdd your own:`,
+      '',
+    );
+    if (!draft || !draft.trim()) return;
+    try {
+      await runtime.api.replayCommentPost(this.replayContext.id, draft);
+      this.spawnDeployPopup(this.scale.width / 2, HUD_H + MODIFIER_BAR_H + 12, 'Posted', 1);
+    } catch (err) {
+      this.spawnDeployPopup(
+        this.scale.width / 2,
+        HUD_H + MODIFIER_BAR_H + 12,
+        `Comment failed: ${(err as Error).message}`,
+        0,
+      );
+    }
+  }
+
   private replayPaused = false;
   private replaySpeed: 1 | 2 | 4 = 1;
   private replayControls: Phaser.GameObjects.Container | null = null;

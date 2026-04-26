@@ -1,4 +1,4 @@
-import { add, dist2, fromFloat, fromInt, mul, sub } from './fixed.js';
+import { add, dist2, div, fromFloat, fromInt, mul, sub } from './fixed.js';
 import type { Fixed } from './fixed.js';
 import { UNIT_STATS } from './stats.js';
 import type { SimBuilding, SimRuleState, SimState } from './state.js';
@@ -135,7 +135,83 @@ function evaluateTrigger(
       return true; // interval handled in the fire switch above
     case 'onCrossLayerEntry':
       return hasLayerCrosserInRange(state, b, fromFloat(p.radius ?? 2));
+    case 'onPathNearby':
+      return hasPathNearby(state, b, fromFloat(p.radius ?? 2));
   }
+}
+
+// Geometry-aware path detection — true if any active pheromone path
+// passes within `radius` of the building's center. We test each
+// segment of every path against the building tile, so the rule fires
+// the moment the player commits the path (not when units arrive).
+// Same-layer constraint: a surface trap shouldn't react to an
+// underground path; spanning buildings ignore the layer check.
+//
+// Squared distances throughout — Fixed division is expensive and the
+// existing trigger helpers (hasAttackerInRange) use the same trick.
+function hasPathNearby(
+  state: SimState,
+  b: SimBuilding,
+  radius: Fixed,
+): boolean {
+  if (state.paths.length === 0) return false;
+  const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+  const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
+  const r2 = mul(radius, radius);
+  const buildingSpans = b.spans && b.spans.length >= 2;
+  for (let pi = 0; pi < state.paths.length; pi++) {
+    const path = state.paths[pi]!;
+    // Same-layer (or spanning) gate. The path's spawnLayer is the
+    // layer its units start on; this is a per-path constant for
+    // v1, even though units carrying the dig modifier flip
+    // mid-walk. Reading spawnLayer here is correct — we react to
+    // the PLAN, and the plan's spawn intent is what's visible to
+    // the defender at draw time.
+    if (!buildingSpans && path.spawnLayer !== b.layer) continue;
+    const pts = path.points;
+    if (pts.length < 2) continue;
+    for (let k = 0; k < pts.length - 1; k++) {
+      if (segmentDistSquared(bx, by, pts[k]!.x, pts[k]!.y, pts[k + 1]!.x, pts[k + 1]!.y) <= r2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Squared distance from point (px, py) to the segment (ax, ay)-(bx2,
+// by2). All Fixed; inlined to avoid a hot-path closure allocation.
+// Standard projection-clamp algorithm: parametrise the segment as
+// (a + t·(b-a)) for t ∈ [0,1], project the point, clamp t, return the
+// squared distance to the clamped foot. Determinism: integer-only
+// (Fixed mul/div), no float drift.
+function segmentDistSquared(
+  px: Fixed, py: Fixed,
+  ax: Fixed, ay: Fixed,
+  bx2: Fixed, by2: Fixed,
+): Fixed {
+  const ABx = sub(bx2, ax);
+  const ABy = sub(by2, ay);
+  const APx = sub(px, ax);
+  const APy = sub(py, ay);
+  const ab2 = add(mul(ABx, ABx), mul(ABy, ABy));
+  if (ab2 === 0) {
+    // Degenerate segment — distance to either endpoint.
+    return add(mul(APx, APx), mul(APy, APy));
+  }
+  // t = clamp((AP · AB) / |AB|², 0, 1) — both numerator and ab2 are
+  // Fixed-encoded squared values, so the ratio is unit-less; we use
+  // div() which keeps the Fixed encoding (`a << 16 / b`).
+  const tNumer = add(mul(APx, ABx), mul(APy, ABy));
+  let t: Fixed;
+  if (tNumer <= 0) t = 0;
+  else if (tNumer >= ab2) t = (1 << 16);
+  else t = div(tNumer, ab2);
+  const fx = add(ax, mul(ABx, t));
+  const fy = add(ay, mul(ABy, t));
+  const dx = sub(px, fx);
+  const dy = sub(py, fy);
+  return add(mul(dx, dx), mul(dy, dy));
 }
 
 function hasAttackerInRange(

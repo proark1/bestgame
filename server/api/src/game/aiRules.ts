@@ -50,6 +50,7 @@ const TRIGGER_PARAM_RULES: Record<Trigger, RequiredParams> = {
   onTick:           { requires: ['ticks'],    caps: { ticks: { min: 15, max: 600 } } },
   onAllyDestroyed:  { requires: [],           caps: {} },
   onCrossLayerEntry:{ requires: ['radius'],   caps: { radius: { min: 0.5, max: 6 } } },
+  onPathNearby:     { requires: ['radius'],   caps: { radius: { min: 0.5, max: 6 } } },
 };
 
 const EFFECT_PARAM_RULES: Record<Effect, RequiredParams> = {
@@ -100,6 +101,15 @@ const ALLOWED_COMBOS: ReadonlyArray<readonly [Trigger, Effect]> = [
   ['onCrossLayerEntry', 'forceLayerSwap'],
   ['onCrossLayerEntry', 'aoeRoot'],
   ['onCrossLayerEntry', 'boostAttackDamage'],
+  // Path-aware combo — the defender reads the player's PLAN (the
+  // pheromone polyline) and pre-buffs / pre-roots / reveals
+  // before the swarm even arrives. Lets a smart placement bait
+  // a path into a kill zone.
+  ['onPathNearby',      'boostAttackDamage'],
+  ['onPathNearby',      'boostAttackRate'],
+  ['onPathNearby',      'extendAttackRange'],
+  ['onPathNearby',      'revealSelf'],
+  ['onPathNearby',      'aoeRoot'],
 ];
 
 const COMBO_SET = new Set(ALLOWED_COMBOS.map(([t, e]) => `${t}:${e}`));
@@ -284,6 +294,7 @@ const TRIGGER_LABEL: Record<Trigger, string> = {
   onTick:            'Every X ticks',
   onAllyDestroyed:   'When an ally building is destroyed',
   onCrossLayerEntry: 'When an enemy digs through layers within X tiles',
+  onPathNearby:      'When any pheromone path passes within X tiles',
 };
 
 const EFFECT_LABEL: Record<Effect, string> = {

@@ -100,7 +100,15 @@ export type AIRuleTrigger =
   // `param.radius` Fixed tiles this tick. Direct counter to the
   // attacker `dig` path modifier — a defender can plant a trapdoor
   // that punishes the moment the swarm tries to slip layers.
-  | 'onCrossLayerEntry';
+  | 'onCrossLayerEntry'
+  // Any active pheromone path on the same layer as this building
+  // passes within `param.radius` Fixed tiles of the building's
+  // center. Step-7 audit gap: previously the only path-aware
+  // mechanic was "react when a unit is in range" — now the
+  // defender can also react to the *plan*, baiting an ambush
+  // before the swarm even arrives. Inert until at least one path
+  // exists, so a brand-new raid doesn't fire it falsely.
+  | 'onPathNearby';
 
 export type AIRuleEffect =
   // Multiply this building's attack damage by `param.percent` for the

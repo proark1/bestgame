@@ -41,6 +41,13 @@ export interface Unit {
   y: Fixed;
   hp: Fixed;
   hpMax: Fixed;
+  // The layer this unit was originally spawned on, before any dig
+  // modifier or trapdoor flip moved it. Used by combat.ts to detect
+  // cross-layer kills (unit kills a building whose layer differs
+  // from spawnLayer) so the loot system can grant a small bonus per
+  // such kill. Optional so legacy replays without the field still
+  // deserialise — combat treats absent as `layer` (no bonus).
+  spawnLayer?: Layer;
   // Index of the pheromone path this unit is following, -1 if none.
   pathId: number;
   // How far along the current path (in Fixed "arclength units") — used by
