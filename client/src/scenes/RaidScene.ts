@@ -10,6 +10,7 @@ import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
+import { haptic } from '../ui/haptics.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -370,6 +371,9 @@ export class RaidScene extends Phaser.Scene {
   private saveTacticBtn!: Phaser.GameObjects.Container;
   private saveTacticBg!: Phaser.GameObjects.Graphics;
   private saveTacticLabel!: Phaser.GameObjects.Text;
+  private redoBtn!: Phaser.GameObjects.Container;
+  private redoBg!: Phaser.GameObjects.Graphics;
+  private redoLabel!: Phaser.GameObjects.Text;
   // First-run coachmark drill — see runCoachmarkDrill(). Each step
   // gates on the gameplay event it teaches (deck tap, deploy commit,
   // modifier toggle); the tracker advances when the relevant handler
@@ -966,10 +970,18 @@ export class RaidScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!withinBoard(p.x, p.y)) return;
       if (this.state.outcome !== 'ongoing') return;
-      if (this.currentDeckEntry().count <= 0) return;
+      if (this.currentDeckEntry().count <= 0) {
+        haptic(25);
+        return;
+      }
       const edge = determineSpawnEdge(p.x, p.y);
       if (!edge) {
         this.deckHintText.setText('Start your drag from a glowing spawn edge (left, top, or bottom).');
+        // Flash the spawn-zone graphics so the player can see WHERE
+        // the legal start regions actually are. Pairs with a short
+        // haptic buzz so the failure registers physically.
+        this.flashSpawnZones();
+        haptic(25);
         return;
       }
       this.lastSpawnEdge = edge;
@@ -1073,6 +1085,7 @@ export class RaidScene extends Phaser.Scene {
       this.raidInputs.push(input);
       const start = this.drawingPoints[0];
       if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
+      haptic(modifier ? [10, 6, 14] : 12);
       this.advanceCoachmark('spawn');
 
       // fade the committed trail
@@ -1231,6 +1244,29 @@ export class RaidScene extends Phaser.Scene {
     this.saveTacticBtn = saveContainer;
     cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
 
+    // Redo — repeat the last path the player drew. Mobile users in
+    // particular benefit from a "do that again" shortcut so they
+    // don't have to re-trace identical lanes for follow-up bursts.
+    const redoContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    this.redoBg = this.add.graphics();
+    this.redoLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '↺ Redo', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+    redoContainer.add([this.redoBg, this.redoLabel]);
+    redoContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
+    redoContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    redoContainer.on('pointerdown', () => this.redoLastDraft());
+    this.modifierBar.add(redoContainer);
+    this.redoBtn = redoContainer;
+    cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
+
     const tacContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
     const tacBg = this.add.graphics();
     const tacLabel = this.add
@@ -1252,6 +1288,7 @@ export class RaidScene extends Phaser.Scene {
 
     this.refreshModifierBar();
     this.refreshSaveTacticEnabled();
+    this.refreshRedoEnabled();
   }
 
   private paintActionButton(bg: Phaser.GameObjects.Graphics, pressed: boolean): void {
@@ -1282,12 +1319,66 @@ export class RaidScene extends Phaser.Scene {
         ? 'Direct path — units walk straight through.'
         : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
     );
+    haptic(8);
     // Step 3 of the drill is "try Dig" — toggling any modifier kind
     // counts (the goal is teaching the bar exists; the player can
     // experiment with split/ambush from here on their own).
     if (kind !== 'none') {
       this.advanceCoachmark('modifier');
     }
+  }
+
+  // Brief brightening of the spawn-zone overlay when the player taps
+  // outside a legal start region. The graphics live inside
+  // boardContainer so this transform follows the board's scale on
+  // mobile. Quick on, slow off so the eye catches the highlight.
+  private flashSpawnZones(): void {
+    if (!this.spawnZoneGraphics) return;
+    this.tweens.killTweensOf(this.spawnZoneGraphics);
+    this.spawnZoneGraphics.setAlpha(0.85);
+    this.tweens.add({
+      targets: this.spawnZoneGraphics,
+      alpha: 0.28,
+      duration: 480,
+      ease: 'Sine.easeOut',
+    });
+    if (this.spawnZoneCue) {
+      this.tweens.killTweensOf(this.spawnZoneCue);
+      this.spawnZoneCue.setAlpha(1);
+      this.tweens.add({
+        targets: this.spawnZoneCue,
+        alpha: 0.55,
+        duration: 600,
+        ease: 'Sine.easeOut',
+      });
+    }
+  }
+
+  // Redo: re-deploy the most recent path the player drew, including
+  // its modifier. Costs another burst from the same deck slot. The
+  // common shape with deployTactic comes from a shared sub-helper —
+  // both routes funnel SimInputs through the same path so a single
+  // change to the deploy schema covers them.
+  private redoLastDraft(): void {
+    if (!this.lastDraft) return;
+    if (this.state.outcome !== 'ongoing') return;
+    const idx = this.deckEntries.findIndex(
+      (d) => d.kind === this.lastDraft!.unitKind && d.count > 0,
+    );
+    if (idx < 0) {
+      this.deckHintText.setText(`No ${this.lastDraft.unitKind} left to repeat that path.`);
+      haptic(25);
+      return;
+    }
+    this.selectedDeckIdx = idx;
+    haptic(12);
+    this.deployTactic({
+      name: 'Redo',
+      unitKind: this.lastDraft.unitKind,
+      pointsTile: this.lastDraft.pointsTile,
+      ...(this.lastDraft.modifier ? { modifier: this.lastDraft.modifier } : {}),
+      spawnEdge: this.lastDraft.spawnEdge,
+    });
   }
 
   private flashModifierStamp(
@@ -1331,6 +1422,24 @@ export class RaidScene extends Phaser.Scene {
     this.saveTacticBg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
     this.saveTacticBg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
     this.saveTacticLabel.setAlpha(enabled ? 1 : 0.45);
+  }
+
+  private refreshRedoEnabled(): void {
+    if (!this.redoBg || !this.redoLabel) return;
+    // Redo lights up only when there's a draft AND the matching deck
+    // slot still has stock. Saves the player from pressing it just to
+    // get a "no units left" buzz.
+    const enabled =
+      !!this.lastDraft &&
+      this.deckEntries.some(
+        (d) => d.kind === this.lastDraft!.unitKind && d.count > 0,
+      );
+    this.redoBg.clear();
+    this.redoBg.fillStyle(enabled ? 0x223a23 : 0x161a16, 1);
+    this.redoBg.lineStyle(2, enabled ? COLOR.brassDeep : 0x3a4a3a, 1);
+    this.redoBg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.redoBg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.redoLabel.setAlpha(enabled ? 1 : 0.45);
   }
 
   private handleSaveTactic(): void {
@@ -1640,6 +1749,10 @@ export class RaidScene extends Phaser.Scene {
 
   private refreshDeckUi(): void {
     for (let i = 0; i < this.deckContainers.length; i++) this.redrawDeckCard(i);
+    // Redo button mirrors deck stock for the last drafted unit, so
+    // updating it on every deck refresh keeps the enabled state in
+    // lockstep with what's actually deployable.
+    this.refreshRedoEnabled();
     const entry = this.currentDeckEntry();
     if (!entry) return;
     this.deckSelectedIcon.setTexture(entry.icon);
@@ -2620,9 +2733,11 @@ export class RaidScene extends Phaser.Scene {
     // modal appeared" moment into a celebration.
     if (isWin) {
       sfxVictory();
+      haptic([40, 30, 60]);
       this.emitConfetti(cy - 8);
     } else {
       sfxDefeat();
+      haptic([20, 60, 20]);
     }
 
     const actionsY = isWin ? cy + 220 : cy + 170;
@@ -2734,12 +2849,14 @@ export class RaidScene extends Phaser.Scene {
     // Modifier bar — positioned between HUD and the board. Width is
     // computed from the same MOD_* constants drawModifierBar uses, so
     // any future change to button sizes ripples through both places.
+    // 3 action buttons today (Save / Redo / Tactics).
     if (this.modifierBar) {
       const modCount = MODIFIER_KINDS.length;
+      const actionCount = 3;
       const groupW =
         modCount * MOD_BTN_W +
         (modCount - 1) * MOD_BTN_GAP +
-        2 * (MOD_ACTION_GAP + MOD_ACTION_BTN_W);
+        actionCount * (MOD_ACTION_GAP + MOD_ACTION_BTN_W);
       const startX = Math.max(12, (this.scale.width - groupW) / 2);
       this.modifierBar.setPosition(startX, HUD_H + 6);
       this.modifierBarBg.clear();
