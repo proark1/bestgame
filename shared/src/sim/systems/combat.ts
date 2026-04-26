@@ -90,6 +90,9 @@ export function combatSystem(
     if (u.rootedTicks && u.rootedTicks > 0) {
       u.rootedTicks--;
     }
+    if (u.ambushTicks && u.ambushTicks > 0) {
+      u.ambushTicks--;
+    }
     // Reuse pathProgress's sibling fields; lifespan expiry for
     // defender-side units (NestSpider) is handled in the SpiderNest
     // spawn loop below — they're tagged with `lifespanTicks` at spawn.

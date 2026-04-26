@@ -144,7 +144,7 @@ export class RaidHistoryScene extends Phaser.Scene {
         this.renderEmptyState();
         return;
       }
-      this.renderRows(raids);
+      this.renderRows(raids, runtime);
     } catch (err) {
       if (!this.scene.isActive()) return;
       this.loadingText.setText(`Error: ${(err as Error).message}`);
@@ -181,7 +181,7 @@ export class RaidHistoryScene extends Phaser.Scene {
     this.contentHeight = 100;
   }
 
-  private renderRows(raids: RaidHistoryEntry[]): void {
+  private renderRows(raids: RaidHistoryEntry[], runtime: HiveRuntime): void {
     this.rowContainer.removeAll(true);
     const maxW = Math.min(620, this.scale.width - 32);
     const originX = (this.scale.width - maxW) / 2;
@@ -191,7 +191,7 @@ export class RaidHistoryScene extends Phaser.Scene {
     y += 16;
 
     raids.forEach((r, i) => {
-      y = this.renderRaidRow(originX, maxW, y, r, i);
+      y = this.renderRaidRow(originX, maxW, y, r, i, runtime);
     });
     this.contentHeight = y + 16;
   }
@@ -235,9 +235,16 @@ export class RaidHistoryScene extends Phaser.Scene {
     y: number,
     r: RaidHistoryEntry,
     i: number,
+    runtime: HiveRuntime,
   ): number {
-    const rowH = 82;
+    // Defender-role rows where the opponent is a real player (non-null
+    // opponentId) get the revenge button. Bot defeats are dropped; the
+    // bot doesn't exist as a player record so the matchmaker would
+    // fall through to a fresh random match anyway.
     const isAttacker = r.role === 'attacker';
+    const canRevenge = !isAttacker && typeof r.opponentId === 'string' && r.opponentId.length > 0;
+    // Watch button always — the replay is stored regardless of role.
+    const rowH = 110;
     const isWin = isAttacker ? r.stars > 0 : r.stars === 0;
     const bg = this.add.graphics();
     drawPanel(bg, originX, y, maxW, rowH, {
@@ -304,12 +311,81 @@ export class RaidHistoryScene extends Phaser.Scene {
       crispText(
         this,
         originX + maxW - 18,
-        y + 56,
+        y + 50,
         formatRelative(r.createdAt),
         labelTextStyle(10, COLOR.textMuted),
       ).setOrigin(1, 0.5),
     );
+
+    // Action row — Watch + (defender only) Revenge. Anchored bottom
+    // edge of the card so the textual info above is undisturbed.
+    const btnY = y + rowH - 26;
+    const watchBtn = makeHiveButton(this, {
+      x: originX + 112 + 50,
+      y: btnY,
+      width: 96,
+      height: 30,
+      label: '▶ Watch',
+      variant: 'secondary',
+      fontSize: 12,
+      onPress: () => { void this.watchReplay(r, runtime); },
+    });
+    this.rowContainer.add(watchBtn.container);
+    if (canRevenge) {
+      const revengeBtn = makeHiveButton(this, {
+        x: originX + 112 + 50 + 96 + 12,
+        y: btnY,
+        width: 110,
+        height: 30,
+        label: '⚔ Revenge',
+        variant: 'primary',
+        fontSize: 12,
+        onPress: () => { this.startRevenge(r); },
+      });
+      this.rowContainer.add(revengeBtn.container);
+    }
     return y + rowH + 8;
+  }
+
+  // Hand off the row's raid id to /replay/:id, then jump into RaidScene
+  // in replay mode. Mirrors ReplayFeedScene.watch — kept inline here so
+  // a single-purpose import doesn't drag in the whole feed scene.
+  private async watchReplay(
+    r: RaidHistoryEntry,
+    runtime: HiveRuntime,
+  ): Promise<void> {
+    try {
+      // View tracking is best-effort — the scene transition happens
+      // even if the bookkeeping call fails.
+      await runtime.api.replayView(r.id);
+    } catch {
+      /* swallow */
+    }
+    try {
+      const full = await runtime.api.replay(r.id);
+      this.registry.set('replayContext', {
+        id: full.replay.id,
+        seed: full.replay.seed,
+        baseSnapshot: full.replay.baseSnapshot,
+        inputs: full.replay.inputs,
+        replayName: full.replay.replayName,
+        attackerName: full.replay.attackerName,
+        defenderName: full.replay.defenderName,
+      });
+      fadeToScene(this, 'RaidScene');
+    } catch (err) {
+      this.loadingText?.setText?.(`Replay unavailable: ${(err as Error).message}`);
+    }
+  }
+
+  // Pin the matchmaker on the player who attacked us. The /match
+  // server endpoint validates the target and falls through to random
+  // matchmaking if the defender is now shielded / missing — so this
+  // path is always a non-empty fight.
+  private startRevenge(r: RaidHistoryEntry): void {
+    if (typeof r.opponentId !== 'string' || r.opponentId.length === 0) return;
+    this.registry.set('revengeContext', { defenderId: r.opponentId });
+    fadeToScene(this, 'RaidScene');
   }
 }
 

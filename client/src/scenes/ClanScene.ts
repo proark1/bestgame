@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { Types } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
@@ -310,6 +311,23 @@ export class ClanScene extends Phaser.Scene {
       );
     });
 
+    // Request-units button — opens a small prompt that lets the
+    // player ask the clan for help. The actual donate buttons render
+    // inline in the chat feed (server posts a "🤝 …" system message
+    // for every request and donation) so we don't need a separate
+    // panel here.
+    const reqBtn = makeHiveButton(this, {
+      x: listX + listW / 2,
+      y: listY + listH - 64,
+      width: 168,
+      height: 34,
+      label: '🤝 Request units',
+      variant: 'primary',
+      fontSize: 12,
+      onPress: () => { void this.openRequestPrompt(); },
+    });
+    this.layerContainer.add(reqBtn.container);
+
     // Leave button
     const leaveBtn = makeHiveButton(this, {
       x: listX + listW / 2,
@@ -481,6 +499,39 @@ export class ClanScene extends Phaser.Scene {
       this.renderMessages(chatX, chatY, chatW, chatH);
     } catch (err) {
       console.debug('poll failed', err);
+    }
+  }
+
+  // Lightweight prompt: pick a unit kind from the standard attacker
+  // roster, type a count (1..10), submit. Server posts a "🤝 X
+  // requests …" message into the existing clan chat, so the rest of
+  // the clan sees the ask via the regular polling stream.
+  private async openRequestPrompt(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    // Native window.prompt is good enough as a first-pass UI here —
+    // ClanScene already mixes DOM (chat input) with Phaser, and a
+    // proper modal would be a larger UI investment than this MVP
+    // warrants. Replace with a real picker once the loop is proven.
+    const kindRaw = window.prompt(
+      'Which unit do you want to request?\nOptions: SoldierAnt, WorkerAnt, DirtDigger, Wasp, FireAnt, Termite, Dragonfly, Mantis, Scarab',
+      'SoldierAnt',
+    );
+    if (!kindRaw) return;
+    const kind = kindRaw.trim();
+    const countRaw = window.prompt('How many? (1–10)', '5');
+    if (!countRaw) return;
+    const count = Math.floor(Number(countRaw));
+    if (!Number.isFinite(count) || count <= 0) {
+      await openAlert('Bad count', 'Enter a positive integer 1–10.');
+      return;
+    }
+    try {
+      await runtime.api.clanRequestUnits(kind as Types.UnitKind, count);
+      // Side-effect chat message will arrive via the next poll cycle;
+      // no need to manually refresh here.
+    } catch (err) {
+      await openAlert('Request failed', (err as Error).message);
     }
   }
 

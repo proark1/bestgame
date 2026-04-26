@@ -3,6 +3,11 @@ import { Types, Sim } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { BuildingCatalog } from '../net/Api.js';
 import { BUILDING_CODEX } from '../codex/codexData.js';
+import {
+  QUEEN_UNLOCKS_BY_TIER,
+  QUEEN_TIER_UNIT_LABELS,
+  QUEEN_TIER_BUILDING_LABELS,
+} from '../codex/queenTiers.js';
 import { crispText } from './text.js';
 import { drawPanel, drawPill } from './panel.js';
 import { makeHiveButton, type HiveButton } from './button.js';
@@ -41,65 +46,13 @@ export const ROTATABLE_KINDS: ReadonlySet<Types.BuildingKind> = new Set<Types.Bu
   'ThornHedge',
 ]);
 
-// What unlocks at each Queen Chamber level. Mirrors the server-side
-// QUOTA_BY_TIER (server/api/src/game/buildingRules.ts) — a kind
-// "unlocks" at the lowest Queen level whose quota[level-1] is > 0.
-// Units mirror UNIT_UNLOCK_QUEEN_LEVEL. Used by the Queen Chamber
-// info modal to render "Upgrades to Q+1 unlocks: …" so the player
-// sees the reward before paying the cost (GDD §6.9).
-const QUEEN_UNLOCKS_BY_TIER: Record<number, { buildings: Types.BuildingKind[]; units: Types.UnitKind[] }> = {
-  2: {
-    buildings: ['PebbleBunker', 'DungeonTrap', 'TunnelJunction', 'AcidSpitter', 'SporeTower'],
-    units: ['FireAnt'],
-  },
-  3: {
-    buildings: ['RootSnare', 'HiddenStinger'],
-    units: ['Termite', 'Dragonfly'],
-  },
-  4: {
-    buildings: ['SpiderNest', 'ThornHedge', 'AphidFarm'],
-    units: ['Mantis'],
-  },
-  5: {
-    buildings: [],
-    units: ['Scarab'],
-  },
-};
-
-// Pretty-print labels for the unit kinds we surface in unlock previews.
-// We keep the table tight to the kinds that can actually appear in
-// QUEEN_UNLOCKS_BY_TIER values; a missing entry falls back to the raw
-// kind id which is acceptable for any future addition before a label
-// gets curated.
-const UNIT_LABELS: Partial<Record<Types.UnitKind, string>> = {
-  FireAnt: 'Fire Ant',
-  Termite: 'Termite',
-  Dragonfly: 'Dragonfly',
-  Mantis: 'Mantis',
-  Scarab: 'Scarab',
-};
-
-// Friendly human-readable labels for each building kind. Keeps the
-// codex's marketing-blurb names out of the modal — here we want a
-// short noun that fits in a header.
-const KIND_LABELS: Partial<Record<Types.BuildingKind, string>> = {
-  QueenChamber: 'Queen Chamber',
-  DewCollector: 'Dew Collector',
-  MushroomTurret: 'Mushroom Turret',
-  LeafWall: 'Leaf Wall',
-  PebbleBunker: 'Pebble Bunker',
-  LarvaNursery: 'Larva Nursery',
-  SugarVault: 'Sugar Vault',
-  TunnelJunction: 'Tunnel Junction',
-  DungeonTrap: 'Dungeon Trap',
-  AcidSpitter: 'Acid Spitter',
-  SporeTower: 'Spore Tower',
-  RootSnare: 'Root Snare',
-  HiddenStinger: 'Hidden Stinger',
-  SpiderNest: 'Spider Nest',
-  ThornHedge: 'Thorn Hedge',
-  AphidFarm: 'Aphid Farm',
-};
+// QUEEN_UNLOCKS_BY_TIER, UNIT_LABELS (as QUEEN_TIER_UNIT_LABELS) and
+// KIND_LABELS (as QUEEN_TIER_BUILDING_LABELS) live in
+// ../codex/queenTiers.ts now — shared with ProgressionScene so a
+// single source of truth backs both the modal preview and the full
+// roadmap view.
+const UNIT_LABELS = QUEEN_TIER_UNIT_LABELS;
+const KIND_LABELS = QUEEN_TIER_BUILDING_LABELS;
 
 // Per-second production table — pulled from the server's catalog
 // response at open time (see openBuildingInfoModal). A fallback table

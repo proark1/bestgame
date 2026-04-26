@@ -40,6 +40,22 @@ function randomToken(): string {
   return randomBytes(24).toString('base64url');
 }
 
+// Decide whether the caller's targetDefenderId should be honoured.
+// Returns the cleaned id, or null to fall through to random matchmaking.
+// Self-targeting is rejected (you can't raid your own base); empty
+// strings and non-strings are ignored. Exported so unit tests can pin
+// the rule without spinning up a real DB.
+export function validateTargetDefenderId(
+  raw: unknown,
+  attackerId: string,
+): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed === attackerId) return null;
+  return trimmed;
+}
+
 function botBase(): { base: Types.Base; opponent: MatchResponse['opponent'] } {
   return {
     base: {
@@ -75,6 +91,12 @@ function botBase(): { base: Types.Base; opponent: MatchResponse['opponent'] } {
 interface MatchBody {
   playerId?: string;
   trophies?: number;
+  // Revenge / direct-attack hook. When set, the matchmaker tries to
+  // pair the attacker against this exact defender. Self, missing
+  // bases, or actively-shielded targets fall through silently to the
+  // random matchmaking path so the player still gets a fight (just
+  // not the one they asked for) instead of an error.
+  targetDefenderId?: string;
 }
 
 export function registerMatchmaking(app: FastifyInstance): void {
@@ -91,33 +113,59 @@ export function registerMatchmaking(app: FastifyInstance): void {
       return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
     }
 
+    // Targeted revenge: if the caller pinned a specific defender,
+    // try to honor it. Same shield + base + self filters as random
+    // matchmaking; trophy band does NOT apply (the player saw who
+    // raided them and deserves to swing back regardless of ELO drift).
+    const targetDefenderId = validateTargetDefenderId(req.body?.targetDefenderId, attackerId);
+
+    let match: { rows: Array<{ id: string; display_name: string; trophies: number; snapshot: Types.Base }> } = { rows: [] };
+    if (targetDefenderId) {
+      match = await pool.query<{
+        id: string;
+        display_name: string;
+        trophies: number;
+        snapshot: Types.Base;
+      }>(
+        `SELECT p.id, p.display_name, p.trophies, b.snapshot
+           FROM players p
+           JOIN bases b ON b.player_id = p.id
+          WHERE p.id = $1::uuid
+            AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
+          LIMIT 1`,
+        [targetDefenderId],
+      );
+    }
+
     // Real-player query: 3-day active window + fully random pick so we
     // don't dogpile onto the most-recent last_seen_at. Excludes self.
     // Also excludes defenders under an active raid shield — shields
     // are granted on losing 2+ stars defensively, see
     // server/api/src/routes/raid.ts / game/shield.ts.
-    const match = await pool.query<{
-      id: string;
-      display_name: string;
-      trophies: number;
-      snapshot: Types.Base;
-    }>(
-      `SELECT p.id, p.display_name, p.trophies, b.snapshot
-         FROM players p
-         JOIN bases b ON b.player_id = p.id
-        WHERE p.id <> $1
-          AND p.trophies BETWEEN $2 AND $3
-          AND p.last_seen_at > NOW() - ($4 || ' days')::INTERVAL
-          AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
-        ORDER BY random()
-        LIMIT 1`,
-      [
-        attackerId,
-        trophies - TROPHY_BAND,
-        trophies + TROPHY_BAND,
-        String(ACTIVE_WINDOW_DAYS),
-      ],
-    );
+    if (match.rows.length === 0) {
+      match = await pool.query<{
+        id: string;
+        display_name: string;
+        trophies: number;
+        snapshot: Types.Base;
+      }>(
+        `SELECT p.id, p.display_name, p.trophies, b.snapshot
+           FROM players p
+           JOIN bases b ON b.player_id = p.id
+          WHERE p.id <> $1
+            AND p.trophies BETWEEN $2 AND $3
+            AND p.last_seen_at > NOW() - ($4 || ' days')::INTERVAL
+            AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
+          ORDER BY random()
+          LIMIT 1`,
+        [
+          attackerId,
+          trophies - TROPHY_BAND,
+          trophies + TROPHY_BAND,
+          String(ACTIVE_WINDOW_DAYS),
+        ],
+      );
+    }
 
     // Build the tuple.
     let defenderId: string | null;

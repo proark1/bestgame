@@ -17,6 +17,31 @@ const MAX_CHAT_LEN = 400;
 const MAX_MESSAGES_PER_FETCH = 100;
 const MIN_MS_BETWEEN_MESSAGES = 1000;
 
+// Donation request shape — capped tight so a request can't spam the
+// clan. Adjustable later if balance demands.
+const REQUEST_MIN_COUNT = 1;
+const REQUEST_MAX_COUNT = 10;
+const ALLOWED_REQUEST_KINDS: ReadonlyArray<string> = [
+  'WorkerAnt', 'SoldierAnt', 'DirtDigger', 'Wasp', 'FireAnt',
+  'Termite', 'Dragonfly', 'Mantis', 'Scarab',
+];
+// Donor sugar reward per donated unit. Small enough that donation
+// hoarding doesn't become a farm; big enough to be felt.
+const DONOR_SUGAR_PER_UNIT = 10;
+const DONOR_LEAF_PER_UNIT = 4;
+
+export function clampRequestCount(raw: unknown): number | null {
+  const n = typeof raw === 'number' ? Math.floor(raw) : NaN;
+  if (!Number.isFinite(n)) return null;
+  if (n < REQUEST_MIN_COUNT) return null;
+  if (n > REQUEST_MAX_COUNT) return REQUEST_MAX_COUNT;
+  return n;
+}
+
+export function isAllowedRequestKind(raw: unknown): raw is string {
+  return typeof raw === 'string' && ALLOWED_REQUEST_KINDS.includes(raw);
+}
+
 interface CreateClanBody {
   name: string;
   tag: string;
@@ -30,6 +55,16 @@ interface JoinClanBody {
 
 interface MessageBody {
   content: string;
+}
+
+interface RequestUnitsBody {
+  unitKind: string;
+  count: number;
+}
+
+interface DonateUnitsBody {
+  requestId: number;
+  count: number;
 }
 
 function sanitizeChat(s: string): string {
@@ -450,4 +485,251 @@ export function registerClan(app: FastifyInstance): void {
       };
     },
   );
+
+  // -- Open a unit-donation request -----------------------------------------
+  // The requester must be in a clan; only one open request per player at
+  // a time (DB partial-unique index enforces it). Posts a flavor message
+  // into clan chat so the request surfaces in the existing pollers.
+  app.post<{ Body: RequestUnitsBody }>('/clan/request', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const count = clampRequestCount(req.body?.count);
+    if (count === null) {
+      reply.code(400);
+      return { error: `count must be ${REQUEST_MIN_COUNT}..${REQUEST_MAX_COUNT}` };
+    }
+    if (!isAllowedRequestKind(req.body?.unitKind)) {
+      reply.code(400);
+      return { error: 'unitKind not in allowed list' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const mem = await client.query<{ clan_id: string; display_name: string }>(
+        `SELECT cm.clan_id, p.display_name
+           FROM clan_members cm
+           JOIN players p ON p.id = cm.player_id
+          WHERE cm.player_id = $1::uuid`,
+        [playerId],
+      );
+      if (mem.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'not in a clan' };
+      }
+      const { clan_id, display_name } = mem.rows[0]!;
+      const ins = await client.query<{ id: string }>(
+        `INSERT INTO clan_unit_requests
+           (clan_id, requester_id, unit_kind, requested_count)
+         VALUES ($1::uuid, $2::uuid, $3, $4)
+         RETURNING id`,
+        [clan_id, playerId, req.body.unitKind, count],
+      );
+      // Side-effect chat message so existing pollers see the request
+      // in the clan feed.
+      await client.query(
+        `INSERT INTO clan_messages (clan_id, player_id, content)
+         VALUES ($1::uuid, $2::uuid, $3)`,
+        [clan_id, playerId, `🤝 ${display_name} requests ${req.body.unitKind} ×${count}`],
+      );
+      await client.query('COMMIT');
+      return { ok: true, requestId: Number(ins.rows[0]!.id) };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      // Partial-unique index throws on duplicate open request.
+      if ((err as { code?: string }).code === '23505') {
+        reply.code(409);
+        return { error: 'you already have an open request' };
+      }
+      app.log.error({ err }, 'clan/request failed');
+      reply.code(500);
+      return { error: 'request failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // -- Donate units toward an open request ----------------------------------
+  // Any clanmate (not the requester themselves) can fulfill any portion
+  // up to the remaining count. Donor receives a small sugar+leaf
+  // reward proportional to their contribution. Auto-closes the request
+  // when fulfilled.
+  app.post<{ Body: DonateUnitsBody }>('/clan/donate', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const requestId = Number(req.body?.requestId);
+    if (!Number.isFinite(requestId) || requestId <= 0) {
+      reply.code(400);
+      return { error: 'requestId required' };
+    }
+    const wantCount = Math.floor(req.body?.count);
+    if (!Number.isFinite(wantCount) || wantCount <= 0) {
+      reply.code(400);
+      return { error: 'count must be positive' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Gate: donor must be in the same clan as the request, and not be
+      // the requester themselves.
+      const reqRow = await client.query<{
+        clan_id: string;
+        requester_id: string;
+        unit_kind: string;
+        requested_count: number;
+        fulfilled_count: number;
+        closed_at: Date | null;
+      }>(
+        `SELECT clan_id, requester_id, unit_kind, requested_count,
+                fulfilled_count, closed_at
+           FROM clan_unit_requests
+          WHERE id = $1
+          FOR UPDATE`,
+        [requestId],
+      );
+      if (reqRow.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'request not found' };
+      }
+      const r = reqRow.rows[0]!;
+      if (r.closed_at !== null) {
+        await client.query('ROLLBACK');
+        reply.code(410);
+        return { error: 'request already closed' };
+      }
+      if (r.requester_id === playerId) {
+        await client.query('ROLLBACK');
+        reply.code(403);
+        return { error: "can't fulfill your own request" };
+      }
+      const donorMem = await client.query<{ clan_id: string; display_name: string }>(
+        `SELECT cm.clan_id, p.display_name
+           FROM clan_members cm JOIN players p ON p.id = cm.player_id
+          WHERE cm.player_id = $1::uuid`,
+        [playerId],
+      );
+      if (donorMem.rows.length === 0 || donorMem.rows[0]!.clan_id !== r.clan_id) {
+        await client.query('ROLLBACK');
+        reply.code(403);
+        return { error: 'not in the request\'s clan' };
+      }
+      const remaining = Math.max(0, r.requested_count - r.fulfilled_count);
+      const give = Math.min(remaining, wantCount);
+      if (give <= 0) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'request is fully filled' };
+      }
+      const newFilled = r.fulfilled_count + give;
+      const closed = newFilled >= r.requested_count;
+      await client.query(
+        `UPDATE clan_unit_requests
+            SET fulfilled_count = $2,
+                closed_at = CASE WHEN $3::boolean THEN NOW() ELSE closed_at END
+          WHERE id = $1`,
+        [requestId, newFilled, closed],
+      );
+      await client.query(
+        `INSERT INTO clan_donation_log (request_id, donor_id, count)
+         VALUES ($1, $2::uuid, $3)`,
+        [requestId, playerId, give],
+      );
+      // Donor reward — tiny sugar+leaf bump per unit donated.
+      const sugarReward = give * DONOR_SUGAR_PER_UNIT;
+      const leafReward = give * DONOR_LEAF_PER_UNIT;
+      await client.query(
+        `UPDATE players
+            SET sugar = sugar + $2,
+                leaf_bits = leaf_bits + $3
+          WHERE id = $1::uuid`,
+        [playerId, sugarReward, leafReward],
+      );
+      // System chat message visible to the whole clan.
+      const donorName = donorMem.rows[0]!.display_name;
+      const note = closed
+        ? `🤝 ${donorName} fulfilled ${r.unit_kind} ×${give} (request complete)`
+        : `🤝 ${donorName} donated ${r.unit_kind} ×${give}`;
+      await client.query(
+        `INSERT INTO clan_messages (clan_id, player_id, content)
+         VALUES ($1::uuid, $2::uuid, $3)`,
+        [r.clan_id, playerId, note],
+      );
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        donated: give,
+        fulfilled: newFilled,
+        closed,
+        reward: { sugar: sugarReward, leafBits: leafReward },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'clan/donate failed');
+      reply.code(500);
+      return { error: 'donate failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // -- List open requests in my clan ----------------------------------------
+  // Returns the active request set so the client can render donate
+  // buttons inline with chat. Closed requests are filtered out.
+  app.get('/clan/requests', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const mem = await pool.query<{ clan_id: string }>(
+      `SELECT clan_id FROM clan_members WHERE player_id = $1::uuid`,
+      [playerId],
+    );
+    if (mem.rows.length === 0) return { requests: [] };
+    const clanId = mem.rows[0]!.clan_id;
+    const res = await pool.query<{
+      id: string;
+      requester_id: string;
+      requester_name: string | null;
+      unit_kind: string;
+      requested_count: number;
+      fulfilled_count: number;
+      created_at: Date;
+    }>(
+      `SELECT r.id, r.requester_id, p.display_name AS requester_name,
+              r.unit_kind, r.requested_count, r.fulfilled_count, r.created_at
+         FROM clan_unit_requests r
+         LEFT JOIN players p ON p.id = r.requester_id
+        WHERE r.clan_id = $1::uuid AND r.closed_at IS NULL
+        ORDER BY r.created_at DESC
+        LIMIT 50`,
+      [clanId],
+    );
+    return {
+      requests: res.rows.map((r) => ({
+        id: Number(r.id),
+        requesterId: r.requester_id,
+        requesterName: r.requester_name ?? 'Unknown',
+        unitKind: r.unit_kind,
+        requestedCount: r.requested_count,
+        fulfilledCount: r.fulfilled_count,
+        remaining: Math.max(0, r.requested_count - r.fulfilled_count),
+        createdAt: r.created_at.toISOString(),
+        canDonate: r.requester_id !== playerId,
+      })),
+    };
+  });
 }

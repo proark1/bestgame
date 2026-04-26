@@ -60,6 +60,25 @@ export interface Unit {
   // clamped to 0 in pheromoneFollow). Set when a RootSnare triggers on
   // this unit. Zero or absent = free to move.
   rootedTicks?: number;
+  // Player-authored ambush marker — set when the unit arrives at a
+  // pheromone path's `ambush` modifier. Counted down each tick in
+  // combat.ts; while > 0, pheromone_follow holds position.
+  ambushTicks?: number;
+  // Latches set by pheromone_follow when a path modifier has fired on
+  // this unit. Forward-only motion makes the segIdx threshold a
+  // sufficient single-fire guard, but storing the latch keeps the
+  // intent explicit and survives any future segment re-walks (e.g.
+  // pull-back effects).
+  hasSplit?: boolean;
+  hasDug?: boolean;
+  hasAmbushed?: boolean;
+  // Per-tick edge flag — true if this unit's layer changed during
+  // the current sim tick. Set by pheromone_follow when the dig
+  // modifier fires; cleared at the top of pheromone_follow on the
+  // next tick. Read by ai_rules.ts to drive `onCrossLayerEntry` and
+  // by `forceLayerSwap`. Optional so pre-existing replays without
+  // the field deserialise unchanged.
+  layerCrossedThisTick?: boolean;
 }
 
 export interface UnitStats {

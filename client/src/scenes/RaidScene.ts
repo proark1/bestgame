@@ -4,11 +4,18 @@ import { bakeTrailDot } from '../assets/placeholders.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { ANIMATED_UNIT_KINDS } from '../assets/atlas.js';
 import { makeHiveButton } from '../ui/button.js';
-import { sfxVictory, sfxDefeat } from '../ui/audio.js';
+import {
+  sfxVictory, sfxDefeat,
+  sfxDeploy, sfxDig, sfxAmbush, sfxSplit,
+  sfxModifierTick, sfxBuildingHit, sfxBuildingDestroyed,
+  sfxQueenDestroyed, sfxUnitDeath,
+} from '../ui/audio.js';
 import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
+import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
+import { haptic } from '../ui/haptics.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
 import type { MatchResponse } from '../net/Api.js';
@@ -42,6 +49,127 @@ interface DeckEntry {
   icon: string;
   label: string;
 }
+
+// A saved tactic captures a finished path geometry so the player can
+// re-deploy it with one tap. Stored in localStorage; never sent to the
+// server (the server only sees the resulting `deployPath` SimInput).
+interface SavedTactic {
+  name: string;
+  unitKind: Types.UnitKind;
+  // Polyline in TILE coordinates (so the geometry survives any future
+  // grid resize and is independent of the on-screen board scale).
+  pointsTile: Array<{ x: number; y: number }>;
+  modifier?: Types.PathModifier;
+  spawnEdge: SpawnEdge;
+}
+
+const TACTICS_STORAGE_KEY = 'hive:tactics:v1';
+const TACTICS_LIMIT = 8; // tight cap — keeps the panel readable
+// First-run drill flag. Bumped whenever the drill steps change in a
+// way that's worth re-teaching (e.g., adding a fourth step). Until
+// the player completes the full drill, we re-show the coachmarks
+// every time they enter RaidScene — that way a player who bails on
+// step 1 still gets coached on the next attempt.
+const COACHMARK_DONE_KEY = 'hive:coachmarks:raid:v1';
+
+function shouldShowRaidCoachmarks(): boolean {
+  try {
+    return localStorage.getItem(COACHMARK_DONE_KEY) !== '1';
+  } catch {
+    return false; // private mode: don't nag
+  }
+}
+
+function markRaidCoachmarksDone(): void {
+  try {
+    localStorage.setItem(COACHMARK_DONE_KEY, '1');
+  } catch { /* ignore */ }
+}
+// Per-tactic point cap — matches the live-draw cap in pointermove. A
+// tactic the player draws can't exceed it; any larger stored polyline
+// is treated as malformed (corrupted localStorage) and dropped.
+const TACTIC_POINTS_LIMIT = 32;
+
+// Modifier bar layout dimensions — used by drawModifierBar() and
+// layout() so both stay in sync. Changing the button width / gap in
+// one place ripples through to the other automatically.
+const MODIFIER_BAR_H = 44;
+const MOD_BTN_W = 96;
+const MOD_BTN_H = 32;
+const MOD_BTN_GAP = 6;
+const MOD_ACTION_BTN_W = 110;
+const MOD_ACTION_GAP = 8;
+const MODIFIER_KINDS: Array<Types.PathModifierKind | 'none'> = ['none', 'split', 'ambush', 'dig'];
+
+function isValidPoint(v: unknown): v is { x: number; y: number } {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { x: unknown }).x === 'number' &&
+    typeof (v as { y: unknown }).y === 'number' &&
+    Number.isFinite((v as { x: number }).x) &&
+    Number.isFinite((v as { y: number }).y)
+  );
+}
+
+function isValidTactic(t: unknown): t is SavedTactic {
+  if (typeof t !== 'object' || t === null) return false;
+  const r = t as Partial<SavedTactic>;
+  if (typeof r.name !== 'string') return false;
+  if (typeof r.unitKind !== 'string') return false;
+  if (!Array.isArray(r.pointsTile)) return false;
+  if (r.pointsTile.length < 2) return false;
+  if (r.pointsTile.length > TACTIC_POINTS_LIMIT) return false;
+  if (!r.pointsTile.every(isValidPoint)) return false;
+  if (r.spawnEdge !== 'left' && r.spawnEdge !== 'top' && r.spawnEdge !== 'bottom') return false;
+  if (r.modifier !== undefined) {
+    const m = r.modifier as Partial<Types.PathModifier>;
+    if (typeof m !== 'object' || m === null) return false;
+    if (m.kind !== 'split' && m.kind !== 'ambush' && m.kind !== 'dig') return false;
+    if (typeof m.pointIndex !== 'number') return false;
+    if (m.pointIndex < 0 || m.pointIndex >= r.pointsTile.length) return false;
+  }
+  return true;
+}
+
+function loadSavedTactics(): SavedTactic[] {
+  try {
+    const raw = localStorage.getItem(TACTICS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    // Strict schema check — anything malformed is dropped silently so
+    // a corrupted localStorage entry can't crash the scene during
+    // deployTactic. Cap to TACTICS_LIMIT to bound panel size.
+    const valid = parsed.filter(isValidTactic);
+    return valid.slice(0, TACTICS_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedTactics(list: SavedTactic[]): void {
+  try {
+    localStorage.setItem(TACTICS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Quota or private mode — non-fatal, tactics just won't persist
+    // across sessions.
+  }
+}
+
+const MODIFIER_GLYPH: Record<Types.PathModifierKind | 'none', string> = {
+  none: '∅',
+  split: '⑂',
+  ambush: '◆',
+  dig: '↧',
+};
+
+const MODIFIER_LABEL: Record<Types.PathModifierKind | 'none', string> = {
+  none: 'Direct',
+  split: 'Split',
+  ambush: 'Ambush',
+  dig: 'Dig',
+};
 
 // Full attacker roster with default deck counts. The scene filters
 // this down to the kinds the player has unlocked at their current
@@ -194,6 +322,22 @@ export class RaidScene extends Phaser.Scene {
   // to die), and should freeze on the rest frame instead of jogging
   // in place. Cleared when the unit dies.
   private unitLastPos = new Map<number, { x: number; y: number }>();
+  // Previous-frame layer for each live unit. Used to detect the moment
+  // a `dig` modifier flips a unit between surface (0) and underground
+  // (1) so renderFrame can play the cinematic dive/emerge animation.
+  private unitLastLayer = new Map<number, Types.Layer>();
+  // Set of unit ids currently mid-dive — their sprite is hidden/shrunk
+  // and we shouldn't apply normal tinting on them this frame. Cleared
+  // when the emerge tween finishes.
+  private unitDigPlaying = new Set<number>();
+  // HUD badges showing the live count of attacker units per layer.
+  // Drawn in drawHud(), updated in renderFrame().
+  private layerBadgeSurface!: Phaser.GameObjects.Text;
+  private layerBadgeUnderground!: Phaser.GameObjects.Text;
+  // Per-render-frame SFX throttles. Reset at the top of renderFrame
+  // so a swarm of overlapping events doesn't spam the WebAudio mixer.
+  private buildingHitsThisFrame = 0;
+  private unitDeathsThisFrame = 0;
   // Populated from GET /api/settings/animation at scene create.
   // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
   // (this Record has it set to true) AND (the walk texture loaded).
@@ -214,6 +358,37 @@ export class RaidScene extends Phaser.Scene {
   private trailGraphics!: Phaser.GameObjects.Graphics;
   private isDrawing = false;
   private lastSpawnEdge: SpawnEdge = 'left';
+
+  // Pheromone path modifier state. The player picks a mode here BEFORE
+  // drawing; on commit, the chosen modifier is auto-attached at the
+  // path's midpoint waypoint. 'none' = vintage straight-shot path.
+  private currentModifierMode: Types.PathModifierKind | 'none' = 'none';
+  private modifierBar!: Phaser.GameObjects.Container;
+  private modifierBarBg!: Phaser.GameObjects.Graphics;
+  private modifierButtons: Array<{
+    kind: Types.PathModifierKind | 'none';
+    container: Phaser.GameObjects.Container;
+    bg: Phaser.GameObjects.Graphics;
+    label: Phaser.GameObjects.Text;
+  }> = [];
+  private modifierStamp!: Phaser.GameObjects.Container;
+  // Saved tactics — local-only, persisted to localStorage. Each entry
+  // is a finished pheromone path the player liked enough to keep:
+  // unit kind, modifier, and the polyline in tile space.
+  private tacticsPanel: Phaser.GameObjects.Container | null = null;
+  private lastDraft: SavedTactic | null = null;
+  private saveTacticBtn!: Phaser.GameObjects.Container;
+  private saveTacticBg!: Phaser.GameObjects.Graphics;
+  private saveTacticLabel!: Phaser.GameObjects.Text;
+  private redoBtn!: Phaser.GameObjects.Container;
+  private redoBg!: Phaser.GameObjects.Graphics;
+  private redoLabel!: Phaser.GameObjects.Text;
+  // First-run coachmark drill — see runCoachmarkDrill(). Each step
+  // gates on the gameplay event it teaches (deck tap, deploy commit,
+  // modifier toggle); the tracker advances when the relevant handler
+  // fires the matching step name.
+  private coachmarkStep: 'deck' | 'spawn' | 'modifier' | 'done' = 'done';
+  private activeCoachmark: CoachmarkHandle | null = null;
 
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
@@ -287,6 +462,8 @@ export class RaidScene extends Phaser.Scene {
     this.unitSprites.clear();
     this.unitLastHp.clear();
     this.unitLastPos.clear();
+    this.unitLastLayer.clear();
+    this.unitDigPlaying.clear();
     this.deploymentUnitCounts.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
@@ -309,6 +486,10 @@ export class RaidScene extends Phaser.Scene {
     this.drawingPoints = [];
     this.isDrawing = false;
     this.matchContext = null;
+    this.currentModifierMode = 'none';
+    this.modifierButtons = [];
+    this.lastDraft = null;
+    this.tacticsPanel = null;
 
     // Start the scene synchronously against the hard-coded bot so there's
     // never a white flash; if a matchmaking response arrives shortly
@@ -377,6 +558,12 @@ export class RaidScene extends Phaser.Scene {
     this.drawBuildingsFromState();
     this.trailGraphics = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     this.boardContainer.add(this.trailGraphics);
+    // Modifier stamp lives inside the boardContainer so it scales with
+    // the board on mobile. Hidden by default; shown briefly after a
+    // commit, fades with the trail.
+    this.modifierStamp = this.add.container(0, 0).setDepth(DEPTHS.boardOverlay + 1).setVisible(false);
+    this.boardContainer.add(this.modifierStamp);
+    this.drawModifierBar();
     this.drawDeckTray();
     this.drawDeck();
 
@@ -402,6 +589,15 @@ export class RaidScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
     this.scale.on('resize', this.layout, this);
     this.layout();
+
+    // Coachmark drill — only on the first raid the player attempts.
+    // Skipped entirely in replay mode (the player is watching, not
+    // playing) and on any subsequent run after the drill completes.
+    if (!this.replayContext && shouldShowRaidCoachmarks()) {
+      this.coachmarkStep = 'deck';
+      // Deferred so the deck tray's interactive cards have laid out.
+      this.time.delayedCall(220, () => this.runCoachmarkStep());
+    }
 
     this.started = true;
   }
@@ -476,6 +672,25 @@ export class RaidScene extends Phaser.Scene {
         color: '#ffd98a',
       })
       .setOrigin(0.5);
+
+    // Layer activity badges. Live counters showing how many of the
+    // attacker's units are on each layer right now. Drawn dim by
+    // default and brighten when the corresponding layer is active.
+    // Positioned to the immediate left of the timer in layout().
+    this.layerBadgeSurface = this.add
+      .text(0, 0, '☼ 0', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#9fc79a',
+      })
+      .setOrigin(1, 0.5);
+    this.layerBadgeUnderground = this.add
+      .text(0, 0, '⛏ 0', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#9fc79a',
+      })
+      .setOrigin(1, 0.5);
 
     this.starsText = this.add
       .text(this.scale.width - 16, HUD_H / 2 - 10, '★ 0', {
@@ -764,10 +979,18 @@ export class RaidScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!withinBoard(p.x, p.y)) return;
       if (this.state.outcome !== 'ongoing') return;
-      if (this.currentDeckEntry().count <= 0) return;
+      if (this.currentDeckEntry().count <= 0) {
+        haptic(25);
+        return;
+      }
       const edge = determineSpawnEdge(p.x, p.y);
       if (!edge) {
         this.deckHintText.setText('Start your drag from a glowing spawn edge (left, top, or bottom).');
+        // Flash the spawn-zone graphics so the player can see WHERE
+        // the legal start regions actually are. Pairs with a short
+        // haptic buzz so the failure registers physically.
+        this.flashSpawnZones();
+        haptic(25);
         return;
       }
       this.lastSpawnEdge = edge;
@@ -776,7 +999,12 @@ export class RaidScene extends Phaser.Scene {
       this.drawingPoints = [local];
       this.boardGuide.setVisible(false);
       const burst = Math.min(this.currentDeckEntry().count, 5);
-      this.deckHintText.setText(`Draw through the base, then release to deploy up to ${burst}.`);
+      const modSuffix = this.currentModifierMode === 'none'
+        ? ''
+        : ` (${MODIFIER_LABEL[this.currentModifierMode]} marker active)`;
+      this.deckHintText.setText(
+        `Draw through the base, then release to deploy up to ${burst}.${modSuffix}`,
+      );
       this.renderTrailPreview();
     });
 
@@ -817,6 +1045,16 @@ export class RaidScene extends Phaser.Scene {
       }
       this.refreshDeckUi();
 
+      // Auto-attach the active modifier at the polyline's midpoint
+      // waypoint. We never use index 0 (spawn) — pheromone_follow only
+      // fires modifiers on arrival, so 0 would be inert.
+      const modifier: Types.PathModifier | undefined =
+        this.currentModifierMode === 'none' || tilePoints.length < 3
+          ? undefined
+          : {
+              kind: this.currentModifierMode,
+              pointIndex: Math.max(1, Math.floor((tilePoints.length - 1) / 2)),
+            };
       const input: Types.SimInput = {
         type: 'deployPath',
         tick: this.state.tick + 1,
@@ -827,9 +1065,28 @@ export class RaidScene extends Phaser.Scene {
           unitKind: entry.kind,
           count: burst,
           points: tilePoints,
+          ...(modifier ? { modifier } : {}),
         },
       };
       this.pendingInputs.push(input);
+      // Save as a draft so the player can hit "Save tactic" right after
+      // a successful commit without re-drawing.
+      this.lastDraft = {
+        name: `${entry.label} ${MODIFIER_LABEL[this.currentModifierMode]}`,
+        unitKind: entry.kind,
+        pointsTile: this.drawingPoints.map((p) => ({
+          x: p.x / TILE,
+          y: p.y / TILE,
+        })),
+        ...(modifier ? { modifier } : {}),
+        spawnEdge: this.lastSpawnEdge,
+      };
+      this.refreshSaveTacticEnabled();
+      // Stamp the modifier glyph on the trail at the marker waypoint.
+      if (modifier) {
+        const markerPx = this.drawingPoints[modifier.pointIndex];
+        if (markerPx) this.flashModifierStamp(markerPx.x, markerPx.y, this.currentModifierMode);
+      }
       // Replay timeline for server submission — every deploy the player
       // commits is recorded. Defeat/timeout endings submit this list
       // via /api/raid/submit, where the shared sim re-runs it to verify
@@ -837,6 +1094,17 @@ export class RaidScene extends Phaser.Scene {
       this.raidInputs.push(input);
       const start = this.drawingPoints[0];
       if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
+      haptic(modifier ? [10, 6, 14] : 12);
+      sfxDeploy();
+      // Modifier-specific cue scheduled slightly after the deploy
+      // whoof so the two cues read as a phrase, not a chord.
+      if (modifier) {
+        const delay = 90;
+        if (modifier.kind === 'dig') this.time.delayedCall(delay, sfxDig);
+        else if (modifier.kind === 'ambush') this.time.delayedCall(delay, sfxAmbush);
+        else if (modifier.kind === 'split') this.time.delayedCall(delay, sfxSplit);
+      }
+      this.advanceCoachmark('spawn');
 
       // fade the committed trail
       this.tweens.add({
@@ -853,6 +1121,527 @@ export class RaidScene extends Phaser.Scene {
 
   private currentDeckEntry(): DeckEntry {
     return this.deckEntries[this.selectedDeckIdx]!;
+  }
+
+  // ---------- First-run coachmark drill ----------
+  //
+  // Three guided steps that teach the genre-specific mechanics in
+  // context: pick a unit (deck), drag from a glowing edge (path),
+  // try the Dig modifier (cross-layer hook). Each step gates on the
+  // gameplay event it teaches — the player can't skip ahead by
+  // tapping a bubble. Persists 'done' to localStorage only after
+  // step 3 completes; bailing out before then leaves the drill
+  // armed for the next visit.
+
+  private runCoachmarkStep(): void {
+    if (!this.scene.isActive()) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    if (this.coachmarkStep === 'deck') {
+      const card = this.deckContainers[this.selectedDeckIdx];
+      if (!card) return;
+      const r = card.getBounds();
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: r.x, y: r.y, w: r.width, h: r.height },
+        prefer: 'above',
+        title: 'Pick your swarm',
+        body: 'Tap any card to ready that unit. Each card shows the role and remaining count.',
+      });
+    } else if (this.coachmarkStep === 'spawn') {
+      // Halo the spawn-zone label area in scene coordinates.
+      const scaleX = this.boardContainer.scaleX || 1;
+      const screenX = this.boardContainer.x;
+      const screenY = this.boardContainer.y;
+      const w = SPAWN_ZONE_W * scaleX;
+      const h = (BOARD_H * scaleX) - 20;
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: screenX, y: screenY, w, h },
+        prefer: 'below',
+        title: 'Draw a path',
+        body: 'Drag from a glowing edge into the base. Your swarm walks the trail you draw.',
+      });
+    } else if (this.coachmarkStep === 'modifier') {
+      // Highlight the Dig modifier button (4th in the row).
+      const digBtn = this.modifierButtons.find((b) => b.kind === 'dig');
+      if (!digBtn) {
+        this.completeCoachmarkDrill();
+        return;
+      }
+      const r = digBtn.container.getBounds();
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: r.x, y: r.y, w: r.width, h: r.height },
+        prefer: 'below',
+        title: 'Try Dig',
+        body: 'Toggle Dig and your unit burrows mid-path. The dual-layer hook is what makes this game weird.',
+      });
+    }
+  }
+
+  // Advance the drill when the gameplay event matching the current
+  // step fires. Caller passes the step it just satisfied; if it
+  // matches, we acknowledge and move on.
+  private advanceCoachmark(satisfied: 'deck' | 'spawn' | 'modifier'): void {
+    if (this.coachmarkStep !== satisfied) return;
+    if (this.activeCoachmark) {
+      this.activeCoachmark.acknowledge();
+      this.activeCoachmark = null;
+    }
+    if (satisfied === 'deck') {
+      this.coachmarkStep = 'spawn';
+    } else if (satisfied === 'spawn') {
+      this.coachmarkStep = 'modifier';
+    } else {
+      this.completeCoachmarkDrill();
+      return;
+    }
+    this.time.delayedCall(420, () => this.runCoachmarkStep());
+  }
+
+  private completeCoachmarkDrill(): void {
+    this.coachmarkStep = 'done';
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    markRaidCoachmarksDone();
+  }
+
+  // ---------- Path modifier toolbar + saved tactics ----------
+
+  private drawModifierBar(): void {
+    this.modifierBar = this.add.container(0, 0).setDepth(32);
+    this.modifierBarBg = this.add.graphics();
+    this.modifierBar.add(this.modifierBarBg);
+
+    let cursorX = 0;
+    for (const kind of MODIFIER_KINDS) {
+      const containerBtn = this.add.container(cursorX, 0);
+      const btnBg = this.add.graphics();
+      const label = this.add
+        .text(MOD_BTN_W / 2, MOD_BTN_H / 2, `${MODIFIER_GLYPH[kind]}  ${MODIFIER_LABEL[kind]}`, {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '13px',
+          color: '#e6f5d2',
+        })
+        .setOrigin(0.5);
+      containerBtn.add([btnBg, label]);
+      containerBtn.setSize(MOD_BTN_W, MOD_BTN_H);
+      containerBtn.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, MOD_BTN_W, MOD_BTN_H),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      containerBtn.on('pointerdown', () => this.setModifierMode(kind));
+      this.modifierBar.add(containerBtn);
+      this.modifierButtons.push({ kind, container: containerBtn, bg: btnBg, label });
+      cursorX += MOD_BTN_W + MOD_BTN_GAP;
+    }
+
+    // Save & Tactics action buttons share the bar's right side.
+    const saveContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    this.saveTacticBg = this.add.graphics();
+    this.saveTacticLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '★ Save', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+    saveContainer.add([this.saveTacticBg, this.saveTacticLabel]);
+    saveContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
+    saveContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    saveContainer.on('pointerdown', () => this.handleSaveTactic());
+    this.modifierBar.add(saveContainer);
+    this.saveTacticBtn = saveContainer;
+    cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
+
+    // Redo — repeat the last path the player drew. Mobile users in
+    // particular benefit from a "do that again" shortcut so they
+    // don't have to re-trace identical lanes for follow-up bursts.
+    const redoContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    this.redoBg = this.add.graphics();
+    this.redoLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '↺ Redo', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+    redoContainer.add([this.redoBg, this.redoLabel]);
+    redoContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
+    redoContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    redoContainer.on('pointerdown', () => this.redoLastDraft());
+    this.modifierBar.add(redoContainer);
+    this.redoBtn = redoContainer;
+    cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
+
+    const tacContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    const tacBg = this.add.graphics();
+    const tacLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '☰ Tactics', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+    tacContainer.add([tacBg, tacLabel]);
+    tacContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
+    tacContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    tacContainer.on('pointerdown', () => this.toggleTacticsPanel());
+    this.paintActionButton(tacBg, false);
+    this.modifierBar.add(tacContainer);
+
+    this.refreshModifierBar();
+    this.refreshSaveTacticEnabled();
+    this.refreshRedoEnabled();
+  }
+
+  private paintActionButton(bg: Phaser.GameObjects.Graphics, pressed: boolean): void {
+    bg.clear();
+    bg.fillStyle(pressed ? 0x2a4530 : 0x1a2b1a, 1);
+    bg.lineStyle(2, COLOR.brassDeep, 1);
+    bg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    bg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+  }
+
+  private refreshModifierBar(): void {
+    for (const b of this.modifierButtons) {
+      const selected = b.kind === this.currentModifierMode;
+      b.bg.clear();
+      b.bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
+      b.bg.lineStyle(2, selected ? 0xffd98a : COLOR.brassDeep, 1);
+      b.bg.fillRoundedRect(0, 0, MOD_BTN_W, MOD_BTN_H, 8);
+      b.bg.strokeRoundedRect(0, 0, MOD_BTN_W, MOD_BTN_H, 8);
+      b.label.setColor(selected ? '#fff' : '#e6f5d2');
+    }
+  }
+
+  private setModifierMode(kind: Types.PathModifierKind | 'none'): void {
+    this.currentModifierMode = kind;
+    this.refreshModifierBar();
+    this.deckHintText.setText(
+      kind === 'none'
+        ? 'Direct path — units walk straight through.'
+        : `${MODIFIER_LABEL[kind]} marker armed — placed at path midpoint on commit.`,
+    );
+    haptic(8);
+    sfxModifierTick();
+    // Step 3 of the drill is "try Dig" — toggling any modifier kind
+    // counts (the goal is teaching the bar exists; the player can
+    // experiment with split/ambush from here on their own).
+    if (kind !== 'none') {
+      this.advanceCoachmark('modifier');
+    }
+  }
+
+  // Brief brightening of the spawn-zone overlay when the player taps
+  // outside a legal start region. The graphics live inside
+  // boardContainer so this transform follows the board's scale on
+  // mobile. Quick on, slow off so the eye catches the highlight.
+  private flashSpawnZones(): void {
+    if (!this.spawnZoneGraphics) return;
+    this.tweens.killTweensOf(this.spawnZoneGraphics);
+    this.spawnZoneGraphics.setAlpha(0.85);
+    this.tweens.add({
+      targets: this.spawnZoneGraphics,
+      alpha: 0.28,
+      duration: 480,
+      ease: 'Sine.easeOut',
+    });
+    if (this.spawnZoneCue) {
+      this.tweens.killTweensOf(this.spawnZoneCue);
+      this.spawnZoneCue.setAlpha(1);
+      this.tweens.add({
+        targets: this.spawnZoneCue,
+        alpha: 0.55,
+        duration: 600,
+        ease: 'Sine.easeOut',
+      });
+    }
+  }
+
+  // Redo: re-deploy the most recent path the player drew, including
+  // its modifier. Costs another burst from the same deck slot. The
+  // common shape with deployTactic comes from a shared sub-helper —
+  // both routes funnel SimInputs through the same path so a single
+  // change to the deploy schema covers them.
+  private redoLastDraft(): void {
+    if (!this.lastDraft) return;
+    if (this.state.outcome !== 'ongoing') return;
+    const idx = this.deckEntries.findIndex(
+      (d) => d.kind === this.lastDraft!.unitKind && d.count > 0,
+    );
+    if (idx < 0) {
+      this.deckHintText.setText(`No ${this.lastDraft.unitKind} left to repeat that path.`);
+      haptic(25);
+      return;
+    }
+    this.selectedDeckIdx = idx;
+    haptic(12);
+    this.deployTactic({
+      name: 'Redo',
+      unitKind: this.lastDraft.unitKind,
+      pointsTile: this.lastDraft.pointsTile,
+      ...(this.lastDraft.modifier ? { modifier: this.lastDraft.modifier } : {}),
+      spawnEdge: this.lastDraft.spawnEdge,
+    });
+  }
+
+  private flashModifierStamp(
+    px: number,
+    py: number,
+    kind: Types.PathModifierKind | 'none',
+  ): void {
+    if (kind === 'none') return;
+    this.modifierStamp.removeAll(true);
+    const ring = this.add.graphics();
+    ring.lineStyle(3, 0xffd98a, 1);
+    ring.strokeCircle(0, 0, 16);
+    ring.fillStyle(0x162216, 0.85);
+    ring.fillCircle(0, 0, 16);
+    const glyph = this.add
+      .text(0, 0, MODIFIER_GLYPH[kind], {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '20px',
+        color: '#ffd98a',
+      })
+      .setOrigin(0.5);
+    this.modifierStamp.add([ring, glyph]);
+    this.modifierStamp.setPosition(px, py);
+    this.modifierStamp.setVisible(true);
+    this.modifierStamp.setAlpha(1);
+    this.tweens.killTweensOf(this.modifierStamp);
+    this.tweens.add({
+      targets: this.modifierStamp,
+      alpha: 0,
+      duration: 900,
+      delay: 300,
+      onComplete: () => this.modifierStamp.setVisible(false),
+    });
+  }
+
+  private refreshSaveTacticEnabled(): void {
+    const enabled = !!this.lastDraft;
+    this.saveTacticBg.clear();
+    this.saveTacticBg.fillStyle(enabled ? 0x3a3520 : 0x1a1a16, 1);
+    this.saveTacticBg.lineStyle(2, enabled ? 0xffd98a : 0x554d2c, 1);
+    this.saveTacticBg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.saveTacticBg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.saveTacticLabel.setAlpha(enabled ? 1 : 0.45);
+  }
+
+  private refreshRedoEnabled(): void {
+    if (!this.redoBg || !this.redoLabel) return;
+    // Redo lights up only when there's a draft AND the matching deck
+    // slot still has stock. Saves the player from pressing it just to
+    // get a "no units left" buzz.
+    const enabled =
+      !!this.lastDraft &&
+      this.deckEntries.some(
+        (d) => d.kind === this.lastDraft!.unitKind && d.count > 0,
+      );
+    this.redoBg.clear();
+    this.redoBg.fillStyle(enabled ? 0x223a23 : 0x161a16, 1);
+    this.redoBg.lineStyle(2, enabled ? COLOR.brassDeep : 0x3a4a3a, 1);
+    this.redoBg.fillRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.redoBg.strokeRoundedRect(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H, 8);
+    this.redoLabel.setAlpha(enabled ? 1 : 0.45);
+  }
+
+  private handleSaveTactic(): void {
+    if (!this.lastDraft) return;
+    const list = loadSavedTactics();
+    const auto = `${this.lastDraft.name} #${list.length + 1}`;
+    const next: SavedTactic = { ...this.lastDraft, name: auto };
+    list.push(next);
+    while (list.length > TACTICS_LIMIT) list.shift();
+    persistSavedTactics(list);
+    this.spawnDeployPopup(this.scale.width / 2, HUD_H + MODIFIER_BAR_H + 12, 'Saved', 1);
+    if (this.tacticsPanel) {
+      this.closeTacticsPanel();
+      this.openTacticsPanel();
+    }
+  }
+
+  private toggleTacticsPanel(): void {
+    if (this.tacticsPanel) {
+      this.closeTacticsPanel();
+    } else {
+      this.openTacticsPanel();
+    }
+  }
+
+  private openTacticsPanel(): void {
+    const list = loadSavedTactics();
+    const w = Math.min(this.scale.width - 32, 360);
+    const h = Math.min(this.scale.height - HUD_H - 80, 320);
+    const panel = this.add.container(this.scale.width / 2, HUD_H + 60).setDepth(80);
+    const bg = this.add.graphics();
+    drawPanel(bg, -w / 2, 0, w, h, {
+      topColor: 0x172117,
+      botColor: 0x0a120b,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 14,
+      shadowOffset: 5,
+      shadowAlpha: 0.4,
+    });
+    panel.add(bg);
+    const title = this.add
+      .text(0, 14, 'Saved Tactics', displayTextStyle(15, '#ffd98a', 3))
+      .setOrigin(0.5, 0);
+    panel.add(title);
+    const closeBtn = this.add
+      .text(w / 2 - 18, 14, '✕', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5, 0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.closeTacticsPanel());
+    panel.add(closeBtn);
+    if (list.length === 0) {
+      const empty = this.add
+        .text(0, 60, 'Draw a path, then hit ★ Save to bank a tactic.', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '12px',
+          color: '#9fc79a',
+          align: 'center',
+          wordWrap: { width: w - 40 },
+        })
+        .setOrigin(0.5, 0);
+      panel.add(empty);
+    } else {
+      const rowH = 38;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i]!;
+        const rowY = 50 + i * (rowH + 4);
+        const row = this.add.container(0, rowY);
+        const rowBg = this.add.graphics();
+        rowBg.fillStyle(0x1a2b1a, 1);
+        rowBg.lineStyle(1, COLOR.brassDeep, 1);
+        rowBg.fillRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        rowBg.strokeRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        const text = this.add
+          .text(-w / 2 + 22, rowH / 2, t.name, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '12px',
+            color: '#e6f5d2',
+          })
+          .setOrigin(0, 0.5);
+        const meta = `${t.unitKind}${t.modifier ? ' · ' + MODIFIER_GLYPH[t.modifier.kind] : ''}`;
+        const metaText = this.add
+          .text(w / 2 - 90, rowH / 2, meta, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '11px',
+            color: '#9fc79a',
+          })
+          .setOrigin(0, 0.5);
+        const useBtn = this.add
+          .text(w / 2 - 24, rowH / 2, '▶', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '14px',
+            color: '#ffd98a',
+          })
+          .setOrigin(0.5, 0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            this.deployTactic(t);
+            this.closeTacticsPanel();
+          });
+        row.add([rowBg, text, metaText, useBtn]);
+        panel.add(row);
+      }
+    }
+    this.tacticsPanel = panel;
+  }
+
+  private closeTacticsPanel(): void {
+    if (this.tacticsPanel) {
+      this.tacticsPanel.destroy(true);
+      this.tacticsPanel = null;
+    }
+  }
+
+  private deployTactic(t: SavedTactic): void {
+    // Find a deck slot for this kind with stock; fall back silently if
+    // the player has none of the unit type left.
+    const idx = this.deckEntries.findIndex((d) => d.kind === t.unitKind && d.count > 0);
+    if (idx < 0) {
+      this.deckHintText.setText(`No ${t.unitKind} left for that tactic.`);
+      return;
+    }
+    this.selectedDeckIdx = idx;
+    const entry = this.deckEntries[idx]!;
+    const burst = Math.min(entry.count, 5);
+    const tilePoints: Types.PheromonePoint[] = t.pointsTile.map((p) => ({
+      x: Sim.fromFloat(p.x),
+      y: Sim.fromFloat(p.y),
+    }));
+    entry.count -= burst;
+    this.refreshDeckUi();
+    const input: Types.SimInput = {
+      type: 'deployPath',
+      tick: this.state.tick + 1,
+      ownerSlot: 0,
+      path: {
+        pathId: 0,
+        spawnLayer: 0,
+        unitKind: entry.kind,
+        count: burst,
+        points: tilePoints,
+        ...(t.modifier ? { modifier: t.modifier } : {}),
+      },
+    };
+    this.pendingInputs.push(input);
+    this.raidInputs.push(input);
+    // Brief preview trail in screen-pixel space so the player sees what
+    // the tactic actually drew on the board.
+    this.trailGraphics.clear();
+    this.trailGraphics.lineStyle(4, 0xffd98a, 0.95);
+    this.trailGraphics.beginPath();
+    for (let i = 0; i < t.pointsTile.length; i++) {
+      const px = t.pointsTile[i]!.x * TILE;
+      const py = t.pointsTile[i]!.y * TILE;
+      if (i === 0) this.trailGraphics.moveTo(px, py);
+      else this.trailGraphics.lineTo(px, py);
+    }
+    this.trailGraphics.strokePath();
+    this.tweens.add({
+      targets: this.trailGraphics,
+      alpha: { from: 1, to: 0 },
+      duration: 700,
+      onComplete: () => {
+        this.trailGraphics.clear();
+        this.trailGraphics.setAlpha(1);
+      },
+    });
+    if (t.modifier) {
+      const markerTile = t.pointsTile[t.modifier.pointIndex];
+      if (markerTile) {
+        this.flashModifierStamp(
+          markerTile.x * TILE,
+          markerTile.y * TILE,
+          t.modifier.kind,
+        );
+      }
+    }
   }
 
   private drawDeckTray(): void {
@@ -929,6 +1718,7 @@ export class RaidScene extends Phaser.Scene {
       });
     }
     this.refreshDeckUi();
+    this.advanceCoachmark('deck');
   }
 
   private redrawDeckCard(index: number): void {
@@ -978,6 +1768,10 @@ export class RaidScene extends Phaser.Scene {
 
   private refreshDeckUi(): void {
     for (let i = 0; i < this.deckContainers.length; i++) this.redrawDeckCard(i);
+    // Redo button mirrors deck stock for the last drafted unit, so
+    // updating it on every deck refresh keeps the enabled state in
+    // lockstep with what's actually deployable.
+    this.refreshRedoEnabled();
     const entry = this.currentDeckEntry();
     if (!entry) return;
     this.deckSelectedIcon.setTexture(entry.icon);
@@ -1145,6 +1939,24 @@ export class RaidScene extends Phaser.Scene {
 
     // Clear per-tick deployment counters to prevent memory leaks in long sessions.
     this.deploymentUnitCounts.clear();
+    // Reset SFX throttles. The hit thud is allowed to fire at most
+    // twice per frame across the whole board so we never melt the
+    // mix when a 5-unit burst spreads across multiple targets.
+    this.buildingHitsThisFrame = 0;
+    this.unitDeathsThisFrame = 0;
+
+    // Pre-pass: tally where the attacker actually is right now. Used
+    // both for the HUD layer badges (set later in the units pass) and
+    // for the underground-reveal building tint computed below.
+    let preSurface = 0;
+    let preUnder = 0;
+    for (const u of this.state.units) {
+      if (u.owner !== 0 || u.hp <= 0) continue;
+      if (u.layer === 0) preSurface++;
+      else preUnder++;
+    }
+    const attackerOnLayer1 = preUnder > 0;
+    const attackerOnLayer0 = preSurface > 0;
 
     // Buildings: update HP bars and fade destroyed ones.
     for (const b of this.state.buildings) {
@@ -1168,6 +1980,7 @@ export class RaidScene extends Phaser.Scene {
             const centerY = b.anchorY * TILE + (b.h * TILE) / 2;
             this.spawnDebrisBurst(centerX, centerY, b.kind === 'QueenChamber' ? 24 : 10);
             if (b.kind === 'QueenChamber') {
+              sfxQueenDestroyed();
               this.cameras.main.shake(340, 0.012);
               this.cameras.main.flash(180, 255, 230, 160);
               // Brief zoom punch: scale up the board container then
@@ -1183,6 +1996,7 @@ export class RaidScene extends Phaser.Scene {
                 ease: 'Sine.easeOut',
               });
             } else {
+              sfxBuildingDestroyed();
               this.cameras.main.shake(120, 0.004);
             }
             // Floating loot text for buildings that drop resources on
@@ -1210,6 +2024,30 @@ export class RaidScene extends Phaser.Scene {
       if (b.hp < prevHp) {
         spr.setTint(0xffe799);
         this.time.delayedCall(70, () => spr.clearTint());
+        // Throttle the hit thuds with a per-frame budget so a 5-unit
+        // burst against one building doesn't fire five overlapping
+        // SFX in the same render tick.
+        if (this.buildingHitsThisFrame < 2) {
+          sfxBuildingHit();
+          this.buildingHitsThisFrame++;
+        }
+      } else {
+        // Layer-active reveal: a building on the attacker's CURRENT
+        // layer reads as "in play" — full alpha, no tint. A building
+        // on the inactive layer dims so the player understands it's
+        // out of reach without a dig. Cross-layer buildings (`spans`
+        // includes both) always read as in-play.
+        const spansBoth = !!(b.spans && b.spans.includes(0) && b.spans.includes(1));
+        const layerActive =
+          spansBoth ||
+          (b.layer === 0 && attackerOnLayer0) ||
+          (b.layer === 1 && attackerOnLayer1);
+        if (preSurface === 0 && preUnder === 0) {
+          // Pre-deploy: keep all buildings visible at default alpha.
+          spr.setAlpha(1);
+        } else {
+          spr.setAlpha(layerActive ? 1 : 0.55);
+        }
       }
       this.buildingLastHp.set(b.id, b.hp);
       const hpFrac = Math.max(0, Math.min(1, b.hp / b.hpMax));
@@ -1224,8 +2062,14 @@ export class RaidScene extends Phaser.Scene {
 
     // Units: sync sprites to sim positions; puff the shared trail emitter.
     const alive = new Set<number>();
+    let surfaceCount = 0;
+    let undergroundCount = 0;
     for (const u of this.state.units) {
       alive.add(u.id);
+      if (u.owner === 0) {
+        if (u.layer === 0) surfaceCount++;
+        else undergroundCount++;
+      }
       let spr = this.unitSprites.get(u.id);
       const x = Sim.toFloat(u.x) * TILE;
       const y = Sim.toFloat(u.y) * TILE;
@@ -1233,6 +2077,7 @@ export class RaidScene extends Phaser.Scene {
         spr = this.makeUnitSprite(u.kind, x, y);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
+        this.unitLastLayer.set(u.id, u.layer);
         // Entry animation: only animate attacker units sliding in from their
         // spawn edge. Defender units (spawned by buildings) don't animate.
         if (u.owner === 0) {
@@ -1244,6 +2089,16 @@ export class RaidScene extends Phaser.Scene {
       } else {
         spr.setPosition(x, y);
       }
+      // Layer transition: a `dig` modifier just flipped this unit's
+      // layer. Play the dive/emerge animation, mark it mid-dive so the
+      // tint and alpha logic below leaves it alone, and queue it to
+      // clear when the emerge tween completes.
+      const prevLayer = this.unitLastLayer.get(u.id);
+      if (prevLayer !== undefined && prevLayer !== u.layer) {
+        this.playDigAnimation(spr, x, y, u.layer);
+        this.unitDigPlaying.add(u.id);
+      }
+      this.unitLastLayer.set(u.id, u.layer);
 
       // Movement-gated animation. For walk-cycle Sprites (not plain
       // Images), play the animation only while the unit has actually
@@ -1280,7 +2135,11 @@ export class RaidScene extends Phaser.Scene {
         }
       }
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
-      spr.setAlpha(0.35 + 0.65 * hpFrac);
+      // While a dig animation is playing, leave alpha to the tween.
+      // Otherwise apply the standard hp-based fade.
+      if (!this.unitDigPlaying.has(u.id)) {
+        spr.setAlpha(0.35 + 0.65 * hpFrac);
+      }
       // Hit flash for units — same logic as buildings, keyed on a
       // side Map of last-seen hp. Cheap: one Map lookup + one
       // comparison per live unit per frame.
@@ -1292,6 +2151,16 @@ export class RaidScene extends Phaser.Scene {
           // if the unit died within 60ms of the hit; guard before touch.
           if (this.unitSprites.get(u.id) === spr) spr.clearTint();
         });
+      } else if (!this.unitDigPlaying.has(u.id)) {
+        // Layer tint: underground attacker units carry a cool blue
+        // wash so they read as "below the surface" at a glance. Only
+        // apply when no other tint (hit flash) is active. Defender
+        // units never live on layer 1 today, so this is attacker-only.
+        if (u.owner === 0 && u.layer === 1) {
+          spr.setTint(0xa8c6ff);
+        } else {
+          spr.clearTint();
+        }
       }
       this.unitLastHp.set(u.id, u.hp);
       // Emit one tiny pheromone puff at the unit's feet every ~5 frames.
@@ -1305,12 +2174,91 @@ export class RaidScene extends Phaser.Scene {
       if (!alive.has(id)) {
         // Unit death burst: small puff at last-known sprite position.
         this.spawnDebrisBurst(spr.x, spr.y, 6);
+        if (this.unitDeathsThisFrame < 3) {
+          sfxUnitDeath();
+          this.unitDeathsThisFrame++;
+        }
         spr.destroy();
         this.unitSprites.delete(id);
         this.unitLastHp.delete(id);
         this.unitLastPos.delete(id);
+        this.unitLastLayer.delete(id);
+        this.unitDigPlaying.delete(id);
       }
     }
+
+    // Layer activity badges. Surface count brightens to gold when
+    // anyone is up top; underground dims to a cool teal otherwise.
+    if (this.layerBadgeSurface) {
+      this.layerBadgeSurface.setText(`☼ ${surfaceCount}`);
+      this.layerBadgeSurface.setColor(surfaceCount > 0 ? '#ffd98a' : '#54663f');
+    }
+    if (this.layerBadgeUnderground) {
+      this.layerBadgeUnderground.setText(`⛏ ${undergroundCount}`);
+      this.layerBadgeUnderground.setColor(undergroundCount > 0 ? '#a8c6ff' : '#3a4a55');
+    }
+  }
+
+  // Dive/emerge animation played the moment a unit's layer flips
+  // mid-raid (only the new `dig` path modifier triggers this today).
+  // Tween the sprite down to a flat ellipse with falling alpha — that
+  // reads as "burrowing into the ground" — then snap back and reverse
+  // it for the emerge half. A dirt-puff is spawned at start and end so
+  // there's a satisfying physical anchor on both sides of the flip.
+  private playDigAnimation(
+    spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+    x: number,
+    y: number,
+    newLayer: Types.Layer,
+  ): void {
+    const baseScaleX = spr.scaleX;
+    const baseScaleY = spr.scaleY;
+    // Dirt burst at the dig site — 8 particles for visual weight.
+    this.spawnDebrisBurst(x, y + 2, 8);
+    // Subtle camera nudge so the moment lands.
+    this.cameras.main.shake(140, 0.0035);
+    this.tweens.killTweensOf(spr);
+    this.tweens.add({
+      targets: spr,
+      scaleY: baseScaleY * 0.18,
+      scaleX: baseScaleX * 1.18,
+      alpha: 0,
+      duration: 180,
+      ease: 'Sine.easeIn',
+      onComplete: () => {
+        // Mid-flip puff at the same spot — the world below is now in
+        // play. Apply the new-layer tint immediately so the emerge
+        // tween reveals the unit in its new colour.
+        this.spawnDebrisBurst(x, y + 2, 6);
+        if (this.unitSprites.has(this.unitIdForSprite(spr) ?? -1)) {
+          spr.setTint(newLayer === 1 ? 0xa8c6ff : 0xffffff);
+          if (newLayer === 0) spr.clearTint();
+        }
+        this.tweens.add({
+          targets: spr,
+          scaleY: baseScaleY,
+          scaleX: baseScaleX,
+          alpha: 1,
+          duration: 200,
+          ease: 'Sine.easeOut',
+          onComplete: () => {
+            const id = this.unitIdForSprite(spr);
+            if (id !== null) this.unitDigPlaying.delete(id);
+          },
+        });
+      },
+    });
+  }
+
+  // Reverse-lookup unit id from a sprite. Cheap enough at sim scale
+  // (≤30 units) that a Map walk beats maintaining a parallel index.
+  private unitIdForSprite(
+    spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+  ): number | null {
+    for (const [id, candidate] of this.unitSprites) {
+      if (candidate === spr) return id;
+    }
+    return null;
   }
 
   // Small debris / hit-burst emitter. Reuses the trail-dot texture so
@@ -1488,8 +2436,13 @@ export class RaidScene extends Phaser.Scene {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
     try {
+      // Pass the revenge target through so the server pins the
+      // matchmaker on that defender. If the target is invalid (self,
+      // shielded, base missing) the server falls through to random
+      // matchmaking and the player still gets a fight.
       const match = await runtime.api.requestMatch(
         runtime.player?.player.trophies ?? 100,
+        this.revengeContext?.defenderId,
       );
       // Race guard: if the player already started committing inputs
       // against the fallback bot base before this response arrived,
@@ -1817,9 +2770,11 @@ export class RaidScene extends Phaser.Scene {
     // modal appeared" moment into a celebration.
     if (isWin) {
       sfxVictory();
+      haptic([40, 30, 60]);
       this.emitConfetti(cy - 8);
     } else {
       sfxDefeat();
+      haptic([20, 60, 20]);
     }
 
     const actionsY = isWin ? cy + 220 : cy + 170;
@@ -1913,23 +2868,48 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private layout(): void {
-    // Mobile-aware board sizing. Reserve HUD + deck, scale board to
-    // fit the remaining rectangle, center with padding. Everything
-    // else (units, buildings, trail graphics) lives inside the
-    // container so they scale together; pointer math unscales.
+    // Mobile-aware board sizing. Reserve HUD + modifier bar + deck,
+    // scale board to fit the remaining rectangle, center with padding.
+    // Everything else (units, buildings, trail graphics) lives inside
+    // the container so they scale together; pointer math unscales.
     const deckLayout = this.deckLayoutMetrics();
     const availW = this.scale.width - 24;
-    const availH = this.scale.height - HUD_H - deckLayout.trayHeight - 40;
+    const availH = this.scale.height - HUD_H - MODIFIER_BAR_H - deckLayout.trayHeight - 40;
     const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
     this.boardContainer.setScale(scale);
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
     const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
-    const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
+    const yOffset = HUD_H + MODIFIER_BAR_H + Math.max(8, (availH - scaledH) / 2);
     this.boardContainer.setPosition(xOffset, yOffset);
+
+    // Modifier bar — positioned between HUD and the board. Width is
+    // computed from the same MOD_* constants drawModifierBar uses, so
+    // any future change to button sizes ripples through both places.
+    // 3 action buttons today (Save / Redo / Tactics).
+    if (this.modifierBar) {
+      const modCount = MODIFIER_KINDS.length;
+      const actionCount = 3;
+      const groupW =
+        modCount * MOD_BTN_W +
+        (modCount - 1) * MOD_BTN_GAP +
+        actionCount * (MOD_ACTION_GAP + MOD_ACTION_BTN_W);
+      const startX = Math.max(12, (this.scale.width - groupW) / 2);
+      this.modifierBar.setPosition(startX, HUD_H + 6);
+      this.modifierBarBg.clear();
+      this.modifierBarBg.fillStyle(0x0a120b, 0.6);
+      this.modifierBarBg.fillRoundedRect(-12, -4, groupW + 24, 40, 10);
+    }
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
+    // Layer badges sit immediately to the left of the centred timer.
+    if (this.layerBadgeSurface) {
+      this.layerBadgeSurface.setPosition(this.scale.width / 2 - 60, HUD_H / 2 - 10);
+    }
+    if (this.layerBadgeUnderground) {
+      this.layerBadgeUnderground.setPosition(this.scale.width / 2 - 60, HUD_H / 2 + 10);
+    }
 
     const trayTop = this.scale.height - deckLayout.trayHeight - 12;
     this.deckTrayBg.clear();
