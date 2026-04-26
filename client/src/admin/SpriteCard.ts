@@ -725,14 +725,22 @@ export class SpriteCard {
     const overriddenSuffix = (): string => (this.cardCompression ? ' (override)' : '');
     toggle.textContent = `Compression ▼${overriddenSuffix()}`;
     toggle.addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      // Re-render so the displayed values reflect the LIVE global at
-      // expand time — previously the read happened only on first
-      // render, so after the admin moved the toolbar slider the card
-      // panel still showed stale numbers.
-      if (!panel.hidden) this.renderCompressionPanel();
-      const arrow = panel.hidden ? '▼' : '▲';
-      toggle.textContent = `Compression ${arrow}${overriddenSuffix()}`;
+      // Two paths: collapse just hides this panel; expand re-renders
+      // first (so the displayed values reflect the LIVE global) and
+      // THEN explicitly shows the freshly-built panel. Prior version
+      // toggled `panel.hidden` on the closure-captured element BEFORE
+      // re-render, which destroyed it and left the user staring at a
+      // collapsed panel and a stale toggle reference.
+      if (panel.hidden) {
+        this.renderCompressionPanel();
+        if (this.compressionPanel) this.compressionPanel.hidden = false;
+        if (this.compressionToggle) {
+          this.compressionToggle.textContent = `Compression ▲${overriddenSuffix()}`;
+        }
+      } else {
+        panel.hidden = true;
+        toggle.textContent = `Compression ▼${overriddenSuffix()}`;
+      }
     });
 
     const content = el('div', 'compression-content');

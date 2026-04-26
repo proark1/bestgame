@@ -28,19 +28,22 @@ export interface LayerMigrationResult {
 export function normalizeBaseLayers(base: Types.Base): LayerMigrationResult {
   const events: LayerMigrationResult['events'] = [];
 
-  // Buildings that are still legal stay in place. Walk a copy so
-  // demolitions don't mutate during iteration.
-  const survivors: Types.Building[] = [];
-  for (const b of base.buildings) {
-    // Cross-layer buildings (QueenChamber, TunnelJunction) anchor to
-    // one layer but `spans` covers the others — only validate the
-    // anchor layer. Anything with `spans` is also implicitly allowed
-    // on its anchor layer because spans contains the anchor.
-    if (isLayerAllowed(b.kind, b.anchor.layer)) {
-      survivors.push(b);
-      continue;
-    }
-    // Misplaced. Relocate to the first allowed layer that has space.
+  // Two passes so a relocation never picks a tile that a still-legal
+  // building OCCUPIES later in the array. Single-pass logic that
+  // appends survivors as it goes only collides against earlier
+  // entries and would happily overlap a relocation onto a building
+  // it hasn't seen yet. Cross-layer buildings (QueenChamber,
+  // TunnelJunction) are valid on their anchor layer because
+  // ALLOWED_LAYERS lists both, so this filter handles them
+  // correctly — no special-case branch needed.
+  const survivors: Types.Building[] = base.buildings.filter((b) =>
+    isLayerAllowed(b.kind, b.anchor.layer),
+  );
+  const misplaced = base.buildings.filter(
+    (b) => !isLayerAllowed(b.kind, b.anchor.layer),
+  );
+
+  for (const b of misplaced) {
     const allowed = ALLOWED_LAYERS[b.kind];
     let placed = false;
     for (const targetLayer of allowed) {

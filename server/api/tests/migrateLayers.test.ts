@@ -111,4 +111,28 @@ describe('normalizeBaseLayers', () => {
     const out = normalizeBaseLayers(base);
     expect(out.mutated).toBe(false);
   });
+
+  it('does not relocate a misplaced building onto a tile that a LATER legal building occupies', () => {
+    // Regression: the misplaced trap appears FIRST in the array; a
+    // legal vault sits at (0, 0, layer 1) — the lexicographically
+    // first cell findEmptyCell would pick. Single-pass code that
+    // only checks earlier survivors would happily relocate the
+    // trap onto (0, 0), overlapping the vault. Two-pass
+    // normalization sees the vault as a survivor before any
+    // relocation runs.
+    const base = makeBase([
+      building('t1', 'DungeonTrap', 0, 5, 5),
+      building('v1', 'SugarVault', 1, 0, 0),
+    ]);
+    const out = normalizeBaseLayers(base);
+    expect(out.mutated).toBe(true);
+    const trap = out.base.buildings.find((b) => b.id === 't1')!;
+    const vault = out.base.buildings.find((b) => b.id === 'v1')!;
+    // Vault stays put; trap must NOT land on (0, 0).
+    expect(vault.anchor).toEqual({ x: 0, y: 0, layer: 1 });
+    expect(trap.anchor.layer).toBe(1);
+    const sameTile =
+      trap.anchor.x === vault.anchor.x && trap.anchor.y === vault.anchor.y;
+    expect(sameTile).toBe(false);
+  });
 });
