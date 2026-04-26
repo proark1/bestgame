@@ -5,6 +5,7 @@ import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
+import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
 import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
@@ -112,6 +113,19 @@ export class HomeScene extends Phaser.Scene {
     fadeInScene(this);
     installSceneClickDebug(this);
     this.drawAmbient();
+
+    // Layer survives `scene.restart()` via the registry. Without
+    // this restore, claiming a streak / comeback / dismissing a
+    // banner while looking at the underground would whip the player
+    // back to the surface — jarring. The restart paths set this
+    // value before calling `scene.restart()`.
+    const persistedLayer = this.registry.get('homeLayer') as 0 | 1 | undefined;
+    if (persistedLayer === 0 || persistedLayer === 1) {
+      this.layer = persistedLayer;
+      // One-shot consumption so a fresh navigation back to HomeScene
+      // (e.g. from the burger drawer) starts on the surface again.
+      this.registry.set('homeLayer', null);
+    }
 
     // Hydrate from runtime — scene is re-entered after each raid, so this
     // re-reads the latest player state (which RaidScene patches after a
@@ -259,24 +273,14 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  // Formats the inside-pill value text. For sugar / leaf, shows the
-  // storage cap as a fraction so the player can see the headroom at a
-  // glance ("5800 / 7300"). Falls back to the raw value when the server
-  // hasn't sent caps yet (e.g. pre-storage server, or the local guest
-  // path with no /me roundtrip). Milk is always raw — uncapped in MVP.
+  // Formats the inside-pill value text. Pills show ONLY the current
+  // wallet number — the cap, income rate, and "next milestone in N
+  // seconds" detail moves to the popover that opens on tap (see
+  // openResourcePopover). Cleaner glance state, full detail on click.
+  // Milk is always raw — uncapped in MVP.
   private formatPillValue(kind: 'sugar' | 'leaf' | 'milk'): string {
-    if (kind === 'sugar') {
-      const cap = this.storageCaps.sugar;
-      return cap !== null
-        ? `${this.resources.sugar} / ${cap}`
-        : `${this.resources.sugar}`;
-    }
-    if (kind === 'leaf') {
-      const cap = this.storageCaps.leaf;
-      return cap !== null
-        ? `${this.resources.leafBits} / ${cap}`
-        : `${this.resources.leafBits}`;
-    }
+    if (kind === 'sugar') return `${this.resources.sugar}`;
+    if (kind === 'leaf') return `${this.resources.leafBits}`;
     // aphidMilk accumulates fractional locally (see update() trickle); we
     // floor for display so the HUD pill stays integer-clean and matches
     // what the server has banked at the last /me roundtrip.
@@ -1350,22 +1354,31 @@ export class HomeScene extends Phaser.Scene {
     anchorY: number,
   ): void {
     this.resourcePopover?.destroy(true);
-    const income = this.currentIncomePerSecond();
-    const rate = kind === 'sugar' ? income.sugar
-      : kind === 'leaf' ? income.leaf
-      : income.milk;
-    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
-    const wallet = runtime?.player?.player;
-    const have = wallet
-      ? kind === 'sugar' ? wallet.sugar
-        : kind === 'leaf' ? wallet.leafBits
-        : wallet.aphidMilk
-      : 0;
+    // Read from the same in-scene state the HUD pills use:
+    //   - this.resources tracks the locally-trickled wallet so the
+    //     popover doesn't show stale numbers between server
+    //     round-trips.
+    //   - this.computeRate() returns a non-zero rate even on the
+    //     guest path (where serverBase is null) by falling back to
+    //     STARTER_BUILDINGS, matching what the pill rate text shows.
+    const rate = this.computeRate(kind);
+    const have = kind === 'sugar' ? this.resources.sugar
+      : kind === 'leaf' ? this.resources.leafBits
+      : Math.floor(this.resources.aphidMilk);
     const title =
       kind === 'sugar' ? 'Sugar' :
       kind === 'leaf' ? 'Leaf bits' : 'Aphid milk';
     const lines: string[] = [];
-    lines.push(`Current: ${have}`);
+    // Show cap fraction in the popover (moved out of the pill text
+    // so the HUD glance stays clean). Milk is uncapped.
+    const cap =
+      kind === 'sugar' ? this.storageCaps.sugar :
+      kind === 'leaf' ? this.storageCaps.leaf :
+      null;
+    lines.push(cap !== null ? `Current: ${have} / ${cap}` : `Current: ${have}`);
+    if (cap !== null && have >= cap) {
+      lines.push('At cap — production paused. Upgrade storage or spend resources.');
+    }
     if (rate > 0) {
       lines.push(`Income: +${rate}/sec from ${kind === 'sugar' ? 'Dew Collectors' : 'Larva Nurseries'}`);
       // Quick "how long to 1000" style estimate so players sense
@@ -1935,20 +1948,35 @@ export class HomeScene extends Phaser.Scene {
     let topY = HUD_H + 8;
 
     // Comeback banner — the strongest signal (away 3+ days). Pushed
-    // above everything else.
-    if (ps.streak?.comebackPending) {
+    // above everything else. Dismissible: each appearance is keyed on
+    // the comeback-pending flag transition, so dismissing once doesn't
+    // wipe the next return-from-AFK trigger.
+    if (ps.streak?.comebackPending && !isBannerDismissed('comeback', 'pending')) {
       topY = this.drawComebackBanner(topY, runtime);
     }
 
     // Streak banner — shows current streak day + claim button if
-    // today's reward isn't claimed yet.
-    if (ps.streak && ps.streak.count > 0 && ps.streak.lastClaim < ps.streak.count) {
+    // today's reward isn't claimed yet. Dismissed-key includes the
+    // streak day so dismissing day-3's banner doesn't auto-dismiss
+    // day-4 when it lands tomorrow.
+    if (
+      ps.streak &&
+      ps.streak.count > 0 &&
+      ps.streak.lastClaim < ps.streak.count &&
+      !isBannerDismissed('streak', String(ps.streak.count))
+    ) {
       topY = this.drawStreakBanner(topY, runtime);
     }
 
     // Nemesis ribbon — unavenged loss to an identified opponent.
     // Auto-fetches the full nemesis payload (online-status / name).
-    if (ps.nemesis && !ps.nemesis.avenged) {
+    // Dismiss-key includes the nemesis player id so dismissing Alice
+    // doesn't suppress Bob if a different opponent later 3-stars us.
+    if (
+      ps.nemesis &&
+      !ps.nemesis.avenged &&
+      !isBannerDismissed('nemesis', ps.nemesis.playerId)
+    ) {
       topY = this.drawNemesisRibbon(topY, runtime);
     }
 
@@ -2028,6 +2056,53 @@ export class HomeScene extends Phaser.Scene {
     return topY + h + 8;
   }
 
+  // Small ✕ close button used by every dismissable banner. Persists
+  // the dismissal under (kind, identity) so it survives reloads
+  // until a new banner instance replaces this one.
+  private addBannerCloseButton(
+    panelX: number,
+    panelW: number,
+    panelY: number,
+    kind: string,
+    identity: string,
+  ): void {
+    const cx = panelX + panelW - 16;
+    const cy = panelY + 14;
+    const btn = this.add
+      .text(cx, cy, '✕', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '14px',
+        color: COLOR.textOnDark,
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(DEPTHS.boardOverlay + 1)
+      .setInteractive({ useHandCursor: true });
+    btn.on(
+      'pointerdown',
+      (
+        _p: Phaser.Input.Pointer,
+        _lx: number,
+        _ly: number,
+        e: Phaser.Types.Input.EventData,
+      ) => {
+        // Stop propagation so the dismiss tap doesn't bubble up to
+        // the board handlers (wireBoardTap), which would otherwise
+        // see this as a "tap on empty tile" and start a placement
+        // gesture or pan.
+        e?.stopPropagation?.();
+        dismissBanner(kind, identity);
+        // Persist the current layer across the restart so the
+        // player isn't whipped back to the surface mid-navigation.
+        this.registry.set('homeLayer', this.layer);
+        // Cheapest re-render: scene.restart picks up the new banner
+        // suppression set without us tracking sprite handles per
+        // banner. Same pattern claimStreak / claimComeback use
+        // after a successful claim.
+        this.scene.restart();
+      },
+    );
+  }
+
   private drawComebackBanner(topY: number, runtime: HiveRuntime): number {
     const maxW = Math.min(520, this.scale.width - 24);
     const x = (this.scale.width - maxW) / 2;
@@ -2057,6 +2132,7 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => { void this.claimComeback(runtime); },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'comeback', 'pending');
     void bg;
     return topY + h + 10;
   }
@@ -2071,6 +2147,7 @@ export class HomeScene extends Phaser.Scene {
       if (runtime.player) {
         if (runtime.player.player.streak) runtime.player.player.streak.comebackPending = false;
       }
+      this.registry.set('homeLayer', this.layer);
       this.scene.restart();
     } catch (err) {
       console.warn('comeback claim failed', err);
@@ -2109,6 +2186,7 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => { void this.claimStreak(runtime); },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'streak', String(ps.streak.count));
     return topY + h + 8;
   }
 
@@ -2122,6 +2200,7 @@ export class HomeScene extends Phaser.Scene {
       if (runtime.player?.player.streak) {
         runtime.player.player.streak.lastClaim = r.streakDay;
       }
+      this.registry.set('homeLayer', this.layer);
       this.scene.restart();
     } catch (err) {
       console.warn('streak claim failed', err);
@@ -2167,6 +2246,7 @@ export class HomeScene extends Phaser.Scene {
       },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'nemesis', ps.nemesis.playerId);
     return topY + h + 8;
   }
 

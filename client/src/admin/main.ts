@@ -535,6 +535,14 @@ const MENU_UI_KEYS = [
   'ui-resource-pill-honey',
   'ui-resource-pill-sugar',
   'ui-resource-pill-grubs',
+  // Resource ICON sprites — the small glyphs that sit at the left
+  // end of each HUD resource pill. atlas.ts (UI_SPRITE_KEYS)
+  // already loads these; without them registered here the admin
+  // sprite tab couldn't generate them and HomeScene fell back to
+  // the procedural placeholder forever.
+  'ui-resource-sugar',
+  'ui-resource-leaf',
+  'ui-resource-milk',
   'ui-icon-unit-frame',
   'ui-icon-building-frame',
   'ui-badge-victory',

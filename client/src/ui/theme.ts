@@ -35,6 +35,10 @@ export const COLOR = {
   textGold: '#e8884d',     // warm coral (legacy "brass-y" highlights)
   textDark: '#0c0e22',
   textError: '#e25a7c',
+  // Cool cream legible on the dark-green HUD banners + RaidScene
+  // overlays. Several scenes hardcoded `#e6f5d2` for this; promoting
+  // it to a token keeps a future palette swap to one line.
+  textOnDark: '#e6f5d2',
 
   // Accents — saturated pastels
   brass: 0xfdcd6a,         // butter yellow (legacy "brass")
