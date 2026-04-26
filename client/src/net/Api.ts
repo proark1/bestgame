@@ -97,6 +97,13 @@ export interface PlayerState {
     activeLinkCount: number;
     productionMultiplier: number;
   };
+  // Quiet-hours soft shield (audit top-10 #10). startHour=null
+  // means "disabled"; otherwise the player is invisible to
+  // matchmaking during [startHour, startHour+lengthHours) UTC.
+  quietHours?: {
+    startHour: number | null;
+    lengthHours: number;
+  };
 }
 
 export interface DailyQuestState {
@@ -331,6 +338,21 @@ export class Api {
       throw new Error(msg);
     }
     return (await res.json()) as PlaceBuildingResponse;
+  }
+
+  // Set or clear the daily quiet-hours window. Pass startHour=null
+  // to disable. Server enforces 0..23 hour + 1..3 hour length caps.
+  async setQuietHours(
+    startHour: number | null,
+    lengthHours = 3,
+  ): Promise<{ ok: true; startHour: number | null; lengthHours: number }> {
+    const res = await this.authedFetch('/player/quiet-hours', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startHour, lengthHours }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'quiet-hours');
+    return (await res.json()) as Awaited<ReturnType<Api['setQuietHours']>>;
   }
 
   // 5-second placement undo. Returns the refunded cost so the

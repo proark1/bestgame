@@ -140,6 +140,11 @@ interface PlayerRow {
   // raid. Map of unit kind → count. Credited by /clan/donate;
   // cleared by /raid/submit on success. See migrations/0018.
   donation_inventory: Record<string, number>;
+  // Quiet-hours soft shield (migrations/0023). NULL start =
+  // disabled. When set, matchmaking skips this player during the
+  // (start, start+length) UTC hour window.
+  quiet_hour_start: number | null;
+  quiet_hour_length: number;
 }
 
 interface BaseRow {
@@ -468,6 +473,12 @@ export function registerPlayer(app: FastifyInstance): void {
           tunnels: {
             activeLinkCount: activeLinks,
             productionMultiplier: linkMultiplier,
+          },
+          // Quiet-hours preference — let the settings modal render
+          // the current window without a second round-trip.
+          quietHours: {
+            startHour: player.quiet_hour_start,
+            lengthHours: player.quiet_hour_length,
           },
         },
         base: base.snapshot,
@@ -2253,6 +2264,49 @@ export function registerPlayer(app: FastifyInstance): void {
       } finally {
         client.release();
       }
+    },
+  );
+
+  // POST /api/player/quiet-hours — set or clear the daily quiet
+  // window. start=null disables; otherwise [0..23]. length capped
+  // at 3 (DB CHECK enforces too). Validates types + ranges; returns
+  // the resulting state so the client can confirm.
+  app.post<{ Body: { startHour?: number | null; lengthHours?: number } }>(
+    '/player/quiet-hours',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const start = req.body?.startHour;
+      const length = req.body?.lengthHours;
+      // null start means "disable". Validate the rest only when
+      // setting an active window.
+      if (start === null || start === undefined) {
+        await pool.query(
+          'UPDATE players SET quiet_hour_start = NULL WHERE id = $1::uuid',
+          [playerId],
+        );
+        return { ok: true, startHour: null, lengthHours: 3 };
+      }
+      if (
+        !Number.isInteger(start) || start < 0 || start > 23 ||
+        !Number.isInteger(length) || length === undefined || length < 1 || length > 3
+      ) {
+        reply.code(400);
+        return { error: 'startHour 0..23 + lengthHours 1..3' };
+      }
+      await pool.query(
+        `UPDATE players
+            SET quiet_hour_start = $2,
+                quiet_hour_length = $3
+          WHERE id = $1::uuid`,
+        [playerId, start, length],
+      );
+      return { ok: true, startHour: start, lengthHours: length };
     },
   );
 }
