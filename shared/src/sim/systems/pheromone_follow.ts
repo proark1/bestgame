@@ -34,6 +34,10 @@ function applyPathModifierOnArrival(u: Unit, path: PheromonePath): boolean {
     const stats = UNIT_STATS[u.kind];
     if (stats.canDig) {
       u.layer = u.layer === 0 ? 1 : 0;
+      // Edge flag for AI rules — `onCrossLayerEntry` reads this in
+      // the same tick. pheromone_follow clears it at the top of the
+      // next tick before any new layer flips can occur.
+      u.layerCrossedThisTick = true;
     }
     return false;
   }
@@ -58,6 +62,14 @@ export function pheromoneFollowSystem(state: SimState): void {
   // (GC-timing-sensitive — violates the sim's no-per-tick-alloc rule).
   // With the design cap of ~16 concurrent paths and ~30 units, the inner
   // O(paths) scan is trivial (~500 comparisons in the worst case).
+
+  // Clear the per-tick layer-cross edge flag before any new dig
+  // modifier could fire this tick. ai_rules ran on the PREVIOUS
+  // tick's flag; keeping it set into this tick would double-fire
+  // any onCrossLayerEntry rule.
+  for (let i = 0; i < state.units.length; i++) {
+    if (state.units[i]!.layerCrossedThisTick) state.units[i]!.layerCrossedThisTick = false;
+  }
 
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;

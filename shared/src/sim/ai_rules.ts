@@ -55,10 +55,17 @@ export function aiRulesSystem(state: SimState): void {
   // ------ pass 2: fire ------
   // Iterate buildings in id order so rule-fire order is deterministic
   // even when the DB hands us buildings in an arbitrary sequence.
+  // Cross-layer buildings (spans !== null) appear in `state.buildings`
+  // once per layer, all sharing the same id. We only fire each id's
+  // rule list ONCE per tick — otherwise a trapdoor that spans both
+  // layers would fire twice and undo its own forceLayerSwap.
   const bs = state.buildings;
+  let lastFiredId = 0;
   for (let j = 0; j < bs.length; j++) {
     const b = bs[j]!;
     if (b.hp <= 0 || !b.rules) continue;
+    if (b.id === lastFiredId) continue; // already fired this id (layer twin)
+    lastFiredId = b.id;
     for (let r = 0; r < b.rules.length && r < RULE_MAX_PER_BUILDING; r++) {
       const rs = b.rules[r]!;
       if (rs.remaining !== null && rs.remaining <= 0) continue;
@@ -126,6 +133,8 @@ function evaluateTrigger(
       return (state.buildingsDestroyedThisTick ?? 0) > 0;
     case 'onTick':
       return true; // interval handled in the fire switch above
+    case 'onCrossLayerEntry':
+      return hasLayerCrosserInRange(state, b, fromFloat(p.radius ?? 2));
   }
 }
 
@@ -147,6 +156,28 @@ function hasAttackerInRange(
     const reachable =
       u.layer === b.layer || (b.spans && b.spans.includes(u.layer));
     if (!reachable) continue;
+    if (dist2(u.x, u.y, bx, by) <= r2) return true;
+  }
+  return false;
+}
+
+// Rising-edge layer detection — true if any attacker that flipped
+// layers this tick sits within `radius` of the building. The tick
+// flag is cleared at the top of pheromone_follow on the next tick,
+// so reading it here in the AI pass (which runs *after*
+// pheromone_follow within the same tick) yields a fresh signal.
+function hasLayerCrosserInRange(
+  state: SimState,
+  b: SimBuilding,
+  radius: Fixed,
+): boolean {
+  const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+  const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
+  const r2 = mul(radius, radius);
+  for (let i = 0; i < state.units.length; i++) {
+    const u = state.units[i]!;
+    if (u.hp <= 0 || u.owner !== 0) continue;
+    if (!u.layerCrossedThisTick) continue;
     if (dist2(u.x, u.y, bx, by) <= r2) return true;
   }
   return false;
@@ -227,6 +258,35 @@ function applyEffect(
       applyAoeRoot(state, b);
       break;
     }
+    case 'forceLayerSwap': {
+      applyForceLayerSwap(state, b, fromFloat(p.radius ?? 2));
+      break;
+    }
+  }
+}
+
+// Trapdoor — flip the layer of every attacker within radius. Iterated
+// in id order for determinism. Only applied to units that can dig
+// (canDig=true), so this is the "you tried to dig past me, you got
+// bounced" combo and not a free relocation of every attacker on the
+// board. We also set layerCrossedThisTick so the kicked unit's own
+// transition is observable by other onCrossLayerEntry rules — but we
+// don't recurse: each rule fires at most once per tick per building.
+function applyForceLayerSwap(
+  state: SimState,
+  b: SimBuilding,
+  radius: Fixed,
+): void {
+  const bx = add(fromInt(b.anchorX), fromInt(b.w) >> 1);
+  const by = add(fromInt(b.anchorY), fromInt(b.h) >> 1);
+  const r2 = mul(radius, radius);
+  for (let i = 0; i < state.units.length; i++) {
+    const u = state.units[i]!;
+    if (u.hp <= 0 || u.owner !== 0) continue;
+    if (!UNIT_STATS[u.kind].canDig) continue;
+    if (dist2(u.x, u.y, bx, by) > r2) continue;
+    u.layer = u.layer === 0 ? 1 : 0;
+    u.layerCrossedThisTick = true;
   }
 }
 

@@ -72,6 +72,13 @@ export interface Unit {
   hasSplit?: boolean;
   hasDug?: boolean;
   hasAmbushed?: boolean;
+  // Per-tick edge flag — true if this unit's layer changed during
+  // the current sim tick. Set by pheromone_follow when the dig
+  // modifier fires; cleared at the top of pheromone_follow on the
+  // next tick. Read by ai_rules.ts to drive `onCrossLayerEntry` and
+  // by `forceLayerSwap`. Optional so pre-existing replays without
+  // the field deserialise unchanged.
+  layerCrossedThisTick?: boolean;
 }
 
 export interface UnitStats {

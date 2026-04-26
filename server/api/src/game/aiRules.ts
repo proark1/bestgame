@@ -49,6 +49,7 @@ const TRIGGER_PARAM_RULES: Record<Trigger, RequiredParams> = {
   onQueenThreatened:{ requires: ['radius'],   caps: { radius: { min: 0.5, max: 8 } } },
   onTick:           { requires: ['ticks'],    caps: { ticks: { min: 15, max: 600 } } },
   onAllyDestroyed:  { requires: [],           caps: {} },
+  onCrossLayerEntry:{ requires: ['radius'],   caps: { radius: { min: 0.5, max: 6 } } },
 };
 
 const EFFECT_PARAM_RULES: Record<Effect, RequiredParams> = {
@@ -59,6 +60,7 @@ const EFFECT_PARAM_RULES: Record<Effect, RequiredParams> = {
   extraSpawn:       { requires: ['maxExtra'],                 caps: { maxExtra:{ min: 1,   max: 3 } } },
   healSelf:         { requires: ['hp'],                       caps: { hp:      { min: 10,  max: 400 } } },
   aoeRoot:          { requires: ['radius', 'durationTicks'],  caps: { radius:  { min: 1,   max: 4 },   durationTicks: { min: 15, max: 120 } } },
+  forceLayerSwap:   { requires: ['radius'],                   caps: { radius:  { min: 0.5, max: 4 } } },
 };
 
 // (trigger, effect) combos that make gameplay sense. Adding a combo
@@ -92,6 +94,12 @@ const ALLOWED_COMBOS: ReadonlyArray<readonly [Trigger, Effect]> = [
   ['onTick',            'boostAttackDamage'],
   ['onAllyDestroyed',   'boostAttackRate'],
   ['onAllyDestroyed',   'boostAttackDamage'],
+  // Trapdoor combo — defenders that punish the attacker's `dig`
+  // path modifier. Pairs reactivity with relocation; the bounced
+  // unit re-emerges where the trapdoor wants it.
+  ['onCrossLayerEntry', 'forceLayerSwap'],
+  ['onCrossLayerEntry', 'aoeRoot'],
+  ['onCrossLayerEntry', 'boostAttackDamage'],
 ];
 
 const COMBO_SET = new Set(ALLOWED_COMBOS.map(([t, e]) => `${t}:${e}`));
@@ -134,6 +142,17 @@ export function isEffectAllowedOnKind(
         kind === 'AcidSpitter' ||
         kind === 'HiddenStinger' ||
         kind === 'SpiderNest' ||
+        kind === 'QueenChamber'
+      );
+    case 'forceLayerSwap':
+      // Trapdoor logic — only buildings that thematically belong to
+      // the cross-layer mechanic carry this. DungeonTrap is the
+      // physical trapdoor; TunnelJunction is the surveyed "we own
+      // this layer transition" tile; QueenChamber gets it as a
+      // last-line panic flip when attackers are on the move.
+      return (
+        kind === 'DungeonTrap' ||
+        kind === 'TunnelJunction' ||
         kind === 'QueenChamber'
       );
   }
@@ -264,6 +283,7 @@ const TRIGGER_LABEL: Record<Trigger, string> = {
   onQueenThreatened: 'When an enemy is within X tiles of the Queen',
   onTick:            'Every X ticks',
   onAllyDestroyed:   'When an ally building is destroyed',
+  onCrossLayerEntry: 'When an enemy digs through layers within X tiles',
 };
 
 const EFFECT_LABEL: Record<Effect, string> = {
@@ -274,6 +294,7 @@ const EFFECT_LABEL: Record<Effect, string> = {
   extraSpawn:        'Spawn an extra defender (SpiderNest, up to X)',
   healSelf:          'Heal myself by X HP',
   aoeRoot:           'Root enemies within X tiles for Y ticks',
+  forceLayerSwap:    'Flip layer of every digger within X tiles (trapdoor)',
 };
 
 const ALL_BUILDING_KINDS: Types.BuildingKind[] = [

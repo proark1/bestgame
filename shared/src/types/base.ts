@@ -95,7 +95,12 @@ export type AIRuleTrigger =
   | 'onTick'
   // Any ally building was destroyed this tick. Free parameters (we
   // could filter by kind later — skipping to keep v1 small).
-  | 'onAllyDestroyed';
+  | 'onAllyDestroyed'
+  // Any attacker unit crossed layers (surface ↔ underground) within
+  // `param.radius` Fixed tiles this tick. Direct counter to the
+  // attacker `dig` path modifier — a defender can plant a trapdoor
+  // that punishes the moment the swarm tries to slip layers.
+  | 'onCrossLayerEntry';
 
 export type AIRuleEffect =
   // Multiply this building's attack damage by `param.percent` for the
@@ -118,7 +123,13 @@ export type AIRuleEffect =
   | 'healSelf'
   // Slow/root every attacker within `param.radius` for
   // `param.durationTicks`. Think AOE snare on a trigger.
-  | 'aoeRoot';
+  | 'aoeRoot'
+  // Force-flip the layer of every attacker within `param.radius`.
+  // Pairs with onCrossLayerEntry as the canonical "trapdoor" combo:
+  // a swarm trying to dig through finds itself surfacing right under
+  // a turret line. Ignores units that can't dig themselves (those
+  // can't be in the underground in the first place via this path).
+  | 'forceLayerSwap';
 
 export interface BuildingAIRule {
   // Stable id so the client can update an existing rule in place
