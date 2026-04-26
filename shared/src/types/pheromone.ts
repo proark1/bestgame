@@ -56,6 +56,14 @@ export interface PheromonePath {
 // far behind the rest of the swarm.
 export const AMBUSH_TICKS = 60;
 
+// Sim ticks a digger spends "digging" before it flips layer. 90 ticks
+// = 3 seconds at the canonical tickRate. The unit is rooted in place
+// during this window AND remains targetable by surface turrets, so
+// crossing layers carries a real cost. Tuned to give a typical
+// MushroomTurret roughly 3 shot opportunities (cooldown 30 ticks)
+// while a 200 hp digger digs through.
+export const DIG_TICKS = 90;
+
 // Input: a player command issued at a specific sim tick. The sim consumes
 // these from a queue sorted by tick. In async raid: the full timeline is
 // known up front. In live arena: it arrives over the network.

@@ -61,9 +61,15 @@ describe('ALLOWED_LAYERS', () => {
     }
   });
 
-  it('tunnel junction + Queen Chamber + trap span both layers', () => {
-    for (const k of ['QueenChamber', 'TunnelJunction', 'DungeonTrap'] as const) {
+  it('tunnel junction + Queen Chamber span both layers', () => {
+    for (const k of ['QueenChamber', 'TunnelJunction'] as const) {
       expect([...ALLOWED_LAYERS[k]].sort()).toEqual([0, 1]);
+    }
+  });
+
+  it('traps live underground (paired with vault + nursery in the loot heart)', () => {
+    for (const k of ['DungeonTrap', 'RootSnare'] as const) {
+      expect([...ALLOWED_LAYERS[k]]).toEqual([1]);
     }
   });
 });

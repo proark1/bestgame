@@ -118,6 +118,14 @@ export function combatSystem(
     if (u.ambushTicks && u.ambushTicks > 0) {
       u.ambushTicks--;
     }
+    // Dig animation timer. While > 0 the unit is tunnelling at the
+    // marker; pheromone_follow holds position and flips layer when
+    // the counter hits 0. The countdown lives in combat.ts (not
+    // pheromone_follow) so the same loop that decrements ambush
+    // handles dig — keeps the timing pipeline obvious.
+    if (u.diggingTicks && u.diggingTicks > 0) {
+      u.diggingTicks--;
+    }
     // Reuse pathProgress's sibling fields; lifespan expiry for
     // defender-side units (NestSpider) is handled in the SpiderNest
     // spawn loop below — they're tagged with `lifespanTicks` at spawn.

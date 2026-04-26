@@ -40,8 +40,14 @@ function baseWithTrapdoor(): Base {
       },
       {
         id: 'trap',
+        // Trap sits two tiles past the dig marker so it doesn't shoot
+        // the digger DURING the 90-tick dig window — that interaction
+        // is the dig vulnerability test, not the trapdoor test. With
+        // the trap at (6,5) and the dig at (4,5), the trap's range=1
+        // tile attack can't reach the digging unit, but its rule's
+        // radius=4 still triggers when the digger crosses layers.
         kind: 'DungeonTrap',
-        anchor: { x: 4, y: 5, layer: 0 },
+        anchor: { x: 6, y: 5, layer: 0 },
         footprint: { w: 1, h: 1 },
         spans: [0, 1],
         level: 1,
@@ -92,7 +98,7 @@ describe('trapdoor counter-play', () => {
   it('forceLayerSwap bounces a digger that just crossed', () => {
     const state = createInitialState(cfg);
     const input = digInput();
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < 200; i++) {
       step(state, cfg, i + 1 === input.tick ? [input] : []);
       if (state.outcome !== 'ongoing') break;
     }
@@ -112,7 +118,7 @@ describe('trapdoor counter-play', () => {
     const altCfg: SimConfig = { ...cfg, initialSnapshot: noTrapBase };
     const state = createInitialState(altCfg);
     const input = digInput();
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < 200; i++) {
       step(state, altCfg, i + 1 === input.tick ? [input] : []);
       if (state.outcome !== 'ongoing') break;
     }

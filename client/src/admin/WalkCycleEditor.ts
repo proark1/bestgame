@@ -32,6 +32,7 @@ import {
   type SpriteFile,
 } from './api.js';
 import { removeBackground, removeNearWhite } from './removeBackground.js';
+import { autoCropAndCenter } from './cropImage.js';
 import {
   WALK_FRAME_COUNT,
   WALK_STRIP_WIDTH,
@@ -92,6 +93,8 @@ export class WalkCycleEditor {
   private bgBBtn!: HTMLButtonElement;
   private graysABtn!: HTMLButtonElement;
   private graysBBtn!: HTMLButtonElement;
+  private cropABtn!: HTMLButtonElement;
+  private cropBBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
 
   private busy = false;
@@ -214,18 +217,34 @@ export class WalkCycleEditor {
     const graysBtn = mkButton('Remove grays', 'btn', () =>
       void this.removeGraysOn(label),
     );
-    actions.append(regenBtn, bgBtn, graysBtn);
+    // Auto-trim transparent space around the pose and re-center it
+    // in the 128×128 canvas. "Crop" preserves the subject scale;
+    // "Crop + fit" scales up to ~90% of the canvas. Both idempotent
+    // so the admin can refine after a Remove BG / Remove grays pass.
+    const cropBtn = mkButton('Crop', 'btn', () =>
+      void this.cropOn(label, 'preserve'),
+    );
+    const cropFitBtn = mkButton('Crop + fit', 'btn', () =>
+      void this.cropOn(label, 'fit'),
+    );
+    actions.append(regenBtn, bgBtn, graysBtn, cropBtn, cropFitBtn);
     col.append(actions);
 
     if (label === 'A') {
       this.regenABtn = regenBtn;
       this.bgABtn = bgBtn;
       this.graysABtn = graysBtn;
+      this.cropABtn = cropBtn;
     } else {
       this.regenBBtn = regenBtn;
       this.bgBBtn = bgBtn;
       this.graysBBtn = graysBtn;
+      this.cropBBtn = cropBtn;
     }
+    // cropFitBtn is redundant to track per-side (it just calls
+    // cropOn in 'fit' mode, refresh logic mirrors crop). Not
+    // assigning to a field keeps the class footprint smaller.
+    void cropFitBtn;
 
     return col;
   }
@@ -257,6 +276,8 @@ export class WalkCycleEditor {
     this.graysABtn.disabled = b || !hasA;
     this.bgBBtn.disabled = b || !hasB;
     this.graysBBtn.disabled = b || !hasB;
+    this.cropABtn.disabled = b || !hasA;
+    this.cropBBtn.disabled = b || !hasB;
     this.saveBtn.disabled = b || !hasA || !hasB;
     this.regenBBtn.title = hasA
       ? 'Regenerate pose B using the current pose A as a reference image'
@@ -346,6 +367,20 @@ export class WalkCycleEditor {
       const cut = await removeNearWhite(gem.data, gem.mimeType);
       return { data: cut.base64, mimeType: cut.mimeType };
     }, 'Remove grays');
+  }
+
+  private async cropOn(
+    label: PoseLabel,
+    mode: 'preserve' | 'fit',
+  ): Promise<void> {
+    const op = mode === 'fit' ? 'Crop + fit' : 'Crop';
+    await this.runCleanup(label, async (gem) => {
+      const cropped = await autoCropAndCenter(gem.data, gem.mimeType, { mode });
+      if (!cropped) {
+        throw new Error('image is fully transparent — nothing to crop');
+      }
+      return { data: cropped.base64, mimeType: cropped.mimeType };
+    }, op);
   }
 
   private async runCleanup(

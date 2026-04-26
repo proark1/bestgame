@@ -71,6 +71,18 @@ export interface Unit {
   // pheromone path's `ambush` modifier. Counted down each tick in
   // combat.ts; while > 0, pheromone_follow holds position.
   ambushTicks?: number;
+  // Dig animation timer — set when the unit arrives at a `dig` marker.
+  // While > 0 the unit holds position (visible + targetable by surface
+  // turrets) and counts down each tick in combat.ts. On the tick it
+  // hits 0, pheromone_follow flips u.layer to the opposite layer. The
+  // exposure window is the gameplay cost of crossing layers — a
+  // surface defender has those ticks to break the digger before it
+  // disappears underground.
+  diggingTicks?: number;
+  // Target layer the dig will land on when `diggingTicks` expires.
+  // Stored explicitly (not just inferred from `u.layer`) so a future
+  // forceLayerSwap mid-dig doesn't accidentally flip back.
+  diggingTargetLayer?: 0 | 1;
   // Latches set by pheromone_follow when a path modifier has fired on
   // this unit. Forward-only motion makes the segIdx threshold a
   // sufficient single-fire guard, but storing the latch keeps the

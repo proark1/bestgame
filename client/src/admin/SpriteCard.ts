@@ -3,7 +3,12 @@
 // and exposes helpers for the parent app to drive "generate all"
 // and bulk operations.
 
-import { compressBase64Image, humanBytes, type CompressedImage } from './compress.js';
+import {
+  blobToBase64,
+  compressBase64Image,
+  humanBytes,
+  type CompressedImage,
+} from './compress.js';
 import {
   deleteSprite,
   fetchSpriteHistory,
@@ -67,6 +72,7 @@ export class SpriteCard {
   private removeGraysBtn!: HTMLButtonElement;
   private cropBtn!: HTMLButtonElement;
   private cropFitBtn!: HTMLButtonElement;
+  private loadCurrentBtn!: HTMLButtonElement;
   private saveBtn!: HTMLButtonElement;
   private downloadBtn!: HTMLButtonElement;
   private historyBtn!: HTMLButtonElement;
@@ -461,6 +467,14 @@ export class SpriteCard {
     this.cropFitBtn = button('Crop + fit', 'btn', () =>
       void this.cropSubject('fit'),
     );
+    // Pull the current on-disk sprite into the candidate slot so the
+    // admin can edit (Crop / Remove BG / Remove grays) and re-save
+    // WITHOUT regenerating. Useful for the common case "this saved
+    // sprite has padding I want to crop now". Disabled when nothing
+    // is saved yet (nothing to load).
+    this.loadCurrentBtn = button('Load current', 'btn', () =>
+      void this.loadCurrentSprite(),
+    );
     this.saveBtn = button('Save', 'btn primary', () => void this.save());
     this.downloadBtn = button('Download', 'btn', () => void this.download());
     this.historyBtn = button('History', 'btn', () => void this.openHistory());
@@ -471,12 +485,17 @@ export class SpriteCard {
     this.cropFitBtn.disabled = true;
     this.saveBtn.disabled = true;
     this.downloadBtn.disabled = true;
-    // History is enabled whenever the sprite exists on disk (or has
-    // ever been saved) — it hits the DB and has nothing to do with
-    // candidate selection.
+    // History + Load current are enabled whenever the sprite exists
+    // on disk — they hit the file system / DB and have nothing to do
+    // with candidate selection.
     this.historyBtn.disabled = !this.opts.fileMeta.exists;
+    this.loadCurrentBtn.disabled = !this.opts.fileMeta.exists;
+    if (!this.opts.fileMeta.exists) {
+      this.loadCurrentBtn.title = 'No saved sprite to load yet — generate one first.';
+    }
     actions.append(
       this.generateBtn,
+      this.loadCurrentBtn,
       this.removeBgBtn,
       this.removeGraysBtn,
       this.cropBtn,
@@ -703,15 +722,45 @@ export class SpriteCard {
 
     const toggle = document.createElement('button');
     toggle.className = 'btn ghost compress-toggle';
-    toggle.textContent = 'Compression ▼';
+    const overriddenSuffix = (): string => (this.cardCompression ? ' (override)' : '');
+    toggle.textContent = `Compression ▼${overriddenSuffix()}`;
     toggle.addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      toggle.textContent = panel.hidden ? 'Compression ▼' : 'Compression ▲';
+      // Two paths: collapse just hides this panel; expand re-renders
+      // first (so the displayed values reflect the LIVE global) and
+      // THEN explicitly shows the freshly-built panel. Prior version
+      // toggled `panel.hidden` on the closure-captured element BEFORE
+      // re-render, which destroyed it and left the user staring at a
+      // collapsed panel and a stale toggle reference.
+      if (panel.hidden) {
+        this.renderCompressionPanel();
+        if (this.compressionPanel) this.compressionPanel.hidden = false;
+        if (this.compressionToggle) {
+          this.compressionToggle.textContent = `Compression ▲${overriddenSuffix()}`;
+        }
+      } else {
+        panel.hidden = true;
+        toggle.textContent = `Compression ▼${overriddenSuffix()}`;
+      }
     });
 
     const content = el('div', 'compression-content');
 
-    // Format selector
+    // Override toggle. When OFF (default), every control below is
+    // disabled and shows the LIVE global value — saves use the
+    // global compression. When ON, controls become editable and a
+    // per-card override is created. This matches "global setting is
+    // the default, per-card kicks in only on explicit opt-in".
+    const overrideRow = el('div', 'stat-row');
+    const overrideLabel = el('label');
+    const overrideInput = document.createElement('input');
+    overrideInput.type = 'checkbox';
+    overrideInput.checked = this.cardCompression !== null;
+    overrideLabel.append(overrideInput, document.createTextNode(' Override for this sprite'));
+    overrideRow.append(overrideLabel);
+
+    // Format selector — reflects effective compression (override or
+    // global). Only writable when override is on.
+    const eff = this.cardCompression ?? this.opts.getCompression();
     const fmtLabel = el('label');
     fmtLabel.innerHTML = `<span>format</span>`;
     const fmtSel = document.createElement('select');
@@ -721,19 +770,11 @@ export class SpriteCard {
       opt.textContent = f.toUpperCase();
       fmtSel.append(opt);
     }
-    fmtSel.value = this.cardCompression?.format ?? 'global';
-    // Add "use global" option
-    const globalOpt = document.createElement('option');
-    globalOpt.value = 'global';
-    globalOpt.textContent = '(use global)';
-    fmtSel.insertBefore(globalOpt, fmtSel.firstChild);
+    fmtSel.value = eff.format;
+    fmtSel.disabled = !overrideInput.checked;
     fmtSel.addEventListener('change', () => {
-      if (fmtSel.value === 'global') {
-        if (this.cardCompression) this.cardCompression.format = this.opts.getCompression().format;
-      } else {
-        if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
-        this.cardCompression.format = fmtSel.value as 'webp' | 'png';
-      }
+      if (!this.cardCompression) return; // shouldn't happen — gated by checkbox
+      this.cardCompression.format = fmtSel.value as 'webp' | 'png';
       void this.prepareCompressed();
     });
     fmtLabel.append(fmtSel);
@@ -746,11 +787,12 @@ export class SpriteCard {
     qInput.min = '0.4';
     qInput.max = '1';
     qInput.step = '0.05';
-    qInput.value = (this.cardCompression?.quality ?? this.opts.getCompression().quality).toString();
+    qInput.value = String(eff.quality);
+    qInput.disabled = !overrideInput.checked;
     const qVal = el('span');
     qVal.textContent = qInput.value;
     qInput.addEventListener('input', () => {
-      if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
+      if (!this.cardCompression) return;
       this.cardCompression.quality = Number(qInput.value);
       qVal.textContent = qInput.value;
       void this.prepareCompressed();
@@ -765,32 +807,32 @@ export class SpriteCard {
     dInput.min = '64';
     dInput.max = '1024';
     dInput.step = '32';
-    dInput.value = this.cardCompression?.maxDim.toString() ?? '';
-    dInput.placeholder = 'use global';
+    dInput.value = String(eff.maxDim);
+    dInput.disabled = !overrideInput.checked;
     dInput.addEventListener('change', () => {
-      if (!dInput.value) {
-        // Clear dimension override, use global
-        if (this.cardCompression) {
-          this.cardCompression.maxDim = this.opts.getCompression().maxDim;
-        }
-        dInput.value = '';
-      } else {
-        if (!this.cardCompression) this.cardCompression = { ...this.opts.getCompression() };
-        this.cardCompression.maxDim = Math.max(64, Math.min(1024, Number(dInput.value) || 256));
-        dInput.value = String(this.cardCompression.maxDim);
-      }
+      if (!this.cardCompression) return;
+      const next = Math.max(64, Math.min(1024, Number(dInput.value) || eff.maxDim));
+      this.cardCompression.maxDim = next;
+      dInput.value = String(next);
       void this.prepareCompressed();
     });
     dLabel.append(dInput);
 
-    // Reset button
-    const resetBtn = button('Reset to global', 'btn ghost', () => {
-      this.cardCompression = null;
+    overrideInput.addEventListener('change', () => {
+      if (overrideInput.checked) {
+        // Seed the override from the LIVE global so the controls
+        // start at the same values the admin sees on the toolbar.
+        this.cardCompression = { ...this.opts.getCompression() };
+      } else {
+        this.cardCompression = null;
+      }
+      // Re-render so all controls flip enabled/disabled in sync and
+      // the toggle title reflects the new state.
       this.renderCompressionPanel();
       void this.prepareCompressed();
     });
 
-    content.append(fmtLabel, qLabel, dLabel, resetBtn);
+    content.append(overrideRow, fmtLabel, qLabel, dLabel);
     panel.append(content);
     this.root.append(toggle, panel);
 
@@ -829,6 +871,51 @@ export class SpriteCard {
   // native scale (just remove side padding) or 'fit' to scale up to
   // ~90% of the canvas. Idempotent — re-clicking after a Remove BG
   // pass will tighten further if more pixels were cleared.
+  // Fetch the saved on-disk sprite and slot it in as a candidate so
+  // the admin can edit (Crop, Remove BG, Remove grays) + re-save
+  // WITHOUT going through Generate. Use case: the saved sprite has
+  // unwanted padding the admin wants to trim, or a haze the first
+  // remove-grays pass missed. Subsequent Save calls overwrite the
+  // same key and create a new history row.
+  async loadCurrentSprite(): Promise<void> {
+    if (this.busy) return;
+    if (!this.opts.fileMeta.exists) {
+      this.opts.showStatus(
+        `${this.key}: nothing saved yet — Generate first.`,
+        'error',
+      );
+      return;
+    }
+    this.setBusy(true);
+    this.opts.showStatus(`Loading saved ${this.key}…`);
+    try {
+      const ext = this.opts.fileMeta.ext ?? 'webp';
+      // Cache-bust so we always get the latest mtime even if the
+      // browser has a stale copy from the thumb render.
+      const url = `/assets/sprites/${this.key}.${ext}?t=${Date.now()}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`fetch ${resp.status}`);
+      const blob = await resp.blob();
+      const base64 = await blobToBase64(blob);
+      const mimeType = blob.type || (ext === 'png' ? 'image/png' : 'image/webp');
+      this.candidates = [{ data: base64, mimeType }];
+      this.selectedIdx = 0;
+      this.renderCandidates();
+      await this.prepareCompressed();
+      this.opts.showStatus(
+        `Loaded saved ${this.key} — edit then Save to overwrite.`,
+        'success',
+      );
+    } catch (err) {
+      this.opts.showStatus(
+        `Load current failed: ${(err as Error).message}`,
+        'error',
+      );
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
   async cropSubject(mode: 'preserve' | 'fit'): Promise<void> {
     if (this.busy || this.selectedIdx < 0) return;
     const src = this.candidates[this.selectedIdx];

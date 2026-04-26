@@ -1084,11 +1084,14 @@ export class HomeScene extends Phaser.Scene {
             highlight: 0xe8fff0,
           }
         : {
-            grid: 0xb8a285,
-            decorA: 0xfcdfc0,  // pale peach highlights
-            decorB: 0xfdcd6a,  // butter-yellow dots
-            frame: 0xb8a285,
-            highlight: 0xfff5e3,
+            // Underground is packed earth — the grid is a darker
+            // chocolate brown so the cells read against the dirt
+            // wash. Decorations are pebble-grey + sand specks.
+            grid: 0x3a2410,
+            decorA: 0xc9a781,  // pale sand specks
+            decorB: 0x8a6f4d,  // pebble grey-brown
+            frame: 0x3a2410,
+            highlight: 0xd6b58d,
           };
 
     // Board background sprite (loaded by BootScene or rendered as placeholder)
@@ -1097,16 +1100,56 @@ export class HomeScene extends Phaser.Scene {
     bgSprite.setDepth(DEPTHS.boardUnder);
     this.boardContainer.add(bgSprite);
 
-    // Grass underlay — a saturated green wash so the surface layer
-    // reads as actual grass underneath the painterly board art. Sits
-    // ABOVE the board sprite (so the green dominates) but below the
-    // grid + decorations + buildings. Underground keeps the warm-tan
-    // feel via the board sprite alone — no overlay there.
+    // Layer underlay — a tinted wash that reads as the actual
+    // material the layer represents. Surface = saturated green grass.
+    // Underground = packed dirt/earth so the underground reads as
+    // "we are inside the earth", not just a re-tinted version of the
+    // surface. Sits above the board sprite (so the colour dominates)
+    // and below the grid + decorations + buildings.
+    const underlay = this.add.graphics();
     if (this.layer === 0) {
-      const grass = this.add.graphics();
-      grass.fillStyle(0x6cbf6a, 0.55);
-      grass.fillRect(0, 0, BOARD_W, BOARD_H);
-      this.boardContainer.add(grass);
+      underlay.fillStyle(0x6cbf6a, 0.55); // grass green
+    } else {
+      underlay.fillStyle(0x6b4524, 0.78); // packed earth brown
+    }
+    underlay.fillRect(0, 0, BOARD_W, BOARD_H);
+    this.boardContainer.add(underlay);
+
+    // Underground gets a few extra "rock" decals along the edges so
+    // it reads as a tunnel chamber rather than a flat brown square.
+    // Deterministic seed so the pattern doesn't flicker on redraw.
+    if (this.layer === 1) {
+      const rocks = this.add.graphics();
+      let rseed = 0x10cafe;
+      const rrnd = (): number => {
+        rseed ^= rseed << 13;
+        rseed ^= rseed >>> 17;
+        rseed ^= rseed << 5;
+        return ((rseed >>> 0) / 0xffffffff);
+      };
+      rocks.fillStyle(0x3a2410, 0.55);
+      for (let i = 0; i < 24; i++) {
+        const onEdge = rrnd() < 0.5;
+        const x = onEdge
+          ? (rrnd() < 0.5 ? rrnd() * 24 : BOARD_W - rrnd() * 24)
+          : rrnd() * BOARD_W;
+        const y = onEdge
+          ? rrnd() * BOARD_H
+          : (rrnd() < 0.5 ? rrnd() * 24 : BOARD_H - rrnd() * 24);
+        const r = 3 + rrnd() * 5;
+        rocks.fillCircle(x, y, r);
+      }
+      // A few darker root scratches in the middle so the field has
+      // texture beyond just rock clusters.
+      rocks.lineStyle(2, 0x2b1a08, 0.35);
+      for (let i = 0; i < 8; i++) {
+        const x1 = rrnd() * BOARD_W;
+        const y1 = rrnd() * BOARD_H;
+        const len = 18 + rrnd() * 30;
+        const ang = rrnd() * Math.PI * 2;
+        rocks.lineBetween(x1, y1, x1 + Math.cos(ang) * len, y1 + Math.sin(ang) * len);
+      }
+      this.boardContainer.add(rocks);
     }
 
     // Corner vignette — darkens the edges so the eye focuses on the
