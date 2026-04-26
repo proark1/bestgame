@@ -114,6 +114,19 @@ export class HomeScene extends Phaser.Scene {
     installSceneClickDebug(this);
     this.drawAmbient();
 
+    // Layer survives `scene.restart()` via the registry. Without
+    // this restore, claiming a streak / comeback / dismissing a
+    // banner while looking at the underground would whip the player
+    // back to the surface — jarring. The restart paths set this
+    // value before calling `scene.restart()`.
+    const persistedLayer = this.registry.get('homeLayer') as 0 | 1 | undefined;
+    if (persistedLayer === 0 || persistedLayer === 1) {
+      this.layer = persistedLayer;
+      // One-shot consumption so a fresh navigation back to HomeScene
+      // (e.g. from the burger drawer) starts on the surface again.
+      this.registry.set('homeLayer', null);
+    }
+
     // Hydrate from runtime — scene is re-entered after each raid, so this
     // re-reads the latest player state (which RaidScene patches after a
     // successful /raid/submit).
@@ -1341,17 +1354,17 @@ export class HomeScene extends Phaser.Scene {
     anchorY: number,
   ): void {
     this.resourcePopover?.destroy(true);
-    const income = this.currentIncomePerSecond();
-    const rate = kind === 'sugar' ? income.sugar
-      : kind === 'leaf' ? income.leaf
-      : income.milk;
-    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
-    const wallet = runtime?.player?.player;
-    const have = wallet
-      ? kind === 'sugar' ? wallet.sugar
-        : kind === 'leaf' ? wallet.leafBits
-        : wallet.aphidMilk
-      : 0;
+    // Read from the same in-scene state the HUD pills use:
+    //   - this.resources tracks the locally-trickled wallet so the
+    //     popover doesn't show stale numbers between server
+    //     round-trips.
+    //   - this.computeRate() returns a non-zero rate even on the
+    //     guest path (where serverBase is null) by falling back to
+    //     STARTER_BUILDINGS, matching what the pill rate text shows.
+    const rate = this.computeRate(kind);
+    const have = kind === 'sugar' ? this.resources.sugar
+      : kind === 'leaf' ? this.resources.leafBits
+      : Math.floor(this.resources.aphidMilk);
     const title =
       kind === 'sugar' ? 'Sugar' :
       kind === 'leaf' ? 'Leaf bits' : 'Aphid milk';
@@ -2059,19 +2072,35 @@ export class HomeScene extends Phaser.Scene {
       .text(cx, cy, '✕', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '14px',
-        color: '#e6f5d2',
+        color: COLOR.textOnDark,
       })
       .setOrigin(0.5, 0.5)
       .setDepth(DEPTHS.boardOverlay + 1)
       .setInteractive({ useHandCursor: true });
-    btn.on('pointerdown', () => {
-      dismissBanner(kind, identity);
-      // Cheapest re-render: scene.restart picks up the new banner
-      // suppression set without us tracking sprite handles per
-      // banner. Same pattern claimStreak / claimComeback already
-      // use after a successful claim.
-      this.scene.restart();
-    });
+    btn.on(
+      'pointerdown',
+      (
+        _p: Phaser.Input.Pointer,
+        _lx: number,
+        _ly: number,
+        e: Phaser.Types.Input.EventData,
+      ) => {
+        // Stop propagation so the dismiss tap doesn't bubble up to
+        // the board handlers (wireBoardTap), which would otherwise
+        // see this as a "tap on empty tile" and start a placement
+        // gesture or pan.
+        e?.stopPropagation?.();
+        dismissBanner(kind, identity);
+        // Persist the current layer across the restart so the
+        // player isn't whipped back to the surface mid-navigation.
+        this.registry.set('homeLayer', this.layer);
+        // Cheapest re-render: scene.restart picks up the new banner
+        // suppression set without us tracking sprite handles per
+        // banner. Same pattern claimStreak / claimComeback use
+        // after a successful claim.
+        this.scene.restart();
+      },
+    );
   }
 
   private drawComebackBanner(topY: number, runtime: HiveRuntime): number {
@@ -2118,6 +2147,7 @@ export class HomeScene extends Phaser.Scene {
       if (runtime.player) {
         if (runtime.player.player.streak) runtime.player.player.streak.comebackPending = false;
       }
+      this.registry.set('homeLayer', this.layer);
       this.scene.restart();
     } catch (err) {
       console.warn('comeback claim failed', err);
@@ -2170,6 +2200,7 @@ export class HomeScene extends Phaser.Scene {
       if (runtime.player?.player.streak) {
         runtime.player.player.streak.lastClaim = r.streakDay;
       }
+      this.registry.set('homeLayer', this.layer);
       this.scene.restart();
     } catch (err) {
       console.warn('streak claim failed', err);
