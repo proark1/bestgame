@@ -44,4 +44,22 @@ describe('validateCommentContent', () => {
       expect(result.content.length).toBe(280);
     }
   });
+
+  it('caps regex work on huge payloads (DoS pre-slice)', () => {
+    // 5 MB string — would be slow to regex-walk in full. The
+    // pre-slice clamps to 2× MAX_COMMENT_LEN before the regex runs,
+    // so the validator returns quickly even on hostile input.
+    const huge = 'a'.repeat(5_000_000);
+    const start = Date.now();
+    const result = validateCommentContent(huge);
+    const elapsedMs = Date.now() - start;
+    expect('content' in result).toBe(true);
+    if ('content' in result) {
+      expect(result.content.length).toBe(280);
+    }
+    // Generous bound — a regex-everything walk on 5 MB takes
+    // hundreds of milliseconds; the pre-slice should keep us well
+    // under 50 ms in CI.
+    expect(elapsedMs).toBeLessThan(50);
+  });
 });

@@ -130,12 +130,33 @@ function tone(args: {
   osc.stop(when + args.duration + release + 0.02);
 }
 
+// Singleton white-noise buffer reused across every noiseBurst() call.
+// AudioBufferSourceNode reads the buffer immutably and is one-shot
+// (start/stop), so concurrent bursts can safely share the same
+// underlying samples — each gets its own filter + gain chain. This
+// is materially cheaper than allocating + filling 11 kB of Float32
+// on every building hit during a 5-unit burst.
+let sharedNoiseBuffer: AudioBuffer | null = null;
+
+function getSharedNoiseBuffer(c: AudioContext): AudioBuffer {
+  if (sharedNoiseBuffer && sharedNoiseBuffer.sampleRate === c.sampleRate) {
+    return sharedNoiseBuffer;
+  }
+  // 0.25 s of pre-baked white noise — long enough to cover any
+  // single noise-burst SFX. Re-baked if the AudioContext sample
+  // rate differs (some browsers vary on output device change).
+  const sampleCount = Math.ceil(c.sampleRate * 0.25);
+  const buffer = c.createBuffer(1, sampleCount, c.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < sampleCount; i++) data[i] = Math.random() * 2 - 1;
+  sharedNoiseBuffer = buffer;
+  return buffer;
+}
+
 // Filtered noise burst — drives the "thunk" of an impact better than a
-// pure tone. We allocate a short PCM buffer of white noise, run it
-// through a band-pass filter centred on `centerHz`, and gate it with
-// the same attack/release envelope shape as `tone`. Used by raid SFX
-// that need percussion (building hit, building destroyed, queen
-// destroyed) without adding any external samples.
+// pure tone. Re-uses a singleton white-noise buffer (see above) and
+// allocates only the per-call source / filter / gain nodes that the
+// WebAudio graph needs to mix overlapping bursts independently.
 function noiseBurst(args: {
   centerHz: number;     // filter centre frequency
   q?: number;           // filter Q (sharper at higher Q)
@@ -150,15 +171,8 @@ function noiseBurst(args: {
   if (getSettings().muted) return;
 
   const when = args.startTime ?? c.currentTime;
-  // 0.25 s of pre-baked white noise — enough for any single SFX.
-  // Allocating a tiny buffer per call is cheap; keeping a singleton
-  // would prevent overlapping bursts from sharing the source.
-  const sampleCount = Math.ceil(c.sampleRate * 0.25);
-  const buffer = c.createBuffer(1, sampleCount, c.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < sampleCount; i++) data[i] = Math.random() * 2 - 1;
   const src = c.createBufferSource();
-  src.buffer = buffer;
+  src.buffer = getSharedNoiseBuffer(c);
   const filter = c.createBiquadFilter();
   filter.type = 'bandpass';
   filter.frequency.value = args.centerHz;

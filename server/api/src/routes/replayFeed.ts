@@ -398,21 +398,20 @@ export function registerReplayFeed(app: FastifyInstance): void {
         return { error: validated.error };
       }
       // Rate limit: author can post at most one comment per second
-      // anywhere. Cheap to check at the route layer; per-replay
-      // throttling can land later if spam becomes a real problem.
-      const recent = await pool.query<{ created_at: Date }>(
-        `SELECT created_at FROM replay_comments
+      // anywhere. Done entirely in SQL with NOW() so the comparison
+      // is robust to clock drift between the API host and the DB
+      // (otherwise a fast Node clock + slow Postgres clock could
+      // false-allow a flood, or vice versa).
+      const recent = await pool.query(
+        `SELECT 1 FROM replay_comments
           WHERE author_id = $1::uuid
-          ORDER BY id DESC
+            AND created_at > NOW() - INTERVAL '1 second'
           LIMIT 1`,
         [playerId],
       );
       if (recent.rows.length > 0) {
-        const sinceMs = Date.now() - recent.rows[0]!.created_at.getTime();
-        if (sinceMs < MIN_MS_BETWEEN_COMMENTS) {
-          reply.code(429);
-          return { error: 'slow down — wait a moment between comments' };
-        }
+        reply.code(429);
+        return { error: 'slow down — wait a moment between comments' };
       }
       const exists = await pool.query<{ id: string }>(
         'SELECT id FROM raids WHERE id = $1',
@@ -444,18 +443,24 @@ export function registerReplayFeed(app: FastifyInstance): void {
 // Comment-content validator — exported for unit tests so the rules
 // (length cap + control-char strip) are pinned without spinning up
 // the route. Mirrors sanitizeChat in clan.ts but stays local here so
-// the two surfaces evolve independently.
+// the two surfaces evolve independently. Rate-limiting is done
+// entirely in SQL (see the POST handler) so we don't keep a JS-side
+// constant for the threshold.
 const MAX_COMMENT_LEN = 280;
-const MIN_MS_BETWEEN_COMMENTS = 1000;
 const MAX_COMMENT_FETCH = 100;
 
 export function validateCommentContent(
   raw: unknown,
 ): { content: string } | { error: string } {
   if (typeof raw !== 'string') return { error: 'content required' };
-  // Strip ASCII control chars; collapse whitespace; trim. Mirrors the
-  // clan-chat sanitiser. Keeps unicode letters + emoji.
+  // Pre-slice to a generous cap BEFORE running the regex pass.
+  // Without this a malicious caller could pass a multi-megabyte
+  // string and the regex engine would walk every byte before the
+  // final .slice() trims it down — a cheap CPU-DoS vector. Twice
+  // the legit max is plenty of headroom for whitespace runs that
+  // collapse on .replace().
   const cleaned = raw
+    .slice(0, MAX_COMMENT_LEN * 2)
     .replace(/[\x00-\x1f\x7f]/g, '')
     .replace(/\s+/g, ' ')
     .trim()

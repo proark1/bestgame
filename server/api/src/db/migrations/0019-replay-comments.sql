@@ -19,10 +19,19 @@ CREATE TABLE IF NOT EXISTS replay_comments (
   content     TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Index orientation matches the queries in routes/replayFeed.ts:
+--   * GET /replay/:id/comments → ORDER BY id ASC, optionally
+--     WHERE id > $afterId. Best served by (raid_id, id ASC).
+--   * POST /replay/:id/comments rate-limit lookup → most recent
+--     comment per author, ORDER BY id DESC LIMIT 1. Best served
+--     by (author_id, id DESC).
+-- Indexing on `id` directly (BIGSERIAL, monotonic) avoids a sort
+-- step that the planner would otherwise insert if we kept the
+-- `created_at` sort key.
 CREATE INDEX IF NOT EXISTS replay_comments_raid_idx
-  ON replay_comments (raid_id, created_at DESC);
+  ON replay_comments (raid_id, id ASC);
 CREATE INDEX IF NOT EXISTS replay_comments_author_idx
-  ON replay_comments (author_id, created_at DESC);
+  ON replay_comments (author_id, id DESC);
 
 -- Roll-up so the feed list endpoint can render "💬 7" without joining
 -- in-flight. Maintained by trigger so the count stays correct even if
