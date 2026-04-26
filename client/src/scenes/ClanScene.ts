@@ -507,9 +507,18 @@ export class ClanScene extends Phaser.Scene {
     const vv = (window as Window & { visualViewport?: VisualViewport })
       .visualViewport;
     if (vv) {
-      const baseTop = parseFloat(input.style.top || '0');
+      // Stash the natural resting position on a data-attribute so
+      // it survives a layout pass that might temporarily move the
+      // input (e.g. a future scene-resize handler that doesn't
+      // immediately scene.restart). The listener reads from the
+      // attribute every fire instead of capturing a closure value
+      // once — a future refactor that nudges the input from
+      // elsewhere can update the attribute and the keyboard
+      // handler picks up the new natural top automatically.
+      input.dataset.baseTop = input.style.top || '0';
       const onVV = (): void => {
         if (this.chatInputEl !== input) return;
+        const baseTop = parseFloat(input.dataset.baseTop ?? '0');
         // visualViewport.height shrinks to viewport-minus-keyboard
         // when the keyboard is up. Pin the input's bottom edge
         // 8 px above that height so the keyboard never covers it.

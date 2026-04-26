@@ -79,15 +79,22 @@ describe('sanitizeSafeText — markdown / HTML stripping', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('strips HTML entities so a future renderer can\'t resurrect content', () => {
-    // After entity-strip + tag-strip, the script payload survives
-    // only as plain English text — no `<>` to make the renderer
-    // execute it. That's the goal: entity-encoded HTML can never
-    // round-trip back into active markup.
+  it('decodes entity-encoded HTML so the block stripper catches it', () => {
+    // `&lt;script&gt;…&lt;/script&gt;` decodes to literal
+    // `<script>…</script>`, which then trips the SCRIPT_BLOCK_PATTERN
+    // and removes the entire block. End state: oops survives, the
+    // payload is gone, no live tags remain.
     const r = clean('&lt;script&gt;alert(1)&lt;/script&gt; oops');
-    expect(r).not.toContain('<');
-    expect(r).not.toContain('>');
-    expect(r).toContain('oops');
+    expect(r).toBe('oops');
+  });
+
+  it('preserves legitimate text-only entities like &amp; and &nbsp;', () => {
+    // The previous strip-everything approach broke "Tom &amp; Jerry"
+    // → "Tom Jerry". Decoding common entities first preserves user
+    // intent while still defanging the dangerous shapes.
+    expect(clean('Tom &amp; Jerry')).toBe('Tom & Jerry');
+    expect(clean('hello&nbsp;world')).toBe('hello world');
+    expect(clean('say &quot;hi&quot;')).toBe('say "hi"');
   });
 
   it('strips code fences and inline backticks', () => {

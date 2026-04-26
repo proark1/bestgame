@@ -33,11 +33,14 @@ const URL_PATTERN =
   // http://, https://, ftp://, file://, ws(s)://, gopher://, data:, blob:
   /\b(?:[a-z][a-z0-9+\-.]*:\/\/|data:|blob:|file:|mailto:|ws:|wss:|javascript:)\S+/gi;
 const WWW_PATTERN = /\bwww\.\S+/gi;
-// Bare domain.tld catcher. TLD bound is generous (2..24) so newer
-// long TLDs (.example, .software, .technology) get caught alongside
-// the classic .com/.org. Subdomain segments cap at 40 chars apiece.
+// Bare domain.tld catcher with bounded repetition. Subdomain segments
+// are capped at 3 (so host + up to 3 subdomain dots + TLD = at most 5
+// segments) to keep the regex strictly linear — no nested * to
+// backtrack on. The optional path tail is also length-bounded so a
+// crafted "domain.com/" + 1 MB of `/x` characters can't blow the
+// engine. Pre-slice in sanitizeSafeText still caps total input.
 const BARE_DOMAIN_PATTERN =
-  /\b[a-z][a-z\-]{0,40}(?:\.[a-z][a-z\-]{0,40})*\.[a-z]{2,24}(?:\/\S*)?\b/gi;
+  /\b[a-z][a-z\-]{0,40}(?:\.[a-z][a-z\-]{0,40}){0,3}\.[a-z]{2,24}(?:\/[^\s/]{0,80}){0,4}\b/gi;
 // Whole-block strippers for elements whose CONTENT is also dangerous
 // (script source code, style rules). Matched non-greedily so two
 // adjacent <script> blocks don't merge.
@@ -47,9 +50,36 @@ const HTML_TAG_PATTERN = /<\/?[a-z][\s\S]*?>/gi;
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\([^)]*\)/g;
 const MARKDOWN_LINK_PATTERN = /\[[^\]]*]\([^)]*\)/g;
 const CODE_FENCE_PATTERN = /```[\s\S]*?```|`[^`]*`/g;
-// HTML entities that could re-introduce stripped content if a future
-// renderer eagerly decodes them.
-const HTML_ENTITY_PATTERN = /&(?:[a-z]+|#x?[0-9a-f]+);/gi;
+// Common HTML entities — decoded into the literal characters they
+// represent BEFORE tag-stripping runs so `&lt;script&gt;…` becomes
+// `<script>…` and falls into the block stripper. That preserves
+// legitimate text like "Tom &amp; Jerry" → "Tom & Jerry" while
+// closing the entity-encoded XSS round-trip.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+function decodeCommonEntities(s: string): string {
+  return s
+    .replace(/&([a-z]+);/gi, (m, name: string) => {
+      const v = NAMED_ENTITIES[name.toLowerCase()];
+      return v !== undefined ? v : m;
+    })
+    .replace(/&#(\d{1,7});/g, (_m, dec: string) => {
+      const n = Number(dec);
+      if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return '';
+      return String.fromCodePoint(n);
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_m, hex: string) => {
+      const n = parseInt(hex, 16);
+      if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return '';
+      return String.fromCodePoint(n);
+    });
+}
 
 const DEFAULT_OPTIONS: Required<SafeTextOptions> = {
   maxLength: 400,
@@ -67,7 +97,12 @@ export function sanitizeSafeText(
   // before the .slice() at the end clipped the output. Cap to 4×
   // the legit max so paste-of-a-paragraph still works.
   const guarded = raw.slice(0, opts.maxLength * 4);
-  let out = guarded
+  // Decode common HTML entities BEFORE the block / tag strippers so
+  // `&lt;script&gt;…` becomes literal `<script>…` and falls into the
+  // block stripper rather than surviving as inert text. This also
+  // preserves legitimate uses like `Tom &amp; Jerry` → `Tom & Jerry`.
+  const decoded = decodeCommonEntities(guarded);
+  let out = decoded
     // Strip ASCII control chars (allows \t \n \r — collapsed below).
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
     // Strip code fences first so their contents don't survive as
@@ -89,9 +124,6 @@ export function sanitizeSafeText(
     // already-clean strings.
     .replace(HTML_TAG_PATTERN, '')
     .replace(HTML_TAG_PATTERN, '')
-    // Encoded entities that could re-introduce content under a
-    // future renderer's eager-decode (e.g. `&lt;script&gt;`).
-    .replace(HTML_ENTITY_PATTERN, '')
     // URL-shaped tokens — protocol://…, www.…, bare domain.tld
     .replace(URL_PATTERN, '')
     .replace(WWW_PATTERN, '')
