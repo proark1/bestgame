@@ -814,6 +814,7 @@ export class HomeScene extends Phaser.Scene {
       { label: '⚔  Raid a base', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
       { label: '📖  Campaign', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
       { label: '🏰  Clan wars', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
+      { label: '🌐  Hive war',  onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
       { label: '🎬  Top raids', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
       { label: '👑  Queen',    onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
       { label: '🌳  Queen path', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },

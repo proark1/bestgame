@@ -284,6 +284,11 @@ export class ClanScene extends Phaser.Scene {
         labelTextStyle(10, COLOR.textGold),
       ).setOrigin(0.5, 0.5),
     );
+    // Pre-compute the viewer's id once so each member row can hide
+    // its Visit button when self-viewing (no need to "tour" your
+    // own base — HomeScene is right there).
+    const runtimeForMembers = this.registry.get('runtime') as HiveRuntime | undefined;
+    const viewerId = runtimeForMembers?.player?.player.id;
     (this.my.members ?? []).forEach((m, i) => {
       const y = listY + 36 + i * 22;
       this.layerContainer.add(
@@ -302,13 +307,31 @@ export class ClanScene extends Phaser.Scene {
       );
       this.layerContainer.add(
         this.add
-          .text(listX + listW - 10, y, `🏆 ${m.trophies}`, {
+          .text(listX + listW - 60, y, `🏆 ${m.trophies}`, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '11px',
             color: '#ffd98a',
           })
           .setOrigin(1, 0),
       );
+      // 🌐 Visit button — opens the clanmate's base in
+      // ClanBaseTourScene. Self-viewing hidden so the row reads as
+      // a row, not a self-CTA.
+      if (viewerId && m.playerId !== viewerId) {
+        const visitBtn = this.add
+          .text(listX + listW - 10, y, '🌐 Visit', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '11px',
+            color: '#9bc4ff',
+          })
+          .setOrigin(1, 0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            this.registry.set('clanBaseTourTargetId', m.playerId);
+            fadeToScene(this, 'ClanBaseTourScene');
+          });
+        this.layerContainer.add(visitBtn);
+      }
     });
 
     // Request-units button — opens a small prompt that lets the
