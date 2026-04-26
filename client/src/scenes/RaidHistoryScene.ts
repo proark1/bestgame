@@ -6,6 +6,7 @@ import type { RaidHistoryEntry } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 const HUD_H = 56;
@@ -154,31 +155,17 @@ export class RaidHistoryScene extends Phaser.Scene {
   private renderEmptyState(): void {
     const w = Math.min(560, this.scale.width - 32);
     const x = (this.scale.width - w) / 2;
-    const y = 0;
-    const card = this.add.graphics();
-    drawPanel(card, x, y, w, 86, {
-      topColor: COLOR.bgPanelHi,
-      botColor: COLOR.bgPanelLo,
-      stroke: COLOR.brassDeep,
-      strokeWidth: 3,
-      highlight: COLOR.brass,
-      highlightAlpha: 0.14,
-      radius: 16,
-      shadowOffset: 5,
-      shadowAlpha: 0.32,
+    const handle = drawEmptyState({
+      scene: this,
+      x,
+      y: 0,
+      width: w,
+      glyph: '📜',
+      title: 'No raids yet',
+      body: 'Launch your first attack from the home screen — every raid lands here for replay.',
     });
-    const pill = this.add.graphics();
-    drawPill(pill, x + 16, y + 14, 84, 20, { brass: true });
-    this.rowContainer.add(card);
-    this.rowContainer.add(pill);
-    this.rowContainer.add(
-      crispText(this, x + 58, y + 24, 'History', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5),
-    );
-    this.rowContainer.add(
-      crispText(this, this.scale.width / 2, y + 48, 'No raids yet - launch your first attack from the home screen.', bodyTextStyle(14, COLOR.textPrimary))
-        .setOrigin(0.5, 0.5),
-    );
-    this.contentHeight = 100;
+    this.rowContainer.add(handle.container);
+    this.contentHeight = handle.height + 16;
   }
 
   private renderRows(raids: RaidHistoryEntry[], runtime: HiveRuntime): void {

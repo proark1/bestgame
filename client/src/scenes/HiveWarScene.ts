@@ -12,6 +12,7 @@ import {
 import { makeHiveButton } from '../ui/button.js';
 import { crispText } from '../ui/text.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import {
   COLOR,
   bodyTextStyle,
@@ -78,11 +79,15 @@ export class HiveWarScene extends Phaser.Scene {
     if (!this.seasonData) return;
     this.container.removeAll(true);
     if (!this.seasonData.season) {
-      this.container.add(
-        crispText(this, 16, 16, 'No active hive war season. A new one starts soon.',
-          bodyTextStyle(13, COLOR.textDim))
-          .setWordWrapWidth(this.scale.width - 32, true),
-      );
+      const w = Math.min(560, this.scale.width - 32);
+      const x = (this.scale.width - w) / 2;
+      const handle = drawEmptyState({
+        scene: this, x, y: 16, width: w,
+        glyph: '🌐',
+        title: 'No active hive war season',
+        body: 'The next season opens automatically — check back soon to enroll your clan on the map.',
+      });
+      this.container.add(handle.container);
       return;
     }
     this.renderHeader(runtime);

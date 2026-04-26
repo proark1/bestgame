@@ -10,6 +10,7 @@ import {
 import { makeHiveButton } from '../ui/button.js';
 import { crispText } from '../ui/text.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import {
   COLOR,
   bodyTextStyle,
@@ -78,12 +79,14 @@ export class ReplayFeedScene extends Phaser.Scene {
     y += 40;
 
     if (this.entries.length === 0) {
-      this.body.container.add(
-        crispText(this, originX, y, 'No featured raids yet. Pull off a 3-star to appear here.',
-          bodyTextStyle(13, COLOR.textMuted),
-        ),
-      );
-      this.body.setContentHeight(y + 40);
+      const handle = drawEmptyState({
+        scene: this, x: originX, y, width: maxW,
+        glyph: '⭐',
+        title: 'No featured raids yet',
+        body: 'Pull off a 3-star raid and your replay lands here for the clan to watch.',
+      });
+      this.body.container.add(handle.container);
+      this.body.setContentHeight(y + handle.height + 16);
       return;
     }
 
