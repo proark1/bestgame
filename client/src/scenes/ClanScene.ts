@@ -24,6 +24,11 @@ const HUD_H = 56;
 export class ClanScene extends Phaser.Scene {
   private view: 'loading' | 'member' | 'outsider' = 'loading';
   private my: ClanMyResponse | null = null;
+  // Tunnel links keyed by partner id — populated alongside my-clan
+  // fetch so the member-row render can stamp a 🌐 Linked / 🌐
+  // Pending badge without a per-row round-trip.
+  private tunnelLinkByPartner = new Map<string, 'pending' | 'active'>();
+  private tunnelIRequested = new Set<string>();
   private pollTimer: number | null = null;
   private latestMessageId = 0;
 
@@ -140,6 +145,24 @@ export class ClanScene extends Phaser.Scene {
           res.messages && res.messages.length > 0
             ? Number(res.messages[res.messages.length - 1]!.id)
             : 0;
+        // Tunnel links — fetch alongside the member view. Failure
+        // is non-fatal (badges just don't render) so this is fire-
+        // and-forget.
+        void runtime.api
+          .clanTunnelMy()
+          .then((tr) => {
+            if (!this.scene.isActive()) return;
+            this.tunnelLinkByPartner.clear();
+            this.tunnelIRequested.clear();
+            for (const link of tr.links) {
+              this.tunnelLinkByPartner.set(link.partnerId, link.state);
+              if (link.iRequested) this.tunnelIRequested.add(link.partnerId);
+            }
+            this.renderMemberView();
+          })
+          .catch(() => {
+            /* non-fatal — badges just don't render */
+          });
         // Pull active war state alongside the member view. Failure is
         // non-fatal — the war banner simply won't render. Fire-and-
         // forget so we don't block the member list.
@@ -331,6 +354,43 @@ export class ClanScene extends Phaser.Scene {
             fadeToScene(this, 'ClanBaseTourScene');
           });
         this.layerContainer.add(visitBtn);
+
+        // Tunnel-link affordance. Three states surface differently:
+        //   - 'active'              → "🌐 Linked" pill (read-only)
+        //   - 'pending', I asked    → "🌐 Pending" pill (cancellable
+        //     via tap)
+        //   - 'pending', they asked → "Accept ↗" actionable button
+        //   - none                  → "🌐 Pair" actionable button
+        const linkState = this.tunnelLinkByPartner.get(m.playerId) ?? null;
+        const iAsked = this.tunnelIRequested.has(m.playerId);
+        let label = '🌐 Pair';
+        let color = '#cee1b4';
+        let action: 'request' | 'accept' | 'cancel' | 'break' = 'request';
+        if (linkState === 'active') {
+          label = '🌐 Linked';
+          color = '#9be0a8';
+          action = 'break';
+        } else if (linkState === 'pending' && iAsked) {
+          label = '… Pending';
+          color = '#ffd98a';
+          action = 'cancel';
+        } else if (linkState === 'pending' && !iAsked) {
+          label = 'Accept ↗';
+          color = '#ffd98a';
+          action = 'accept';
+        }
+        const tunnelBtn = this.add
+          .text(listX + listW - 60, y + 14, label, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '10px',
+            color,
+          })
+          .setOrigin(1, 0)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            void this.handleTunnelAction(m.playerId, action);
+          });
+        this.layerContainer.add(tunnelBtn);
       }
     });
 
@@ -618,6 +678,40 @@ export class ClanScene extends Phaser.Scene {
       // no need to manually refresh here.
     } catch (err) {
       await openAlert('Request failed', (err as Error).message);
+    }
+  }
+
+  // Single entry point for every tunnel-row tap. Delegates to the
+  // matching API verb, then refreshes the local state map + re-
+  // renders the member view so the badge flips immediately.
+  private async handleTunnelAction(
+    partnerId: string,
+    action: 'request' | 'accept' | 'cancel' | 'break',
+  ): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      if (action === 'request') {
+        await runtime.api.clanTunnelRequest(partnerId);
+      } else if (action === 'accept') {
+        await runtime.api.clanTunnelAccept(partnerId);
+      } else {
+        // cancel + break are both DELETE — server doesn't
+        // distinguish; either side can abandon the link.
+        await runtime.api.clanTunnelBreak(partnerId);
+      }
+      // Re-fetch the link list so the badge reflects the new state.
+      const r = await runtime.api.clanTunnelMy();
+      if (!this.scene.isActive()) return;
+      this.tunnelLinkByPartner.clear();
+      this.tunnelIRequested.clear();
+      for (const link of r.links) {
+        this.tunnelLinkByPartner.set(link.partnerId, link.state);
+        if (link.iRequested) this.tunnelIRequested.add(link.partnerId);
+      }
+      this.renderMemberView();
+    } catch (err) {
+      await openAlert('Tunnel action failed', (err as Error).message);
     }
   }
 
