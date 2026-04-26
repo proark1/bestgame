@@ -57,6 +57,26 @@ const KINDS_WITH_V_VARIANTS: ReadonlySet<Types.BuildingKind> = new Set(['LeafWal
 // run sideways and look broken) we swap to the V variant so weave
 // stays perpendicular to the long axis. Even rotation values (0, 2)
 // render horizontal; odd values (1, 3) render vertical.
+// Grace window (scene-time ms) after a modal closes during which
+// board taps are still suppressed. The same pointerdown that fell
+// through the modal's outside-click dismiss would otherwise fire
+// pointerup against the board and open the picker / start a pan.
+const MODAL_CLOSE_GRACE_MS = 220;
+
+// Treat the scene as "modal active" if a modal is currently open or
+// if one closed within the grace window. Modals (currently
+// buildingInfoModal) flip the scene.data flags themselves so this
+// helper stays generic — any future modal can opt in by setting the
+// same two keys.
+function isModalActive(scene: Phaser.Scene): boolean {
+  if (scene.data.get('modalActive') === true) return true;
+  const closedAt = scene.data.get('modalClosedAt') as number | undefined;
+  if (typeof closedAt === 'number' && scene.time.now - closedAt < MODAL_CLOSE_GRACE_MS) {
+    return true;
+  }
+  return false;
+}
+
 // Stable identity for a "what next?" suggestion so dismissals are
 // scoped. A campaign nudge for chapter 2 is a different banner than
 // chapter 3, and a "run a raid" nudge is distinct from both.
@@ -2939,6 +2959,12 @@ export class HomeScene extends Phaser.Scene {
   private wireBoardTap(): void {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.burgerDrawer) return;
+      // While a modal (e.g. building info) is open, board taps must
+      // not also start a pan or open the empty-tile picker — the
+      // user's tap is dismissing the modal, not interacting with the
+      // board behind it. Same applies for a brief grace after close
+      // so the matching pointerup doesn't immediately fire either.
+      if (isModalActive(this)) return;
       // HUD chips (burger, account, codex, resource pills) call
       // stopPropagation on their own handlers, but cross-device event
       // ordering isn't uniform. Hard-gate here so a tap that started
@@ -2985,6 +3011,7 @@ export class HomeScene extends Phaser.Scene {
       if (!p.isDown) return;
       if (!this.panAnchor) return;
       if (this.pickerContainer || this.burgerDrawer) return;
+      if (isModalActive(this)) return;
       const dx = p.x - this.panAnchor.px;
       const dy = p.y - this.panAnchor.py;
       if (!this.isPanningBoard) {
@@ -3008,6 +3035,9 @@ export class HomeScene extends Phaser.Scene {
         return;
       }
       if (this.pickerContainer) return;
+      // Same modal-active gate as pointerdown — picks up the case
+      // where the modal opened between down and up.
+      if (isModalActive(this)) return;
       // Grace window after close. Defense-in-depth against any
       // pointerdown we didn't see. Scene clock so the window doesn't
       // drift relative to pause/background state.
@@ -3425,6 +3455,13 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
+  // Re-entrancy guard for openAccountMenu. fetchMe() is async, and
+  // rapid taps on the chip would otherwise stack a separate fetch +
+  // modal per click — the first promise resolving opens one modal,
+  // the second opens a duplicate behind it. Cleared on success/error
+  // so a slow-network tap doesn't permanently disable the chip.
+  private accountMenuOpening = false;
+
   // Open the right account modal based on session state. Guests see
   // the Register/Login modal (claim or swap accounts); logged-in users
   // see the Account modal with a Log out button — putting "Register"
@@ -3433,14 +3470,18 @@ export class HomeScene extends Phaser.Scene {
   // chip tap is fine; we still fall back to the guest modal if the
   // call fails so the chip is never inert.
   private async openAccountMenu(): Promise<void> {
+    if (this.accountMenuOpening) return;
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!rt) return;
+    this.accountMenuOpening = true;
     let me: Awaited<ReturnType<typeof rt.auth.fetchMe>> = null;
     try {
       me = await rt.auth.fetchMe();
     } catch {
       // Network blip — fall through to the guest modal so the user
       // still has an action they can take.
+    } finally {
+      this.accountMenuOpening = false;
     }
     if (me && !me.isGuest && me.username) {
       openAccountInfoModal({

@@ -162,6 +162,12 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     e?.stopPropagation?.();
   });
 
+  // Mark the scene as "modal active" so HomeScene's wireBoardTap can
+  // skip empty-tile picker / pan gestures while this modal is open
+  // and during a short grace window after it closes. Without this
+  // gate, a tap on an empty tile that's intended to dismiss the modal
+  // also opens the building picker for that tile — confusing UX.
+  scene.data.set('modalActive', true);
   const close = (): void => {
     // Stop the countdown ticker before tearing down — it holds a
     // reference into bodyContainer's children that would otherwise
@@ -171,6 +177,12 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       activeCountdownTicker = null;
     }
     scene.input.off('pointerdown', onScenePointerDown);
+    scene.data.set('modalActive', false);
+    // Scene-time grace window so the same pointerdown that closed the
+    // modal can't immediately re-trigger a board interaction (picker
+    // open, pan start) on its matching pointerup. HomeScene reads
+    // this timestamp in wireBoardTap.
+    scene.data.set('modalClosedAt', scene.time.now);
     root.destroy(true);
   };
   // Outside-click-to-close listens at the scene level so it fires for
