@@ -898,22 +898,32 @@ async function doDemolish(
   }
 }
 
+let toastTween: Phaser.Tweens.Tween | null = null;
 function flashToast(scene: Phaser.Scene, msg: string): void {
+  toastTween?.stop();
+  const container = scene.add
+    .container(scene.scale.width / 2, scene.scale.height - 60)
+    .setDepth(DEPTHS.toast)
+    .setInteractive();
   const t = scene.add
-    .text(scene.scale.width / 2, scene.scale.height - 60, msg, {
+    .text(0, 0, msg, {
       fontFamily: 'ui-monospace, monospace',
       fontSize: '13px',
       color: '#0f1b10',
       backgroundColor: '#ffd98a',
       padding: { left: 12, right: 12, top: 6, bottom: 6 },
     })
-    .setOrigin(0.5)
-    .setDepth(DEPTHS.toast);
-  scene.tweens.add({
-    targets: t,
+    .setOrigin(0.5);
+  container.add(t);
+  container.on('pointerdown', () => {
+    toastTween?.stop();
+    container.destroy();
+  });
+  toastTween = scene.tweens.add({
+    targets: container,
     alpha: { from: 1, to: 0 },
     delay: 1600,
     duration: 400,
-    onComplete: () => t.destroy(),
+    onComplete: () => container.destroy(),
   });
 }
