@@ -23,6 +23,7 @@ import { QueenSkinScene } from './scenes/QueenSkinScene.js';
 import { BuilderQueueScene } from './scenes/BuilderQueueScene.js';
 import { ProgressionScene } from './scenes/ProgressionScene.js';
 import { ClanBaseTourScene } from './scenes/ClanBaseTourScene.js';
+import { HiveWarScene } from './scenes/HiveWarScene.js';
 import { PrologueScene } from './scenes/PrologueScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
@@ -220,6 +221,7 @@ async function main(): Promise<void> {
       new BuilderQueueScene(),
       new ProgressionScene(),
       new ClanBaseTourScene(),
+      new HiveWarScene(),
       new PrologueScene(),
     ],
   });

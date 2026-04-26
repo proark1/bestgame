@@ -485,6 +485,28 @@ export class Api {
     return (await res.json()) as { requests: ClanUnitRequest[] };
   }
 
+  // Giant-map hive war — read the current season + enrollments so
+  // the client can render the map view in one round-trip. Returns
+  // `season: null` when no open/active season exists (extremely
+  // unlikely once the seed migration runs, but the loader handles
+  // it cleanly).
+  async getHiveWarSeason(): Promise<HiveWarSeasonResponse> {
+    const res = await this.authedFetch('/hivewar/season/current');
+    if (!res.ok) throw await errorFromResponse(res, 'hivewar/season');
+    return (await res.json()) as HiveWarSeasonResponse;
+  }
+
+  async hiveWarEnroll(
+    seasonId: number,
+  ): Promise<{ ok: true; alreadyEnrolled: boolean; slotX: number; slotY: number }> {
+    const res = await this.authedFetch(
+      `/hivewar/season/${encodeURIComponent(String(seasonId))}/enroll`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'hivewar/enroll');
+    return (await res.json()) as Awaited<ReturnType<Api['hiveWarEnroll']>>;
+  }
+
   // Read-only "base tour" — fetch a clanmate's full base snapshot for
   // tour-mode rendering. Server enforces same-clan membership; 403
   // for outsiders, 404 for missing player. The first slice of the
@@ -1032,6 +1054,38 @@ export interface ClanMyResponse {
 // Open-request snapshot returned by GET /clan/requests. `canDonate`
 // is server-computed (false when the requester is the caller), so the
 // client doesn't have to thread playerId through the render path.
+export interface HiveWarSeason {
+  id: number;
+  name: string;
+  startsAt: string;
+  endsAt: string;
+  boardW: number;
+  boardH: number;
+  state: 'open' | 'active' | 'finished';
+}
+export interface HiveWarEnrollment {
+  clanId: string;
+  clanName: string;
+  clanTag: string;
+  slotX: number;
+  slotY: number;
+  score: number;
+  attacksMade: number;
+  attacksReceived: number;
+}
+export interface HiveWarSeasonResponse {
+  season: HiveWarSeason | null;
+  enrollments: HiveWarEnrollment[];
+  myClanId: string | null;
+  myEnrollment: {
+    slotX: number;
+    slotY: number;
+    score: number;
+    attacksMade: number;
+    attacksReceived: number;
+  } | null;
+}
+
 export interface ClanUnitRequest {
   id: number;
   requesterId: string;
