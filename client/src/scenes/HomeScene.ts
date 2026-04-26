@@ -1018,8 +1018,8 @@ export class HomeScene extends Phaser.Scene {
           };
 
     // Board background sprite (loaded by BootScene or rendered as placeholder)
-    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
-    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
+    // Use TileSprite to properly tile the seamless background without stretching
+    const bgSprite = this.add.tileSprite(0, 0, BOARD_W, BOARD_H, 'board-background').setOrigin(0, 0);
     bgSprite.setDepth(DEPTHS.boardUnder);
     this.boardContainer.add(bgSprite);
 
@@ -3176,10 +3176,9 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private toast: Phaser.GameObjects.Container | null = null;
-  private toastTween: Phaser.Tweens.Tween | null = null;
   private flashToast(msg: string): void {
     if (this.toast) {
-      this.toastTween?.stop();
+      this.tweens.killTweensOf(this.toast);
       this.toast.destroy();
     }
     const width = Math.min(
@@ -3234,7 +3233,7 @@ export class HomeScene extends Phaser.Scene {
       .setOrigin(0.5, 0.5)
       .setInteractive();
     closeBtn.on('pointerdown', () => {
-      this.toastTween?.stop();
+      this.tweens.killTweensOf(container);
       container.destroy();
       if (this.toast === container) this.toast = null;
     });
@@ -3248,7 +3247,7 @@ export class HomeScene extends Phaser.Scene {
       duration: 180,
       ease: 'Back.easeOut',
     });
-    this.toastTween = this.tweens.add({
+    this.tweens.add({
       targets: container,
       alpha: { from: 1, to: 0 },
       y: baseY - 14,

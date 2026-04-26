@@ -898,13 +898,10 @@ async function doDemolish(
   }
 }
 
-let toastTween: Phaser.Tweens.Tween | null = null;
 function flashToast(scene: Phaser.Scene, msg: string): void {
-  toastTween?.stop();
   const container = scene.add
     .container(scene.scale.width / 2, scene.scale.height - 60)
-    .setDepth(DEPTHS.toast)
-    .setInteractive();
+    .setDepth(DEPTHS.toast);
   const t = scene.add
     .text(0, 0, msg, {
       fontFamily: 'ui-monospace, monospace',
@@ -915,11 +912,12 @@ function flashToast(scene: Phaser.Scene, msg: string): void {
     })
     .setOrigin(0.5);
   container.add(t);
+  container.setSize(t.width, t.height).setInteractive({ useHandCursor: true });
   container.on('pointerdown', () => {
-    toastTween?.stop();
+    scene.tweens.killTweensOf(container);
     container.destroy();
   });
-  toastTween = scene.tweens.add({
+  scene.tweens.add({
     targets: container,
     alpha: { from: 1, to: 0 },
     delay: 1600,

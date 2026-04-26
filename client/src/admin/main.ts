@@ -88,7 +88,10 @@ function statusToast(msg: string, kind: 'info' | 'error' | 'success' = 'info'): 
     document.body.append(el);
   }
   el.className = `status visible ${kind === 'info' ? '' : kind}`;
-  el.innerHTML = `<span>${msg}</span><button class="status-close" title="Dismiss">✕</button>`;
+  el.innerHTML = '<button class="status-close" title="Dismiss">✕</button>';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  el.prepend(span);
   const closeBtn = el.querySelector('.status-close') as HTMLButtonElement;
   const dismissToast = () => el!.classList.remove('visible');
   closeBtn.addEventListener('click', dismissToast);
