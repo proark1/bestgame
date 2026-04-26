@@ -305,11 +305,22 @@ export class ArenaScene extends Phaser.Scene {
     bgSprite.setDisplaySize(BOARD_W, BOARD_H);
     bgSprite.setDepth(DEPTHS.boardUnder);
 
-    const grid = this.add.graphics({
-      lineStyle: { width: 1, color: 0x2c5a23, alpha: 0.5 },
-    });
-    for (let x = 0; x <= GRID_W; x++) grid.lineBetween(x * TILE, 0, x * TILE, BOARD_H);
-    for (let y = 0; y <= GRID_H; y++) grid.lineBetween(0, y * TILE, BOARD_W, y * TILE);
+    // Grass underlay so the arena board reads as grass like the rest
+    // of the game.
+    const grass = this.add.graphics();
+    grass.fillStyle(0x6cbf6a, 0.55);
+    grass.fillRect(0, 0, BOARD_W, BOARD_H);
+
+    // Per-tile grid box outlines. Mirrors RaidScene/HomeScene so the
+    // grid reads as the same structural element across all three play
+    // surfaces.
+    const grid = this.add.graphics();
+    grid.lineStyle(1, 0x2d5e2a, 0.45);
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        grid.strokeRect(x * TILE + 0.5, y * TILE + 0.5, TILE - 1, TILE - 1);
+      }
+    }
 
     const edge = this.add.graphics();
     edge.fillStyle(COLOR.brass, 0.18);
@@ -317,7 +328,7 @@ export class ArenaScene extends Phaser.Scene {
     edge.fillStyle(COLOR.brass, 0.34);
     edge.fillRect(8, 0, 3, BOARD_H);
 
-    this.boardContainer.add([bgSprite, grid, edge]);
+    this.boardContainer.add([bgSprite, grass, grid, edge]);
   }
 
   private drawStartingBuildings(): void {
@@ -332,7 +343,8 @@ export class ArenaScene extends Phaser.Scene {
       const y = b.anchorY * TILE + (b.h * TILE) / 2;
       const spr = this.add.image(x, y, `building-${b.kind}`);
       spr.setOrigin(0.5, 0.75);
-      spr.setDisplaySize(TILE * Math.max(b.w, 1.85), TILE * Math.max(b.h, 1.85));
+      // Render at exact grid footprint, matching RaidScene/HomeScene.
+      spr.setDisplaySize(b.w * TILE, b.h * TILE);
       this.boardContainer.add(spr);
       this.buildingSprites.set(b.id, spr);
 
@@ -370,6 +382,8 @@ export class ArenaScene extends Phaser.Scene {
     const enabled = this.animationEnabled[kind] !== false;
     const sheetKey = `unit-${kind}-walk`;
     const animKey = `walk-${kind}`;
+    // 32×32 to match RaidScene — keeps unit visual scale consistent.
+    const UNIT_SIZE = 32;
     if (
       isAnimatedKind &&
       enabled &&
@@ -378,14 +392,14 @@ export class ArenaScene extends Phaser.Scene {
     ) {
       const spr = this.add
         .sprite(x, y, sheetKey)
-        .setDisplaySize(36, 36)
+        .setDisplaySize(UNIT_SIZE, UNIT_SIZE)
         .setOrigin(0.5, 0.7);
       spr.play(animKey);
       return spr;
     }
     return this.add
       .image(x, y, `unit-${kind}`)
-      .setDisplaySize(36, 36)
+      .setDisplaySize(UNIT_SIZE, UNIT_SIZE)
       .setOrigin(0.5, 0.7);
   }
 

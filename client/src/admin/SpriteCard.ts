@@ -15,6 +15,12 @@ import {
   type SpriteHistoryEntry,
 } from './api.js';
 import { removeBackground, removeNearWhite } from './removeBackground.js';
+import {
+  WALK_FRAME_COUNT,
+  WALK_STRIP_WIDTH,
+  compositeWalkStrip,
+  splitWalkStrip,
+} from './walkCycle.js';
 
 export interface SpriteCardOptions {
   key: string;
@@ -568,9 +574,105 @@ export class SpriteCard {
     });
 
     actions.append(genBtn);
+
+    // Manual cleanup buttons for frame 2 (the variation pose). The
+    // bulk generator already runs removeBackground on frame 2 once,
+    // but Gemini sometimes leaves a faint gray haze the first pass
+    // misses — these buttons let the admin re-run BG/grays cleanup on
+    // the saved strip without going through the per-pose editor below.
+    // Both can be clicked repeatedly until the frame looks clean.
+    if (animOk) {
+      const cleanBgBtn = document.createElement('button');
+      cleanBgBtn.className = 'btn';
+      cleanBgBtn.textContent = 'Clean frame 2 BG';
+      cleanBgBtn.title =
+        'Re-run background removal on the second animation frame and save. Click again if a halo remains.';
+      cleanBgBtn.addEventListener('click', () => {
+        void this.cleanupAnimationFrame2(cleanBgBtn, 'bg');
+      });
+      actions.append(cleanBgBtn);
+
+      const cleanGraysBtn = document.createElement('button');
+      cleanGraysBtn.className = 'btn';
+      cleanGraysBtn.textContent = 'Clean frame 2 grays';
+      cleanGraysBtn.title =
+        'Re-run gray/white-haze removal on the second animation frame and save. Click again if grays remain.';
+      cleanGraysBtn.addEventListener('click', () => {
+        void this.cleanupAnimationFrame2(cleanGraysBtn, 'grays');
+      });
+      actions.append(cleanGraysBtn);
+    }
+
     panel.append(actions);
 
     this.root.append(panel);
+  }
+
+  // Re-clean frame 2 of the saved walk strip. Loads the on-disk file,
+  // splits it into 2 frames, applies the requested cleanup to frame 2
+  // only, recomposites + saves under the same key. Idempotent: clicking
+  // again runs the cleanup on the freshly-saved strip, so a stubborn
+  // halo can be peeled in passes.
+  private async cleanupAnimationFrame2(
+    btn: HTMLButtonElement,
+    mode: 'bg' | 'grays',
+  ): Promise<void> {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const orig = btn.textContent ?? '';
+    btn.textContent = 'Cleaning…';
+    const kind = this.key.replace(/^unit-/, '');
+    const opLabel = mode === 'bg' ? 'background' : 'grays';
+    try {
+      const ext = this.opts.fileMeta.ext ?? 'webp';
+      const url = `/assets/sprites/unit-${kind}-walk.${ext}?t=${Date.now()}`;
+      const frames = await splitWalkStrip(url, WALK_FRAME_COUNT);
+      if (!frames || frames.length < 2) {
+        throw new Error('could not load walk strip from disk');
+      }
+      const frame1 = frames[0]!;
+      const frame2 = frames[1]!;
+      const cleaned =
+        mode === 'bg'
+          ? await removeBackground(frame2.data, frame2.mimeType)
+          : await removeNearWhite(frame2.data, frame2.mimeType);
+      const cleanedFrame: GeminiImage = {
+        data: cleaned.base64,
+        mimeType: cleaned.mimeType,
+      };
+      const stripPng = await compositeWalkStrip([frame1, cleanedFrame]);
+      // Respect the admin's configured compression quality (card-level
+      // override falls back to the global default). Floored at 0.85 to
+      // match generateWalkCycle()'s rationale: walk-cycle frames need
+      // enough fidelity for the leg/wing motion to read as movement
+      // rather than mush, even if the rest of the asset library is set
+      // to lower quality.
+      const cfg = this.cardCompression ?? this.opts.getCompression();
+      const compressed = await compressBase64Image(stripPng, 'image/png', {
+        format: ext,
+        quality: Math.max(0.85, cfg.quality),
+        maxDimension: WALK_STRIP_WIDTH,
+      });
+      await saveSprite({
+        key: `unit-${kind}-walk`,
+        data: compressed.base64,
+        format: ext,
+        frames: WALK_FRAME_COUNT,
+      });
+      this.opts.showStatus(
+        `Cleaned ${opLabel} on frame 2 of ${kind}`,
+        'success',
+      );
+      // Re-render so the preview img picks up the new mtime.
+      this.renderAnimationPanel();
+    } catch (err) {
+      this.opts.showStatus(
+        `Frame 2 ${opLabel} cleanup failed: ${(err as Error).message}`,
+        'error',
+      );
+      btn.textContent = orig;
+      btn.disabled = false;
+    }
   }
 
   private renderCompressionPanel(): void {

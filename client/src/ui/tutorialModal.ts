@@ -5,7 +5,10 @@
 // button, with a secondary "Show tutorial" link added to the account
 // chip menu so they can reopen it later.
 
-const SEEN_KEY = 'hive.tutorialSeen';
+// Bumped when the tutorial copy materially changes (e.g. adding the
+// build → raid walkthrough + ambush/split/dig explanation). Returning
+// players see the refreshed walkthrough once.
+const SEEN_KEY = 'hive.tutorialSeen.v2';
 const STYLE_ID = 'hive-tutorial-style';
 
 const CSS = `
@@ -126,22 +129,33 @@ export function openTutorial(opts: { force?: boolean; onClose?: () => void } = {
       <h1>Welcome to Hive Wars 🐜</h1>
       <p class="hive-tutorial-sub">A backyard colony-vs-colony strategy game. Build, raid, rank up.</p>
 
-      <h2>The loop</h2>
+      <h2>1 · Build your base</h2>
       <ul>
-        <li><b>Build</b> your base: tap an empty tile on the Home screen to place a building. Defensive kinds live on the <b>Surface</b>, economy + nursery belong <b>Underground</b>. Flip layers from the footer.</li>
-        <li><b>Raid</b> another colony: tap <code>Raid a base →</code> to match against a player in your trophy range. Draw a pheromone path with your finger/mouse to deploy a unit along it.</li>
-        <li><b>Climb</b> the ladder: 1–3 stars per raid. Trophies win. Lose raids = lose trophies + loot.</li>
+        <li>Tap an empty tile on the Home screen to place a building. Each building snaps to the green grid — bigger kinds (Queen Chamber) take 2×2, the rest are 1×1.</li>
+        <li>Defensive kinds live on the <b>Surface</b>; storage + nursery belong <b>Underground</b>. Flip layers from the footer.</li>
       </ul>
 
-      <h2>Arena & clans</h2>
+      <h2>2 · Raid an enemy</h2>
       <ul>
-        <li><code>⚔ Arena</code> — live PvP against another player on the same map.</li>
-        <li><code>👥 Clan</code> — join or create one to chat + coordinate.</li>
-        <li><code>⚙ Upgrades</code> — spend sugar & leaf to level your units.</li>
+        <li>Tap <code>Raid a base →</code>. Pick a unit from the deck, then drag from a glowing edge into the base — your swarm walks the path you draw.</li>
+        <li>Three <b>path markers</b> change how the swarm behaves at the midpoint:
+          <ul>
+            <li><b>Split</b> — half the swarm peels off to attack the nearest building; the rest keeps walking.</li>
+            <li><b>Ambush</b> — units pause for ~2s so a follow-up burst catches up and they hit together.</li>
+            <li><b>Dig</b> — diggers and termites flip layer (slip past walls or pop up under turrets).</li>
+          </ul>
+        </li>
+        <li>The first time you raid, in-game bubbles will walk you through these one at a time on a starter enemy base.</li>
+      </ul>
+
+      <h2>3 · Climb</h2>
+      <ul>
+        <li>1–3 stars per raid. Trophies up, loot in. Losing raids costs trophies + loot.</li>
+        <li><code>⚔ Arena</code> — live PvP. <code>👥 Clan</code> — chat and donate units. <code>⚙ Upgrades</code> — spend sugar & leaf to level units.</li>
       </ul>
 
       <h2>Save your progress</h2>
-      <p>You're playing as a guest. Tap the <code>guest ▾</code> chip in the top-left to register — progress carries over, and you can log in on any other device.</p>
+      <p>You're playing as a guest. Tap the <code>guest ▾</code> chip in the top-left to register — progress carries over to any device.</p>
 
       <div class="hive-tutorial-actions">
         <button type="button" class="hive-tutorial-btn ghost" data-act="later">Read later</button>
