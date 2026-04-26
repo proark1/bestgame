@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { applyGlobalSettings } from './ui/settingsModal.js';
+import { initAudioAssets } from './ui/audio.js';
 import { readTacticFromHash, TACTICS_STORAGE_KEY, TACTICS_LIMIT } from './codex/tacticShare.js';
 import { registerServiceWorker } from './pwa/register.js';
 import { initSentryIfConfigured } from './obs/sentry.js';
@@ -103,6 +104,12 @@ async function main(): Promise<void> {
   // localStorage before scenes start laying out so they honor the
   // user's settings on first paint (not after a resize).
   applyGlobalSettings();
+  // Kick off the audio asset prewarm. Manifest fetch + decode runs
+  // in parallel with Phaser boot — until the samples land any SFX
+  // calls play the synth fallback. A missing manifest (the default
+  // for a fresh deploy) leaves the SFX pipeline at synth-only, which
+  // is the same behaviour as before this loader existed.
+  initAudioAssets();
   // Gate on beta cohort if the build turned it on. `enforceBetaGate`
   // halts boot and paints a full-page "closed beta" screen when the
   // gate is active and the visitor lacks the cohort token.

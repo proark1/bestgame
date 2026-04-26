@@ -10,6 +10,8 @@
 // see changes immediately (no signal bus needed — the getter reads
 // on every call).
 
+import { playSampleIfAvailable, prewarmAudioAssets } from './audioAssets.js';
+
 const STORAGE_KEY = 'hive.audioSettings';
 
 export interface AudioSettings {
@@ -234,17 +236,43 @@ function chord(args: {
   }
 }
 
+// One-shot prewarm of the audio asset pipeline. Called by the boot
+// path so any registered samples land in the registry before SFX
+// fire. Idempotent — re-call from a hot reload won't double-load.
+export function initAudioAssets(): void {
+  const c = ensureContext();
+  if (!c) return;
+  // Don't await — manifest fetch + decode runs in parallel with
+  // the rest of boot. Until samples land, SFX use the synth body.
+  void prewarmAudioAssets(c);
+}
+
+// Internal dispatcher: play the registered sample for `key` if one
+// exists; return true so the caller can skip its synth body. Mute
+// + missing-context checks happen inside playSampleIfAvailable.
+function playSampleOrSynth(key: string): boolean {
+  if (getSettings().muted) return false;
+  return playSampleIfAvailable(key, ctx, master);
+}
+
 // Public sound vocabulary. Every call is safe from scene code —
 // silent when no AudioContext, silent when muted, silent when the
 // user hasn't gestured yet (since browsers hold off on any audio
-// until they do).
+// until they do). Each function tries a registered sample first
+// (via playSampleOrSynth) and falls back to its synth body when no
+// sample is available — so the codebase ships synth-only today and
+// upgrades to real samples whenever a sound designer drops files
+// in client/public/audio/ with an entry in manifest.json.
 export function sfxClick(): void {
+  if (playSampleOrSynth('click')) return;
   tone({ freq: 640, duration: 0.04, type: 'triangle', gain: 0.22, release: 0.04 });
 }
 export function sfxHover(): void {
+  if (playSampleOrSynth('hover')) return;
   tone({ freq: 820, duration: 0.03, type: 'sine', gain: 0.08, release: 0.03 });
 }
 export function sfxEarn(): void {
+  if (playSampleOrSynth('earn')) return;
   // Two-note "chip" that reads as money coming in. Scheduled on the
   // WebAudio clock so the second note's offset from the first is
   // immune to main-thread jitter / background-tab setTimeout throttling.
@@ -255,10 +283,12 @@ export function sfxEarn(): void {
   tone({ freq: 960, duration: 0.07, type: 'triangle', gain: 0.22, release: 0.08, startTime: now + 0.04 });
 }
 export function sfxUpgrade(): void {
+  if (playSampleOrSynth('upgrade')) return;
   // Upward sweep — generic "level up" feel.
   tone({ freq: 440, sweepTo: 880, duration: 0.22, type: 'triangle', gain: 0.3, release: 0.1 });
 }
 export function sfxVictory(): void {
+  if (playSampleOrSynth('victory')) return;
   // Three ascending notes scheduled on the WebAudio clock so the fanfare
   // stays crisp even if the main thread is busy running the win-card
   // celebration tween at the same moment.
@@ -270,13 +300,16 @@ export function sfxVictory(): void {
   });
 }
 export function sfxDefeat(): void {
+  if (playSampleOrSynth('defeat')) return;
   // Two descending low notes.
   tone({ freq: 220, sweepTo: 140, duration: 0.35, type: 'sawtooth', gain: 0.22, release: 0.2 });
 }
 export function sfxError(): void {
+  if (playSampleOrSynth('error')) return;
   tone({ freq: 200, duration: 0.1, type: 'square', gain: 0.15, release: 0.08 });
 }
 export function sfxNotify(): void {
+  if (playSampleOrSynth('notify')) return;
   tone({ freq: 1080, duration: 0.08, type: 'sine', gain: 0.2, release: 0.1 });
 }
 
@@ -287,6 +320,7 @@ export function sfxNotify(): void {
 // Tones are short and gain-conservative.
 
 export function sfxDeploy(): void {
+  if (playSampleOrSynth('deploy')) return;
   // "Whoof" — descending chirp + a tiny noise puff so the cue lands
   // physical instead of pure-synth. Sweet spot is ~120 ms so the
   // sound clears before the modifier-specific cue 90 ms later.
@@ -301,6 +335,7 @@ export function sfxDeploy(): void {
 }
 
 export function sfxDig(): void {
+  if (playSampleOrSynth('dig')) return;
   // Subterranean thump — fundamental + sub-octave + a low-passed
   // dirt rumble. The sub adds the bass weight that a pure
   // sawtooth can't carry on small phone speakers.
@@ -318,6 +353,7 @@ export function sfxDig(): void {
 }
 
 export function sfxAmbush(): void {
+  if (playSampleOrSynth('ambush')) return;
   // Held tension chord — minor-third pair so the interval reads as
   // unease rather than triumph. Long attack = "the swarm is
   // settling into position".
@@ -330,6 +366,7 @@ export function sfxAmbush(): void {
 }
 
 export function sfxSplit(): void {
+  if (playSampleOrSynth('split')) return;
   // Two-note fork that mimics a pair separating — third interval
   // and inverted attack so the second voice "answers" the first.
   const c = ensureContext();
@@ -342,6 +379,7 @@ export function sfxSplit(): void {
 }
 
 export function sfxModifierTick(): void {
+  if (playSampleOrSynth('modifierTick')) return;
   // Tiny tick when toggling modifier mode — square + a tucked
   // higher harmonic so the click has bite without being loud.
   const c = ensureContext();
@@ -352,6 +390,7 @@ export function sfxModifierTick(): void {
 }
 
 export function sfxBuildingHit(): void {
+  if (playSampleOrSynth('buildingHit')) return;
   // Mid-low thud — short noise burst (the impact body) + a brief
   // square-wave click (the hit transient). Two voices read as a
   // physical impact; a single tone reads as a beep.
@@ -363,6 +402,7 @@ export function sfxBuildingHit(): void {
 }
 
 export function sfxBuildingDestroyed(): void {
+  if (playSampleOrSynth('buildingDestroyed')) return;
   // Heavy crunch — sawtooth fundamental sweep, low sub-octave, and
   // a wide noise burst layered on top so the cue feels like
   // structural collapse rather than a single bass note.
@@ -377,6 +417,7 @@ export function sfxBuildingDestroyed(): void {
 }
 
 export function sfxQueenDestroyed(): void {
+  if (playSampleOrSynth('queenDestroyed')) return;
   // Hero moment — three-note descending fanfare with a fifth
   // interval each, a noise crash on the first hit, and a long
   // ringing tail. Loud, but each voice is conservatively gained
@@ -398,6 +439,7 @@ export function sfxQueenDestroyed(): void {
 }
 
 export function sfxUnitDeath(): void {
+  if (playSampleOrSynth('unitDeath')) return;
   // Tiny puff — sine + a barely-audible noise tail. Throttled at
   // call site so a wipeout can't melt the speaker.
   const c = ensureContext();
