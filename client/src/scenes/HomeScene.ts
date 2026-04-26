@@ -5,6 +5,7 @@ import { crispText } from '../ui/text.js';
 import { openAccountModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
+import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
 import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
@@ -259,24 +260,14 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  // Formats the inside-pill value text. For sugar / leaf, shows the
-  // storage cap as a fraction so the player can see the headroom at a
-  // glance ("5800 / 7300"). Falls back to the raw value when the server
-  // hasn't sent caps yet (e.g. pre-storage server, or the local guest
-  // path with no /me roundtrip). Milk is always raw — uncapped in MVP.
+  // Formats the inside-pill value text. Pills show ONLY the current
+  // wallet number — the cap, income rate, and "next milestone in N
+  // seconds" detail moves to the popover that opens on tap (see
+  // openResourcePopover). Cleaner glance state, full detail on click.
+  // Milk is always raw — uncapped in MVP.
   private formatPillValue(kind: 'sugar' | 'leaf' | 'milk'): string {
-    if (kind === 'sugar') {
-      const cap = this.storageCaps.sugar;
-      return cap !== null
-        ? `${this.resources.sugar} / ${cap}`
-        : `${this.resources.sugar}`;
-    }
-    if (kind === 'leaf') {
-      const cap = this.storageCaps.leaf;
-      return cap !== null
-        ? `${this.resources.leafBits} / ${cap}`
-        : `${this.resources.leafBits}`;
-    }
+    if (kind === 'sugar') return `${this.resources.sugar}`;
+    if (kind === 'leaf') return `${this.resources.leafBits}`;
     // aphidMilk accumulates fractional locally (see update() trickle); we
     // floor for display so the HUD pill stays integer-clean and matches
     // what the server has banked at the last /me roundtrip.
@@ -1365,7 +1356,16 @@ export class HomeScene extends Phaser.Scene {
       kind === 'sugar' ? 'Sugar' :
       kind === 'leaf' ? 'Leaf bits' : 'Aphid milk';
     const lines: string[] = [];
-    lines.push(`Current: ${have}`);
+    // Show cap fraction in the popover (moved out of the pill text
+    // so the HUD glance stays clean). Milk is uncapped.
+    const cap =
+      kind === 'sugar' ? this.storageCaps.sugar :
+      kind === 'leaf' ? this.storageCaps.leaf :
+      null;
+    lines.push(cap !== null ? `Current: ${have} / ${cap}` : `Current: ${have}`);
+    if (cap !== null && have >= cap) {
+      lines.push('At cap — production paused. Upgrade storage or spend resources.');
+    }
     if (rate > 0) {
       lines.push(`Income: +${rate}/sec from ${kind === 'sugar' ? 'Dew Collectors' : 'Larva Nurseries'}`);
       // Quick "how long to 1000" style estimate so players sense
@@ -1935,20 +1935,35 @@ export class HomeScene extends Phaser.Scene {
     let topY = HUD_H + 8;
 
     // Comeback banner — the strongest signal (away 3+ days). Pushed
-    // above everything else.
-    if (ps.streak?.comebackPending) {
+    // above everything else. Dismissible: each appearance is keyed on
+    // the comeback-pending flag transition, so dismissing once doesn't
+    // wipe the next return-from-AFK trigger.
+    if (ps.streak?.comebackPending && !isBannerDismissed('comeback', 'pending')) {
       topY = this.drawComebackBanner(topY, runtime);
     }
 
     // Streak banner — shows current streak day + claim button if
-    // today's reward isn't claimed yet.
-    if (ps.streak && ps.streak.count > 0 && ps.streak.lastClaim < ps.streak.count) {
+    // today's reward isn't claimed yet. Dismissed-key includes the
+    // streak day so dismissing day-3's banner doesn't auto-dismiss
+    // day-4 when it lands tomorrow.
+    if (
+      ps.streak &&
+      ps.streak.count > 0 &&
+      ps.streak.lastClaim < ps.streak.count &&
+      !isBannerDismissed('streak', String(ps.streak.count))
+    ) {
       topY = this.drawStreakBanner(topY, runtime);
     }
 
     // Nemesis ribbon — unavenged loss to an identified opponent.
     // Auto-fetches the full nemesis payload (online-status / name).
-    if (ps.nemesis && !ps.nemesis.avenged) {
+    // Dismiss-key includes the nemesis player id so dismissing Alice
+    // doesn't suppress Bob if a different opponent later 3-stars us.
+    if (
+      ps.nemesis &&
+      !ps.nemesis.avenged &&
+      !isBannerDismissed('nemesis', ps.nemesis.playerId)
+    ) {
       topY = this.drawNemesisRibbon(topY, runtime);
     }
 
@@ -2028,6 +2043,37 @@ export class HomeScene extends Phaser.Scene {
     return topY + h + 8;
   }
 
+  // Small ✕ close button used by every dismissable banner. Persists
+  // the dismissal under (kind, identity) so it survives reloads
+  // until a new banner instance replaces this one.
+  private addBannerCloseButton(
+    panelX: number,
+    panelW: number,
+    panelY: number,
+    kind: string,
+    identity: string,
+  ): void {
+    const cx = panelX + panelW - 16;
+    const cy = panelY + 14;
+    const btn = this.add
+      .text(cx, cy, '✕', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '14px',
+        color: '#e6f5d2',
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(DEPTHS.boardOverlay + 1)
+      .setInteractive({ useHandCursor: true });
+    btn.on('pointerdown', () => {
+      dismissBanner(kind, identity);
+      // Cheapest re-render: scene.restart picks up the new banner
+      // suppression set without us tracking sprite handles per
+      // banner. Same pattern claimStreak / claimComeback already
+      // use after a successful claim.
+      this.scene.restart();
+    });
+  }
+
   private drawComebackBanner(topY: number, runtime: HiveRuntime): number {
     const maxW = Math.min(520, this.scale.width - 24);
     const x = (this.scale.width - maxW) / 2;
@@ -2057,6 +2103,7 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => { void this.claimComeback(runtime); },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'comeback', 'pending');
     void bg;
     return topY + h + 10;
   }
@@ -2109,6 +2156,7 @@ export class HomeScene extends Phaser.Scene {
       onPress: () => { void this.claimStreak(runtime); },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'streak', String(ps.streak.count));
     return topY + h + 8;
   }
 
@@ -2167,6 +2215,7 @@ export class HomeScene extends Phaser.Scene {
       },
     });
     btn.container.setDepth(DEPTHS.boardOverlay);
+    this.addBannerCloseButton(x, maxW, topY, 'nemesis', ps.nemesis.playerId);
     return topY + h + 8;
   }
 
