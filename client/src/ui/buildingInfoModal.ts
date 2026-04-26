@@ -109,18 +109,19 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
 
   const root = scene.add.container(0, 0).setDepth(DEPTHS.resultCard);
 
-  // Dim backdrop — tap anywhere OUTSIDE the card closes. Previously
-  // the backdrop covered the whole screen and any click on empty
-  // card chrome (title text, stat rows, gaps between buttons) fell
-  // through to the backdrop's pointerdown and closed the modal —
-  // not what the user expects. Check coordinates against the card
-  // rect so only true "outside" clicks dismiss.
+  // Dim backdrop — visual only, NOT interactive. Previously the
+  // backdrop intercepted every click outside the card, which blocked
+  // HUD nav (account chip, burger, footer buttons) until the user
+  // explicitly closed the modal first. Leaving the backdrop non-
+  // interactive lets clicks fall through to whichever HUD element
+  // sits underneath, so the user can switch between menus mid-modal
+  // without an extra dismiss step. The outside-click-to-close
+  // behaviour is moved to a scene-level pointerdown listener below.
   const cx = (W - MODAL_W) / 2;
   const cy = (H - MODAL_H) / 2;
   const backdrop = scene.add
     .rectangle(0, 0, W, H, 0x000000, 0.62)
-    .setOrigin(0, 0)
-    .setInteractive();
+    .setOrigin(0, 0);
   root.add(backdrop);
 
   // Modal card. Reuses the result-card palette for visual coherence
@@ -161,6 +162,12 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
     e?.stopPropagation?.();
   });
 
+  // Mark the scene as "modal active" so HomeScene's wireBoardTap can
+  // skip empty-tile picker / pan gestures while this modal is open
+  // and during a short grace window after it closes. Without this
+  // gate, a tap on an empty tile that's intended to dismiss the modal
+  // also opens the building picker for that tile — confusing UX.
+  scene.data.set('modalActive', true);
   const close = (): void => {
     // Stop the countdown ticker before tearing down — it holds a
     // reference into bodyContainer's children that would otherwise
@@ -169,18 +176,28 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       activeCountdownTicker.remove();
       activeCountdownTicker = null;
     }
+    scene.input.off('pointerdown', onScenePointerDown);
+    scene.data.set('modalActive', false);
+    // Scene-time grace window so the same pointerdown that closed the
+    // modal can't immediately re-trigger a board interaction (picker
+    // open, pan start) on its matching pointerup. HomeScene reads
+    // this timestamp in wireBoardTap.
+    scene.data.set('modalClosedAt', scene.time.now);
     root.destroy(true);
   };
-  // Only close if the click actually fell through to the backdrop
-  // (i.e. the card-hit zone above didn't consume it). Coordinate
-  // check is belt-and-braces for any Phaser edge case where both
-  // receive the event.
-  backdrop.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+  // Outside-click-to-close listens at the scene level so it fires for
+  // BOTH clicks on bare canvas AND clicks that land on a HUD button
+  // (Phaser's scene pointerdown fires for every input regardless of
+  // which interactive object captured it). The card itself swallows
+  // the event via cardHit.stopPropagation() below, so clicking the
+  // card body never triggers this dismiss.
+  const onScenePointerDown = (pointer: Phaser.Input.Pointer): void => {
     const insideCard =
       pointer.x >= cx && pointer.x <= cx + MODAL_W &&
       pointer.y >= cy && pointer.y <= cy + MODAL_H;
     if (!insideCard) close();
-  });
+  };
+  scene.input.on('pointerdown', onScenePointerDown);
 
   // Header: kind label + level pill. Re-rendered on upgrade so we
   // wrap everything after the backdrop inside a `body` container we
