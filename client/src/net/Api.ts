@@ -333,6 +333,23 @@ export class Api {
     return (await res.json()) as PlaceBuildingResponse;
   }
 
+  // 5-second placement undo. Returns the refunded cost so the
+  // client can flash a "↶ +N sugar refunded" toast. Throws if the
+  // window has elapsed or the building doesn't exist.
+  async undoPlacement(buildingId: string): Promise<{
+    ok: true;
+    base: Types.Base;
+    player: { sugar: number; leafBits: number; aphidMilk: number };
+    refunded: { sugar: number; leafBits: number; aphidMilk: number };
+  }> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(buildingId)}/undo-placement`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'undo-placement');
+    return (await res.json()) as Awaited<ReturnType<Api['undoPlacement']>>;
+  }
+
   async moveBuilding(args: {
     buildingId: string;
     anchor: { x: number; y: number; layer: Types.Layer };

@@ -3338,9 +3338,114 @@ export class HomeScene extends Phaser.Scene {
       this.boardContainer.removeAll(true);
       this.drawBoard();
       this.drawBuildings();
-      this.flashToast(`Placed ${kind}`);
+      // 5-second undo affordance. Server stamped placedAt on the
+      // placement; the matching /undo-placement endpoint enforces
+      // the window. We just have to surface the button + tear it
+      // down on timeout. Pulled the new id out of the response so
+      // the undo call hits the right row.
+      const newBuilding = res.base.buildings.find(
+        (b) => b.kind === kind &&
+               b.anchor.x === tx &&
+               b.anchor.y === ty &&
+               b.anchor.layer === this.layer,
+      );
+      if (newBuilding) {
+        this.showUndoPlacement(newBuilding.id, kind);
+      } else {
+        this.flashToast(`Placed ${kind}`);
+      }
     } catch (err) {
       this.flashToast((err as Error).message);
+    }
+  }
+
+  // 5-second "↶ Undo" banner anchored top-center. Counts down each
+  // second; tap calls /undo-placement which refunds the cost. On
+  // success we patch runtime state + re-render. On expiry we tear
+  // down the banner and just flash a "Placed X" toast like before.
+  private undoBanner: Phaser.GameObjects.Container | null = null;
+  private undoTimer: Phaser.Time.TimerEvent | null = null;
+  private showUndoPlacement(buildingId: string, kind: Types.BuildingKind): void {
+    if (this.undoBanner) {
+      this.undoBanner.destroy(true);
+      this.undoBanner = null;
+    }
+    if (this.undoTimer) {
+      this.undoTimer.destroy();
+      this.undoTimer = null;
+    }
+    const w = 280;
+    const h = 36;
+    const x = (this.scale.width - w) / 2;
+    const y = HUD_H + 4;
+    const panel = this.add.container(0, 0).setDepth(DEPTHS.toast);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1a2b1a, 0.96);
+    bg.lineStyle(2, COLOR.brassDeep, 1);
+    bg.fillRoundedRect(x, y, w, h, 10);
+    bg.strokeRoundedRect(x, y, w, h, 10);
+    const labelText = crispText(this, x + 12, y + h / 2,
+      `Placed ${kind}`,
+      bodyTextStyle(12, COLOR.textOnDark)).setOrigin(0, 0.5);
+    const undoBtn = crispText(this, x + w - 12, y + h / 2,
+      '↶ Undo (5s)',
+      labelTextStyle(11, COLOR.textGold))
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    panel.add([bg, labelText, undoBtn]);
+    this.undoBanner = panel;
+    let secondsLeft = 5;
+    undoBtn.on('pointerdown', () => { void this.commitUndoPlacement(buildingId); });
+    this.undoTimer = this.time.addEvent({
+      delay: 1000,
+      repeat: 4,
+      callback: () => {
+        secondsLeft--;
+        if (secondsLeft <= 0) {
+          this.tearDownUndoBanner();
+        } else {
+          undoBtn.setText(`↶ Undo (${secondsLeft}s)`);
+        }
+      },
+    });
+  }
+
+  private tearDownUndoBanner(): void {
+    if (this.undoBanner) {
+      this.undoBanner.destroy(true);
+      this.undoBanner = null;
+    }
+    if (this.undoTimer) {
+      this.undoTimer.destroy();
+      this.undoTimer = null;
+    }
+  }
+
+  private async commitUndoPlacement(buildingId: string): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    this.tearDownUndoBanner();
+    try {
+      const r = await runtime.api.undoPlacement(buildingId);
+      if (runtime.player) {
+        runtime.player.base = r.base;
+        runtime.player.player.sugar = r.player.sugar;
+        runtime.player.player.leafBits = r.player.leafBits;
+        runtime.player.player.aphidMilk = r.player.aphidMilk;
+      }
+      this.serverBase = r.base;
+      this.resources = {
+        sugar: r.player.sugar,
+        leafBits: r.player.leafBits,
+        aphidMilk: r.player.aphidMilk,
+      };
+      this.refreshResourcePills();
+      this.boardContainer.removeAll(true);
+      this.drawBoard();
+      this.drawBuildings();
+      this.flashToast(`Refunded ${r.refunded.sugar} sugar / ${r.refunded.leafBits} leaf`);
+    } catch (err) {
+      this.flashToast(`Undo failed: ${(err as Error).message}`);
     }
   }
 

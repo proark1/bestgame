@@ -91,6 +91,11 @@ const INCOME_PER_SECOND: Partial<
 // doesn't flood the economy.
 const MAX_OFFLINE_SECONDS = 60 * 60 * 8;
 
+// 5-second window after placement during which the player can press
+// "↶ Undo" to refund the placement cost. Exposed as a constant so a
+// future tweak (3 s? 10 s?) is one line.
+const UNDO_WINDOW_MS = 5_000;
+
 interface PlayerRow {
   id: string;
   display_name: string;
@@ -764,6 +769,11 @@ export function registerPlayer(app: FastifyInstance): void {
         level: 1,
         hp: defaults.hp,
         hpMax: defaults.hp,
+        // Stamp the placement timestamp so /undo-placement can
+        // enforce the 5-second window. Existing buildings without
+        // this field simply can't be undone, which matches pre-
+        // feature behaviour.
+        placedAt: new Date().toISOString(),
         ...(defaults.spans ? { spans: defaults.spans } : {}),
       };
       const updatedBase: Types.Base = {
@@ -888,6 +898,114 @@ export function registerPlayer(app: FastifyInstance): void {
         app.log.error({ err }, 'player/building DELETE failed');
         reply.code(500);
         return { error: 'delete failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/player/building/:id/undo-placement — 5-second undo
+  // window after placement. Validates the building was placed within
+  // UNDO_WINDOW_MS, removes it from the base snapshot, and refunds
+  // the placement cost. Out-of-window calls return 410 (gone) so
+  // the client can hide its Undo button immediately on the next
+  // round-trip.
+  app.post<{ Params: { id: string } }>(
+    '/player/building/:id/undo-placement',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const id = req.params.id;
+      if (!/^b-[0-9a-f]{12}$/.test(id)) {
+        reply.code(400);
+        return { error: 'bad building id' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === id);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        if (!target.placedAt) {
+          // Building predates the placedAt column — can't be undone.
+          await client.query('ROLLBACK');
+          reply.code(410);
+          return { error: 'undo window has elapsed' };
+        }
+        const placedMs = Date.parse(target.placedAt);
+        const ageMs = Date.now() - placedMs;
+        if (!Number.isFinite(placedMs) || ageMs < 0 || ageMs > UNDO_WINDOW_MS) {
+          await client.query('ROLLBACK');
+          reply.code(410);
+          return { error: 'undo window has elapsed' };
+        }
+        const cost = BUILDING_PLACEMENT_COSTS[target.kind];
+        if (!cost) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'no refund cost for this kind' };
+        }
+        // Snapshot mutate: drop the building.
+        const next: Types.Base = {
+          ...base,
+          buildings: base.buildings.filter((b) => b.id !== id),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          'UPDATE bases SET snapshot = $2::jsonb, version = version + 1, updated_at = NOW() WHERE player_id = $1',
+          [playerId, JSON.stringify(next)],
+        );
+        // Refund. Sugar/leaf are bigint columns; pass as string-
+        // safe positive integers. total_invested is decremented so
+        // colony rank stays honest about lifetime spend.
+        const refundRes = await client.query<{
+          sugar: string;
+          leaf_bits: string;
+          aphid_milk: string;
+        }>(
+          `UPDATE players
+              SET sugar = sugar + $2,
+                  leaf_bits = leaf_bits + $3,
+                  aphid_milk = aphid_milk + $4,
+                  total_invested = GREATEST(0, total_invested - ($2 + $3 + $4))
+            WHERE id = $1
+        RETURNING sugar, leaf_bits, aphid_milk`,
+          [playerId, cost.sugar, cost.leafBits, cost.aphidMilk],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          base: next,
+          player: {
+            sugar: safeBigintToNumber(refundRes.rows[0]!.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(refundRes.rows[0]!.leaf_bits, 'leaf_bits', app.log),
+            aphidMilk: safeBigintToNumber(refundRes.rows[0]!.aphid_milk, 'aphid_milk', app.log),
+          },
+          refunded: cost,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'undo-placement failed');
+        reply.code(500);
+        return { error: 'undo failed' };
       } finally {
         client.release();
       }
