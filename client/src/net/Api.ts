@@ -909,6 +909,34 @@ export class Api {
     return (await res.json()) as Awaited<ReturnType<Api['replayUpvote']>>;
   }
 
+  async replayComments(
+    id: string,
+    afterId = 0,
+    limit = 30,
+  ): Promise<{ comments: ReplayComment[] }> {
+    const q = new URLSearchParams();
+    if (afterId > 0) q.set('afterId', String(afterId));
+    if (limit !== 30) q.set('limit', String(limit));
+    const path = `/replay/${encodeURIComponent(id)}/comments`;
+    const url = q.toString() ? `${path}?${q.toString()}` : path;
+    const res = await this.authedFetch(url);
+    if (!res.ok) throw await errorFromResponse(res, 'replay/comments');
+    return (await res.json()) as { comments: ReplayComment[] };
+  }
+
+  async replayCommentPost(
+    id: string,
+    content: string,
+  ): Promise<{ ok: true; comment: ReplayComment }> {
+    const res = await this.authedFetch(`/replay/${encodeURIComponent(id)}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'replay/comments POST');
+    return (await res.json()) as { ok: true; comment: ReplayComment };
+  }
+
   // ---- Stickiness: clan war target ------------------------------------
   async warFindTarget(): Promise<WarTargetResponse | null> {
     const res = await this.authedFetch('/clan/war/find-target', { method: 'POST' });
@@ -1274,7 +1302,18 @@ export interface ReplayFeedEntry {
   replayName: string;
   viewCount: number;
   upvoteCount: number;
+  // Optional so older servers (before migrations/0019) keep loading.
+  // The client treats absent as zero so the badge just doesn't render.
+  commentCount?: number;
   hasMyUpvote: boolean;
+  createdAt: string;
+}
+
+export interface ReplayComment {
+  id: number;
+  authorId: string;
+  authorName: string;
+  content: string;
   createdAt: string;
 }
 export interface ReplayFeedResponse {

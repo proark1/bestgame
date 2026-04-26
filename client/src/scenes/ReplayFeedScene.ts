@@ -172,9 +172,17 @@ export class ReplayFeedScene extends Phaser.Scene {
     });
     this.body.container.add(wBtn.container);
 
+    // Footer line — view count + comment count side-by-side. Comment
+    // count is optional (older servers omit it); render the 💬 badge
+    // only when positive so we don't show a misleading "💬 0" on a
+    // backend that doesn't support comments yet.
+    const viewLabel = `${e.viewCount} views`;
+    const footer = (e.commentCount ?? 0) > 0
+      ? `${viewLabel}   💬 ${e.commentCount}`
+      : viewLabel;
     this.body.container.add(
       crispText(this, originX + 14, y + h - 14,
-        `${e.viewCount} views`,
+        footer,
         bodyTextStyle(10, COLOR.textMuted),
       ),
     );

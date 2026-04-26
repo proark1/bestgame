@@ -50,6 +50,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
       replay_name: string | null;
       view_count: number;
       upvote_count: number;
+      comment_count: number;
       created_at: Date;
       has_my_upvote: boolean;
     }>(
@@ -59,6 +60,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
               ap.trophies     AS attacker_trophies,
               r.stars, r.sugar_looted, r.replay_name,
               r.view_count, r.upvote_count,
+              r.comment_count,
               r.created_at,
               EXISTS(
                 SELECT 1 FROM replay_upvotes u
@@ -86,6 +88,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
         replayName: r.replay_name ?? 'Unnamed Raid',
         viewCount: r.view_count,
         upvoteCount: r.upvote_count,
+        commentCount: r.comment_count ?? 0,
         hasMyUpvote: r.has_my_upvote,
         createdAt: r.created_at.toISOString(),
       })),
@@ -117,6 +120,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
       replay_name: string | null;
       view_count: number;
       upvote_count: number;
+      comment_count: number;
       created_at: Date;
       attacker_name: string | null;
       defender_name: string | null;
@@ -124,6 +128,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
       `SELECT r.id, r.attacker_id, r.defender_id, r.seed,
               r.base_snapshot, r.inputs, r.result, r.stars,
               r.replay_name, r.view_count, r.upvote_count,
+              r.comment_count,
               r.created_at,
               ap.display_name AS attacker_name,
               dp.display_name AS defender_name
@@ -149,6 +154,7 @@ export function registerReplayFeed(app: FastifyInstance): void {
         replayName: r.replay_name ?? 'Unnamed Raid',
         viewCount: r.view_count,
         upvoteCount: r.upvote_count,
+        commentCount: r.comment_count ?? 0,
         createdAt: r.created_at.toISOString(),
         attackerId: r.attacker_id,
         attackerName: r.attacker_name ?? 'Unknown',
@@ -323,4 +329,137 @@ export function registerReplayFeed(app: FastifyInstance): void {
       client.release();
     }
   });
+
+  // GET /api/replay/:id/comments — list comments on a replay, oldest
+  // first (chat-style flow). Pagination is forward-only via the
+  // `afterId` cursor so the client can poll for new entries cheaply
+  // without re-fetching the full thread.
+  app.get<{ Params: { id: string }; Querystring: { afterId?: string; limit?: string } }>(
+    '/replay/:id/comments',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const limit = Math.max(
+        1,
+        Math.min(MAX_COMMENT_FETCH, Number(req.query?.limit) || 30),
+      );
+      const afterId = Number(req.query?.afterId) || 0;
+      const res = await pool.query<{
+        id: string;
+        author_id: string;
+        author_name: string | null;
+        content: string;
+        created_at: Date;
+      }>(
+        `SELECT c.id, c.author_id, p.display_name AS author_name,
+                c.content, c.created_at
+           FROM replay_comments c
+           LEFT JOIN players p ON p.id = c.author_id
+          WHERE c.raid_id = $1
+            AND ($2::bigint = 0 OR c.id > $2::bigint)
+          ORDER BY c.id ASC
+          LIMIT $3`,
+        [req.params.id, afterId, limit],
+      );
+      return {
+        comments: res.rows.map((c) => ({
+          id: Number(c.id),
+          authorId: c.author_id,
+          authorName: c.author_name ?? 'Unknown',
+          content: c.content,
+          createdAt: c.created_at.toISOString(),
+        })),
+      };
+    },
+  );
+
+  // POST /api/replay/:id/comments — append a comment. Rate-limited per
+  // author (1 / sec, mirrors /clan/message) and content is validated
+  // for length + control-char hygiene. The comment_count roll-up on
+  // raids is maintained by the trigger in migration 0019.
+  app.post<{ Params: { id: string }; Body: { content?: string } }>(
+    '/replay/:id/comments',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const validated = validateCommentContent(req.body?.content);
+      if ('error' in validated) {
+        reply.code(400);
+        return { error: validated.error };
+      }
+      // Rate limit: author can post at most one comment per second
+      // anywhere. Cheap to check at the route layer; per-replay
+      // throttling can land later if spam becomes a real problem.
+      const recent = await pool.query<{ created_at: Date }>(
+        `SELECT created_at FROM replay_comments
+          WHERE author_id = $1::uuid
+          ORDER BY id DESC
+          LIMIT 1`,
+        [playerId],
+      );
+      if (recent.rows.length > 0) {
+        const sinceMs = Date.now() - recent.rows[0]!.created_at.getTime();
+        if (sinceMs < MIN_MS_BETWEEN_COMMENTS) {
+          reply.code(429);
+          return { error: 'slow down — wait a moment between comments' };
+        }
+      }
+      const exists = await pool.query<{ id: string }>(
+        'SELECT id FROM raids WHERE id = $1',
+        [req.params.id],
+      );
+      if (exists.rows.length === 0) {
+        reply.code(404);
+        return { error: 'replay not found' };
+      }
+      const ins = await pool.query<{ id: string; created_at: Date }>(
+        `INSERT INTO replay_comments (raid_id, author_id, content)
+         VALUES ($1, $2::uuid, $3)
+         RETURNING id, created_at`,
+        [req.params.id, playerId, validated.content],
+      );
+      return {
+        ok: true,
+        comment: {
+          id: Number(ins.rows[0]!.id),
+          authorId: playerId,
+          content: validated.content,
+          createdAt: ins.rows[0]!.created_at.toISOString(),
+        },
+      };
+    },
+  );
+}
+
+// Comment-content validator — exported for unit tests so the rules
+// (length cap + control-char strip) are pinned without spinning up
+// the route. Mirrors sanitizeChat in clan.ts but stays local here so
+// the two surfaces evolve independently.
+const MAX_COMMENT_LEN = 280;
+const MIN_MS_BETWEEN_COMMENTS = 1000;
+const MAX_COMMENT_FETCH = 100;
+
+export function validateCommentContent(
+  raw: unknown,
+): { content: string } | { error: string } {
+  if (typeof raw !== 'string') return { error: 'content required' };
+  // Strip ASCII control chars; collapse whitespace; trim. Mirrors the
+  // clan-chat sanitiser. Keeps unicode letters + emoji.
+  const cleaned = raw
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_COMMENT_LEN);
+  if (cleaned.length === 0) return { error: 'content cannot be empty' };
+  return { content: cleaned };
 }
