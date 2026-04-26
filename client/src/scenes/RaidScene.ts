@@ -295,6 +295,18 @@ export class RaidScene extends Phaser.Scene {
   // to die), and should freeze on the rest frame instead of jogging
   // in place. Cleared when the unit dies.
   private unitLastPos = new Map<number, { x: number; y: number }>();
+  // Previous-frame layer for each live unit. Used to detect the moment
+  // a `dig` modifier flips a unit between surface (0) and underground
+  // (1) so renderFrame can play the cinematic dive/emerge animation.
+  private unitLastLayer = new Map<number, Types.Layer>();
+  // Set of unit ids currently mid-dive — their sprite is hidden/shrunk
+  // and we shouldn't apply normal tinting on them this frame. Cleared
+  // when the emerge tween finishes.
+  private unitDigPlaying = new Set<number>();
+  // HUD badges showing the live count of attacker units per layer.
+  // Drawn in drawHud(), updated in renderFrame().
+  private layerBadgeSurface!: Phaser.GameObjects.Text;
+  private layerBadgeUnderground!: Phaser.GameObjects.Text;
   // Populated from GET /api/settings/animation at scene create.
   // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
   // (this Record has it set to true) AND (the walk texture loaded).
@@ -410,6 +422,8 @@ export class RaidScene extends Phaser.Scene {
     this.unitSprites.clear();
     this.unitLastHp.clear();
     this.unitLastPos.clear();
+    this.unitLastLayer.clear();
+    this.unitDigPlaying.clear();
     this.deploymentUnitCounts.clear();
     this.animationEnabled = {};
     // Fetch admin toggles without blocking scene start. By the time the
@@ -609,6 +623,25 @@ export class RaidScene extends Phaser.Scene {
         color: '#ffd98a',
       })
       .setOrigin(0.5);
+
+    // Layer activity badges. Live counters showing how many of the
+    // attacker's units are on each layer right now. Drawn dim by
+    // default and brighten when the corresponding layer is active.
+    // Positioned to the immediate left of the timer in layout().
+    this.layerBadgeSurface = this.add
+      .text(0, 0, '☼ 0', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#9fc79a',
+      })
+      .setOrigin(1, 0.5);
+    this.layerBadgeUnderground = this.add
+      .text(0, 0, '⛏ 0', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#9fc79a',
+      })
+      .setOrigin(1, 0.5);
 
     this.starsText = this.add
       .text(this.scale.width - 16, HUD_H / 2 - 10, '★ 0', {
@@ -1643,6 +1676,19 @@ export class RaidScene extends Phaser.Scene {
     // Clear per-tick deployment counters to prevent memory leaks in long sessions.
     this.deploymentUnitCounts.clear();
 
+    // Pre-pass: tally where the attacker actually is right now. Used
+    // both for the HUD layer badges (set later in the units pass) and
+    // for the underground-reveal building tint computed below.
+    let preSurface = 0;
+    let preUnder = 0;
+    for (const u of this.state.units) {
+      if (u.owner !== 0 || u.hp <= 0) continue;
+      if (u.layer === 0) preSurface++;
+      else preUnder++;
+    }
+    const attackerOnLayer1 = preUnder > 0;
+    const attackerOnLayer0 = preSurface > 0;
+
     // Buildings: update HP bars and fade destroyed ones.
     for (const b of this.state.buildings) {
       const spr = this.buildingSprites.get(b.id);
@@ -1707,6 +1753,23 @@ export class RaidScene extends Phaser.Scene {
       if (b.hp < prevHp) {
         spr.setTint(0xffe799);
         this.time.delayedCall(70, () => spr.clearTint());
+      } else {
+        // Layer-active reveal: a building on the attacker's CURRENT
+        // layer reads as "in play" — full alpha, no tint. A building
+        // on the inactive layer dims so the player understands it's
+        // out of reach without a dig. Cross-layer buildings (`spans`
+        // includes both) always read as in-play.
+        const spansBoth = !!(b.spans && b.spans.includes(0) && b.spans.includes(1));
+        const layerActive =
+          spansBoth ||
+          (b.layer === 0 && attackerOnLayer0) ||
+          (b.layer === 1 && attackerOnLayer1);
+        if (preSurface === 0 && preUnder === 0) {
+          // Pre-deploy: keep all buildings visible at default alpha.
+          spr.setAlpha(1);
+        } else {
+          spr.setAlpha(layerActive ? 1 : 0.55);
+        }
       }
       this.buildingLastHp.set(b.id, b.hp);
       const hpFrac = Math.max(0, Math.min(1, b.hp / b.hpMax));
@@ -1721,8 +1784,14 @@ export class RaidScene extends Phaser.Scene {
 
     // Units: sync sprites to sim positions; puff the shared trail emitter.
     const alive = new Set<number>();
+    let surfaceCount = 0;
+    let undergroundCount = 0;
     for (const u of this.state.units) {
       alive.add(u.id);
+      if (u.owner === 0) {
+        if (u.layer === 0) surfaceCount++;
+        else undergroundCount++;
+      }
       let spr = this.unitSprites.get(u.id);
       const x = Sim.toFloat(u.x) * TILE;
       const y = Sim.toFloat(u.y) * TILE;
@@ -1730,6 +1799,7 @@ export class RaidScene extends Phaser.Scene {
         spr = this.makeUnitSprite(u.kind, x, y);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
+        this.unitLastLayer.set(u.id, u.layer);
         // Entry animation: only animate attacker units sliding in from their
         // spawn edge. Defender units (spawned by buildings) don't animate.
         if (u.owner === 0) {
@@ -1741,6 +1811,16 @@ export class RaidScene extends Phaser.Scene {
       } else {
         spr.setPosition(x, y);
       }
+      // Layer transition: a `dig` modifier just flipped this unit's
+      // layer. Play the dive/emerge animation, mark it mid-dive so the
+      // tint and alpha logic below leaves it alone, and queue it to
+      // clear when the emerge tween completes.
+      const prevLayer = this.unitLastLayer.get(u.id);
+      if (prevLayer !== undefined && prevLayer !== u.layer) {
+        this.playDigAnimation(spr, x, y, u.layer);
+        this.unitDigPlaying.add(u.id);
+      }
+      this.unitLastLayer.set(u.id, u.layer);
 
       // Movement-gated animation. For walk-cycle Sprites (not plain
       // Images), play the animation only while the unit has actually
@@ -1777,7 +1857,11 @@ export class RaidScene extends Phaser.Scene {
         }
       }
       const hpFrac = Math.max(0, Math.min(1, u.hp / u.hpMax));
-      spr.setAlpha(0.35 + 0.65 * hpFrac);
+      // While a dig animation is playing, leave alpha to the tween.
+      // Otherwise apply the standard hp-based fade.
+      if (!this.unitDigPlaying.has(u.id)) {
+        spr.setAlpha(0.35 + 0.65 * hpFrac);
+      }
       // Hit flash for units — same logic as buildings, keyed on a
       // side Map of last-seen hp. Cheap: one Map lookup + one
       // comparison per live unit per frame.
@@ -1789,6 +1873,16 @@ export class RaidScene extends Phaser.Scene {
           // if the unit died within 60ms of the hit; guard before touch.
           if (this.unitSprites.get(u.id) === spr) spr.clearTint();
         });
+      } else if (!this.unitDigPlaying.has(u.id)) {
+        // Layer tint: underground attacker units carry a cool blue
+        // wash so they read as "below the surface" at a glance. Only
+        // apply when no other tint (hit flash) is active. Defender
+        // units never live on layer 1 today, so this is attacker-only.
+        if (u.owner === 0 && u.layer === 1) {
+          spr.setTint(0xa8c6ff);
+        } else {
+          spr.clearTint();
+        }
       }
       this.unitLastHp.set(u.id, u.hp);
       // Emit one tiny pheromone puff at the unit's feet every ~5 frames.
@@ -1806,8 +1900,83 @@ export class RaidScene extends Phaser.Scene {
         this.unitSprites.delete(id);
         this.unitLastHp.delete(id);
         this.unitLastPos.delete(id);
+        this.unitLastLayer.delete(id);
+        this.unitDigPlaying.delete(id);
       }
     }
+
+    // Layer activity badges. Surface count brightens to gold when
+    // anyone is up top; underground dims to a cool teal otherwise.
+    if (this.layerBadgeSurface) {
+      this.layerBadgeSurface.setText(`☼ ${surfaceCount}`);
+      this.layerBadgeSurface.setColor(surfaceCount > 0 ? '#ffd98a' : '#54663f');
+    }
+    if (this.layerBadgeUnderground) {
+      this.layerBadgeUnderground.setText(`⛏ ${undergroundCount}`);
+      this.layerBadgeUnderground.setColor(undergroundCount > 0 ? '#a8c6ff' : '#3a4a55');
+    }
+  }
+
+  // Dive/emerge animation played the moment a unit's layer flips
+  // mid-raid (only the new `dig` path modifier triggers this today).
+  // Tween the sprite down to a flat ellipse with falling alpha — that
+  // reads as "burrowing into the ground" — then snap back and reverse
+  // it for the emerge half. A dirt-puff is spawned at start and end so
+  // there's a satisfying physical anchor on both sides of the flip.
+  private playDigAnimation(
+    spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+    x: number,
+    y: number,
+    newLayer: Types.Layer,
+  ): void {
+    const baseScaleX = spr.scaleX;
+    const baseScaleY = spr.scaleY;
+    // Dirt burst at the dig site — 8 particles for visual weight.
+    this.spawnDebrisBurst(x, y + 2, 8);
+    // Subtle camera nudge so the moment lands.
+    this.cameras.main.shake(140, 0.0035);
+    this.tweens.killTweensOf(spr);
+    this.tweens.add({
+      targets: spr,
+      scaleY: baseScaleY * 0.18,
+      scaleX: baseScaleX * 1.18,
+      alpha: 0,
+      duration: 180,
+      ease: 'Sine.easeIn',
+      onComplete: () => {
+        // Mid-flip puff at the same spot — the world below is now in
+        // play. Apply the new-layer tint immediately so the emerge
+        // tween reveals the unit in its new colour.
+        this.spawnDebrisBurst(x, y + 2, 6);
+        if (this.unitSprites.has(this.unitIdForSprite(spr) ?? -1)) {
+          spr.setTint(newLayer === 1 ? 0xa8c6ff : 0xffffff);
+          if (newLayer === 0) spr.clearTint();
+        }
+        this.tweens.add({
+          targets: spr,
+          scaleY: baseScaleY,
+          scaleX: baseScaleX,
+          alpha: 1,
+          duration: 200,
+          ease: 'Sine.easeOut',
+          onComplete: () => {
+            const id = this.unitIdForSprite(spr);
+            if (id !== null) this.unitDigPlaying.delete(id);
+          },
+        });
+      },
+    });
+  }
+
+  // Reverse-lookup unit id from a sprite. Cheap enough at sim scale
+  // (≤30 units) that a Map walk beats maintaining a parallel index.
+  private unitIdForSprite(
+    spr: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+  ): number | null {
+    for (const [id, candidate] of this.unitSprites) {
+      if (candidate === spr) return id;
+    }
+    return null;
   }
 
   // Small debris / hit-burst emitter. Reuses the trail-dot texture so
@@ -2443,6 +2612,13 @@ export class RaidScene extends Phaser.Scene {
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
+    // Layer badges sit immediately to the left of the centred timer.
+    if (this.layerBadgeSurface) {
+      this.layerBadgeSurface.setPosition(this.scale.width / 2 - 60, HUD_H / 2 - 10);
+    }
+    if (this.layerBadgeUnderground) {
+      this.layerBadgeUnderground.setPosition(this.scale.width / 2 - 60, HUD_H / 2 + 10);
+    }
 
     const trayTop = this.scale.height - deckLayout.trayHeight - 12;
     this.deckTrayBg.clear();
