@@ -20,6 +20,7 @@ import { ClanWarsScene } from './scenes/ClanWarsScene.js';
 import { ReplayFeedScene } from './scenes/ReplayFeedScene.js';
 import { QueenSkinScene } from './scenes/QueenSkinScene.js';
 import { BuilderQueueScene } from './scenes/BuilderQueueScene.js';
+import { ProgressionScene } from './scenes/ProgressionScene.js';
 import { PrologueScene } from './scenes/PrologueScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
@@ -173,6 +174,7 @@ async function main(): Promise<void> {
       new ReplayFeedScene(),
       new QueenSkinScene(),
       new BuilderQueueScene(),
+      new ProgressionScene(),
       new PrologueScene(),
     ],
   });
