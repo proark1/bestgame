@@ -843,6 +843,69 @@ function drawUi(scene: Phaser.Scene, key: string): void {
         g.fillStyle(0xffffff, 0.6);
         g.fillEllipse(UI_SIZE / 2 - 10, UI_SIZE / 2 - 10, 14, 8);
         break;
+      // Per-resource harvest chips. Drawn smaller than the
+      // resource pills (these float over a producer building, not
+      // anchored in the HUD) and palette-tinted to match the
+      // resource the chip claims.
+      case 'ui-harvest-sugar': {
+        // Honey jar silhouette + cap + sugar crystal on top.
+        const cx = UI_SIZE / 2;
+        const cy = UI_SIZE / 2 + 4;
+        g.lineStyle(OUTLINE_W, OUTLINE, 1);
+        g.fillStyle(0xffd97a, 1);
+        g.fillRoundedRect(cx - 18, cy - 16, 36, 32, 6);
+        g.strokeRoundedRect(cx - 18, cy - 16, 36, 32, 6);
+        // Cap
+        g.fillStyle(0xb87333, 1);
+        g.fillRoundedRect(cx - 14, cy - 24, 28, 10, 3);
+        g.strokeRoundedRect(cx - 14, cy - 24, 28, 10, 3);
+        // Crystal chip
+        g.fillStyle(0xfff2b8, 1);
+        g.fillTriangle(cx, cy - 32, cx - 6, cy - 22, cx + 6, cy - 22);
+        g.strokeTriangle(cx, cy - 32, cx - 6, cy - 22, cx + 6, cy - 22);
+        break;
+      }
+      case 'ui-harvest-leaf': {
+        // Three-leaf bundle tied with a gold cord.
+        const cx = UI_SIZE / 2;
+        const cy = UI_SIZE / 2 + 4;
+        g.lineStyle(OUTLINE_W, OUTLINE, 1);
+        g.fillStyle(0x6cd47e, 1);
+        // Center leaf
+        g.fillEllipse(cx, cy - 6, 18, 26);
+        g.strokeEllipse(cx, cy - 6, 18, 26);
+        // Side leaves
+        g.fillStyle(0x5ba445, 1);
+        g.fillEllipse(cx - 12, cy, 14, 22);
+        g.strokeEllipse(cx - 12, cy, 14, 22);
+        g.fillEllipse(cx + 12, cy, 14, 22);
+        g.strokeEllipse(cx + 12, cy, 14, 22);
+        // Gold cord
+        g.lineStyle(3, 0xd4af37, 1);
+        g.strokeCircle(cx, cy + 12, 8);
+        break;
+      }
+      case 'ui-harvest-milk': {
+        // Sealed clay phial with pearl-glow viewing slit.
+        const cx = UI_SIZE / 2;
+        const cy = UI_SIZE / 2 + 4;
+        g.lineStyle(OUTLINE_W, OUTLINE, 1);
+        // Phial body
+        g.fillStyle(0xe7c794, 1);
+        g.fillRoundedRect(cx - 14, cy - 18, 28, 36, 6);
+        g.strokeRoundedRect(cx - 14, cy - 18, 28, 36, 6);
+        // Wax stopper
+        g.fillStyle(0xb87333, 1);
+        g.fillRoundedRect(cx - 10, cy - 24, 20, 8, 3);
+        g.strokeRoundedRect(cx - 10, cy - 24, 20, 8, 3);
+        // Pearl viewing slit
+        g.fillStyle(0xfff5d0, 1);
+        g.fillCircle(cx, cy + 2, 8);
+        g.strokeCircle(cx, cy + 2, 8);
+        g.fillStyle(0xffffff, 0.7);
+        g.fillEllipse(cx - 2, cy - 1, 4, 3);
+        break;
+      }
       case 'ui-button-primary':
         g.fillStyle(0x3a7f3a, 1);
         g.lineStyle(OUTLINE_W, OUTLINE, 1);

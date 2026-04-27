@@ -69,6 +69,15 @@ export const UI_SPRITE_KEYS = [
   'ui-resource-sugar',
   'ui-resource-leaf',
   'ui-resource-milk',
+  // Per-resource harvest chips that float above producer
+  // buildings when offline production has accumulated. Drawn in
+  // HomeScene.drawHarvestIndicators (PR after #121); sprite art
+  // is generated through the admin sprite tab same as the other
+  // ui-* keys. Procedural fallbacks in placeholders.ts so the
+  // chips are never blank pre-art.
+  'ui-harvest-sugar',
+  'ui-harvest-leaf',
+  'ui-harvest-milk',
   'ui-button-primary',
   'ui-button-secondary',
 ] as const;
