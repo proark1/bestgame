@@ -437,17 +437,20 @@ export class HomeScene extends Phaser.Scene {
     }
   }
 
-  // Scene-wide ambient: a soft top-to-bottom gradient behind everything,
-  // plus a faint horizon glow so the HUD/footer strips don't read as
-  // flat rectangles floating over dead ground. Cheap: 22 stacked bands
-  // + a single radial fog ellipse.
+  // Scene-wide ambient: a continuous grass background behind the
+  // playfield so the area outside the bordered board reads as one
+  // continuous map (Clash-of-Clans style — the village sits in a
+  // larger green field, not on a pastel page). Cheap: 22 stacked
+  // bands + a single radial vignette + a few floating motes.
   private drawAmbient(): void {
     const g = this.add.graphics().setDepth(DEPTHS.background);
-    // Vibrant pastel scene gradient — soft pink-cream up top easing
-    // into lavender at the bottom. Replaces the deep forest gradient
-    // that anchored the old earthy theme.
-    const top = 0xfff4f6;
-    const bot = 0xede4f7;
+    // Grass gradient: a saturated mid-green at the top eases into a
+    // slightly cooler shade at the bottom. Tokens live in theme.ts
+    // (COLOR.grassTop/grassBot) so RaidScene + ArenaScene render the
+    // same field tone — the playfield reads as a village inside one
+    // continuous map rather than three differently-tinted pages.
+    const top = COLOR.grassTop;
+    const bot = COLOR.grassBot;
     const BANDS = 22;
     for (let i = 0; i < BANDS; i++) {
       const t = i / (BANDS - 1);
@@ -463,22 +466,24 @@ export class HomeScene extends Phaser.Scene {
       );
     }
     // Subtle warm glow behind the board area so the play field sits in
-    // a "pool of light" — reads as intentional rather than a slab of
-    // the same dark green as the chrome.
+    // a "pool of light" — slightly brighter than the surrounding grass
+    // so the eye finds the playable rectangle.
     const glow = this.add.graphics().setDepth(DEPTHS.ambient);
-    glow.fillStyle(COLOR.brass, 0.05);
+    glow.fillStyle(COLOR.warmGlow, 0.08);
     glow.fillEllipse(
       this.scale.width / 2,
       HUD_H + BOARD_H / 2 - 24,
       BOARD_W * 1.08,
       BOARD_H * 1.08,
     );
-    glow.fillStyle(COLOR.greenHi, 0.05);
+    // Soft darker vignette at the very bottom so the footer buttons
+    // pop against the grass.
+    glow.fillStyle(COLOR.mossDark, 0.18);
     glow.fillEllipse(
       this.scale.width / 2,
-      this.scale.height - 64,
-      Math.min(this.scale.width * 1.1, 980),
-      220,
+      this.scale.height + 40,
+      Math.min(this.scale.width * 1.4, 1400),
+      260,
     );
 
     for (let i = 0; i < 14; i++) {
@@ -487,14 +492,14 @@ export class HomeScene extends Phaser.Scene {
           40 + (i * (this.scale.width - 80)) / 13,
           HUD_H + 70 + ((i * 47) % Math.max(160, this.scale.height - 220)),
           i % 3 === 0 ? 3 : 2,
-          i % 4 === 0 ? COLOR.brass : COLOR.greenHi,
-          0.12,
+          i % 4 === 0 ? COLOR.warmGlow : COLOR.greenHi,
+          0.16,
         )
         .setDepth(DEPTHS.ambientParticles);
       this.tweens.add({
         targets: mote,
         y: mote.y - (16 + (i % 5) * 5),
-        alpha: { from: 0.06 + (i % 3) * 0.03, to: 0.22 },
+        alpha: { from: 0.10 + (i % 3) * 0.03, to: 0.28 },
         duration: 1800 + i * 140,
         yoyo: true,
         repeat: -1,
