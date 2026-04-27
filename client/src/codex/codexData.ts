@@ -509,6 +509,37 @@ export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {
       'underground next to the vault; raiders who breach the tunnels ' +
       'will set this on the priority list.',
   },
+  LeafSilo: {
+    kind: 'LeafSilo',
+    name: 'Leaf Silo',
+    role: 'Leaf storage',
+    faction: 'Ants',
+    spriteKey: 'building-LeafSilo',
+    story:
+      'A clay-walled underground bin packed with stripped leaf-bits. ' +
+      'Workers crawl in over the lip and tamp the pile down with their ' +
+      'mandibles. The colony lives or dies on what fits in here.',
+    power:
+      'Adds +1600 leaf cap per level. Pure storage — no production ' +
+      'side-effect, just a bigger bucket so raid loot has somewhere ' +
+      'to land. Fat HP makes raiders prioritise it.',
+  },
+  MilkPot: {
+    kind: 'MilkPot',
+    name: 'Milk Pot',
+    role: 'Aphid Milk storage',
+    faction: 'Ants',
+    spriteKey: 'building-MilkPot',
+    story:
+      'A glazed clay vessel sealed with wax, kept at the deepest ' +
+      'chamber where the warmth is steady. The first pot a colony ' +
+      'fires marks the moment milk becomes wealth instead of trickle.',
+    power:
+      'Adds +800 milk cap per level (base 500). Until you build the ' +
+      'first pot, milk has no cap — production never stops. Once the ' +
+      'pot exists, the cap activates and you\'ll need more pots to ' +
+      'hold a deeper milk reserve.',
+  },
 };
 
 // Resource cards. Not units or buildings — these document the

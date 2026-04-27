@@ -36,6 +36,11 @@ export const BUILDING_PLACEMENT_COSTS: Record<Types.BuildingKind, PlacementCost>
   // late-game investment, not a Q1 shortcut. No milk-on-place because
   // milk is the resource it produces — placing one shouldn't refund.
   AphidFarm:       { sugar: 1500,  leafBits: 400,   aphidMilk: 0 },
+  // Storage buildings — cheaper than producers since they don't
+  // generate income, just hold it. Sugar-only so a player whose
+  // nurseries are capped can still afford a leaf silo.
+  LeafSilo:        { sugar: 600,   leafBits: 0,     aphidMilk: 0 },
+  MilkPot:         { sugar: 1200,  leafBits: 200,   aphidMilk: 0 },
 };
 
 // Default footprint + hp per kind. Keeps the sim snapshot honest when
@@ -64,6 +69,11 @@ export const BUILDING_DEFAULTS: Record<
   ThornHedge:     { w: 1, h: 1, hp: 1100 },
   // 1×1 footprint. Underground-only (gated in ALLOWED_LAYERS).
   AphidFarm:      { w: 1, h: 1, hp: 320 },
+  // Storage buildings carry more HP than producers (CoC-style: a
+  // vault is a fat target). 1×1 to fit alongside the existing
+  // underground economy nodes.
+  LeafSilo:       { w: 1, h: 1, hp: 600 },
+  MilkPot:        { w: 1, h: 1, hp: 700 },
 };
 
 // Hard ceiling on buildings per base. Shared between POST
@@ -92,6 +102,8 @@ export const PLAYER_PLACEABLE: readonly Types.BuildingKind[] = [
   'SpiderNest',
   'ThornHedge',
   'AphidFarm',
+  'LeafSilo',
+  'MilkPot',
 ] as const;
 
 export function isPlayerPlaceable(kind: Types.BuildingKind): boolean {

@@ -109,7 +109,7 @@ export interface PlayerState {
   // derived from the player's economy buildings; incomePerSecond is
   // the totals across all live producers. Both are optional so a
   // pre-storage server still loads (HUD falls back to "no cap").
-  storage?: { sugarCap: number; leafCap: number };
+  storage?: { sugarCap: number; leafCap: number; milkCap?: number | null };
   incomePerSecond?: { sugar: number; leafBits: number; aphidMilk: number };
   // Colony Rank meta-progression (GDD §6.7). Optional so older servers
   // keep working — client treats missing field as rank 0 + uncapped.

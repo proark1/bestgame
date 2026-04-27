@@ -35,7 +35,18 @@ export type BuildingKind =
   // Late-tier unlock; sets the foundation for future builder-time-skip
   // monetization (GDD §9 / §12). Underground-only and limited per
   // queen tier so early bases can't farm milk for an instant skip.
-  | 'AphidFarm';
+  | 'AphidFarm'
+  // Dedicated underground storage for leaf bits. LarvaNursery
+  // already adds leaf cap as a side-effect of being a nursery, but
+  // a player who wants a pure storage build (no extra production
+  // pressure) couldn't get one. LeafSilo solves that — non-producer
+  // building whose only job is to enlarge the leaf cap.
+  | 'LeafSilo'
+  // Dedicated underground storage for AphidMilk. The first MilkPot
+  // is what introduces a milk wallet cap to a base; without one,
+  // milk stays uncapped (matches the pre-PR behaviour for players
+  // who haven't built one yet).
+  | 'MilkPot';
 
 export interface Building {
   id: string;
