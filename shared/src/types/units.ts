@@ -108,10 +108,15 @@ export interface Unit {
   heroKind?: import('./heroes.js').HeroKind;
   // Aura buff flags re-derived each tick by the auras system.
   // Combat reads these to scale attack cooldown / damage. Heal
-  // is applied directly as +HP (capped at hpMax) at the same time.
-  // All integers; absence = no buff.
+  // is applied as a per-tick HP credit (capped at hpMax). All
+  // numerics are integers; absence = no buff. Auras don't stack
+  // across heroes — the strongest active value wins.
   auraAttackSpeedPct?: number;       // 0..100 integer
   auraBuildingDamagePct?: number;    // 0..100 integer
+  // Per-tick heal rate (Fixed). The auras system records the
+  // strongest-aura rate during pass 2 then applies it once in
+  // pass 3, so two healers of the same kind don't compound.
+  auraHealPerTick?: number;
   // hpBonus aura is one-shot: the first tick a unit comes within
   // a HerculesBeetle's radius, hpMax + hp are bumped by
   // aura.pct. We persist the highest applied bonus on the unit

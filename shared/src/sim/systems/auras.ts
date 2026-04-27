@@ -36,15 +36,22 @@ const TICKS_PER_SEC = 30;
 
 export function applyAuras(state: SimState): void {
   // Pass 1: reset every unit's per-tick aura flags. A unit that
-  // walked out of range last tick should drop the buff.
+  // walked out of range last tick should drop the buff. Heal rate
+  // is recorded across pass 2 and applied once in pass 3 so two
+  // healers don't double-tick a unit's HP.
   for (const u of state.units) {
     if (u.auraAttackSpeedPct) u.auraAttackSpeedPct = 0;
     if (u.auraBuildingDamagePct) u.auraBuildingDamagePct = 0;
+    if (u.auraHealPerTick) u.auraHealPerTick = 0;
   }
 
   // Pass 2: for each hero, walk allied units and apply effects.
-  // The double-loop is O(H × U) where H ≤ 2 (max equipped) so the
-  // overall cost is at most 2 × ~50 = 100 distance checks per tick.
+  // Heroes ARE included as their own allies — a Hercules-style
+  // tank gets their own +HP, a Wasp Queen heals herself. This
+  // matches the CoC convention where a hero's aura covers their
+  // own footprint. The double-loop is O(H × U) where H ≤ 2 (max
+  // equipped) so the overall cost is at most 2 × ~50 = 100
+  // distance checks per tick.
   for (const hero of state.units) {
     if (!hero.heroKind) continue;
     if (hero.hp <= 0) continue;
@@ -56,10 +63,11 @@ export function applyAuras(state: SimState): void {
 
     for (const ally of state.units) {
       if (ally.owner !== hero.owner) continue;
-      if (ally.id === hero.id) continue;
       if (ally.hp <= 0) continue;
       // Squared-distance check avoids a sqrt; both args are Fixed
-      // so the comparison stays bit-exact.
+      // so the comparison stays bit-exact. A hero's own (dx, dy)
+      // is (0, 0) so the radius check trivially passes — they
+      // benefit from their own aura.
       const dx = sub(ally.x, hero.x);
       const dy = sub(ally.y, hero.y);
       const d2 = add(mul(dx, dx), mul(dy, dy));
@@ -80,23 +88,30 @@ export function applyAuras(state: SimState): void {
           break;
         }
         case 'heal': {
-          // perSec / 30 = per-tick HP credit, scaled into Fixed.
-          // Compute as (perSec * FIXED_ONE) / 30 then floor — but
-          // we're already in Fixed land via fromInt so just divide.
-          const perTick = (mul(fromInt(aura.perSec), fromInt(1)) / TICKS_PER_SEC) | 0;
-          ally.hp = ally.hp + perTick;
-          if (ally.hp > ally.hpMax) ally.hp = ally.hpMax;
+          // Record the strongest per-tick heal so multi-healer
+          // overlaps don't compound. Pass 3 below applies the
+          // recorded rate exactly once per unit.
+          const perTick = (fromInt(aura.perSec) / TICKS_PER_SEC) | 0;
+          const cur = ally.auraHealPerTick ?? 0;
+          if (perTick > cur) ally.auraHealPerTick = perTick;
           break;
         }
         case 'hpBonus': {
           // One-shot: bump hpMax + heal the same amount the first
-          // tick we see this ally close to this hero. Track the
-          // applied bonus on the unit so we don't re-apply each
-          // tick. Empty default = not yet applied.
+          // tick we see this ally close to this hero. The bonus is
+          // computed RELATIVE TO BASE so that moving from a 10%
+          // aura to a 20% one yields exactly 20% over base, not
+          // 10% × 1.10 = 21% (compounding). The math:
+          //   hpMax_now = base * (100 + cur) / 100
+          //   bonus     = base * delta / 100
+          //             = hpMax_now * delta / (100 + cur)
+          // which keeps the calculation inside the existing
+          // hpMax-relative form without needing a separate
+          // base-HP cache on the unit.
           const cur = ally.auraHpBonusApplied ?? 0;
           if (cur < aura.pct) {
             const delta = aura.pct - cur;
-            const bonus = (mul(ally.hpMax, fromInt(delta)) / 100) | 0;
+            const bonus = (mul(ally.hpMax, fromInt(delta)) / (100 + cur)) | 0;
             ally.hpMax = ally.hpMax + bonus;
             ally.hp = ally.hp + bonus;
             ally.auraHpBonusApplied = aura.pct;
@@ -105,5 +120,16 @@ export function applyAuras(state: SimState): void {
         }
       }
     }
+  }
+
+  // Pass 3: drip the strongest heal rate per unit. Done after the
+  // hero loop so the value reflects the max across every healer
+  // active this tick (rather than the sum from per-hero adds).
+  for (const u of state.units) {
+    const rate = u.auraHealPerTick ?? 0;
+    if (rate <= 0) continue;
+    if (u.hp <= 0) continue;
+    u.hp = u.hp + rate;
+    if (u.hp > u.hpMax) u.hp = u.hpMax;
   }
 }
