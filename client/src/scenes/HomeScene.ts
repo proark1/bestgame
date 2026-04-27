@@ -2733,6 +2733,9 @@ export class HomeScene extends Phaser.Scene {
       },
       { label: '⚙', onPress: () => openSettings() },
       { label: '⚒', onPress: () => fadeToScene(this, 'UpgradeScene') },
+      // Heroes screen (PR C). Owned heroes + the chest gift live
+      // here; PR D wires equipped heroes into the raid deck.
+      { label: '🦸', onPress: () => fadeToScene(this, 'HeroesScene') },
       { label: '👥', onPress: () => fadeToScene(this, 'ClanScene') },
       { label: '🏆', onPress: () => fadeToScene(this, 'LeaderboardScene') },
     ];

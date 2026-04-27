@@ -1,0 +1,425 @@
+import Phaser from 'phaser';
+import { Types } from '@hive/shared';
+import type { HiveRuntime } from '../main.js';
+import type { HeroesStateResponse } from '../net/Api.js';
+import { fadeInScene } from '../ui/transitions.js';
+import { drawSceneAmbient, drawSceneHud, makeScrollBody } from '../ui/sceneFrame.js';
+import { drawPanel } from '../ui/panel.js';
+import { makeHiveButton } from '../ui/button.js';
+import { crispText } from '../ui/text.js';
+import {
+  COLOR,
+  DEPTHS,
+  SPACING,
+  bodyTextStyle,
+  displayTextStyle,
+  labelTextStyle,
+} from '../ui/theme.js';
+
+// HeroesScene — manage the player's hero roster.
+// Shows every hero in the catalog. Cards split into three states:
+//   - Locked (not yet owned, chest still claimable) → "Open Chest"
+//     CTA modal that lets the player pick the first hero gift.
+//   - Locked (owned others, chest claimed) → "Buy" CTA with the
+//     server-quoted next-buy cost.
+//   - Owned → "Equip" / "Unequip" toggle. At most MAX_EQUIPPED
+//     heroes can be equipped at once.
+//
+// PR D wires equipped heroes into the raid deck + sim auras. This
+// scene is the data-layer / pre-game cockpit.
+
+export class HeroesScene extends Phaser.Scene {
+  private state: HeroesStateResponse | null = null;
+  private body!: ReturnType<typeof makeScrollBody>;
+  private loadingText!: Phaser.GameObjects.Text;
+
+  constructor() {
+    super('HeroesScene');
+  }
+
+  create(): void {
+    fadeInScene(this);
+    this.cameras.main.setBackgroundColor('#0f1b10');
+    drawSceneAmbient(this);
+    drawSceneHud(this, 'Heroes', 'HomeScene');
+    this.body = makeScrollBody(this);
+    this.loadingText = crispText(
+      this,
+      this.scale.width / 2,
+      140,
+      'Summoning your champions...',
+      bodyTextStyle(14, COLOR.textDim),
+    ).setOrigin(0.5);
+    void this.refresh();
+  }
+
+  private async refresh(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) {
+      this.loadingText.setText('Offline — no heroes');
+      return;
+    }
+    try {
+      this.state = await runtime.api.getHeroes();
+      if (!this.scene.isActive()) return;
+      this.loadingText.setVisible(false);
+      this.render();
+    } catch (err) {
+      if (!this.scene.isActive()) return;
+      this.loadingText.setText(`Error: ${(err as Error).message}`);
+    }
+  }
+
+  private render(): void {
+    if (!this.state) return;
+    this.body.container.removeAll(true);
+    const maxW = Math.min(640, this.scale.width - 32);
+    const originX = (this.scale.width - maxW) / 2;
+    let y = 0;
+
+    // Intro line — explains the slot cap so the player understands
+    // why owning all four still leaves them choosing two.
+    this.body.container.add(
+      crispText(
+        this,
+        originX,
+        y,
+        `Equip up to ${this.state.maxEquipped} heroes for your next raid. ` +
+          `Heroes give buffs to nearby allies — see the aura on each card.`,
+        bodyTextStyle(13, COLOR.textDim),
+      ).setWordWrapWidth(maxW, true),
+    );
+    y += 56;
+
+    // First-hero chest CTA — only if not yet claimed. Renders a
+    // distinct gilded card so it reads as a free reward, not a
+    // purchase.
+    if (!this.state.ownership.chestClaimed) {
+      y = this.renderChestCard(originX, maxW, y);
+      y += SPACING.lg;
+    }
+
+    const kinds = Object.keys(this.state.catalog) as Types.HeroKind[];
+    for (const kind of kinds) {
+      y = this.renderHeroCard(kind, originX, maxW, y);
+      y += SPACING.md;
+    }
+    this.body.setContentHeight(y);
+  }
+
+  private renderChestCard(originX: number, maxW: number, top: number): number {
+    const h = 138;
+    const bg = this.add.graphics();
+    drawPanel(bg, originX, top, maxW, h, {
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.32,
+      radius: 14,
+      shadowOffset: 5,
+      shadowAlpha: 0.32,
+    });
+    this.body.container.add(bg);
+    this.body.container.add(
+      crispText(
+        this,
+        originX + 18,
+        top + 16,
+        '🎁 Free hero chest',
+        displayTextStyle(18, COLOR.textGold, 3),
+      ),
+    );
+    this.body.container.add(
+      crispText(
+        this,
+        originX + 18,
+        top + 46,
+        'Pick one hero to start your roster — no resources spent.',
+        bodyTextStyle(13, COLOR.textPrimary),
+      ).setWordWrapWidth(maxW - 36, true),
+    );
+    const btn = makeHiveButton(this, {
+      x: originX + maxW - 100,
+      y: top + h - 32,
+      width: 180,
+      height: 40,
+      label: 'Open chest',
+      variant: 'primary',
+      fontSize: 14,
+      onPress: () => this.openChestModal(),
+    });
+    this.body.container.add(btn.container);
+    return top + h;
+  }
+
+  private renderHeroCard(
+    kind: Types.HeroKind,
+    originX: number,
+    maxW: number,
+    top: number,
+  ): number {
+    if (!this.state) return top;
+    const def = this.state.catalog[kind];
+    const owned = !!this.state.ownership.owned[kind];
+    const equipped = this.state.ownership.equipped.includes(kind);
+    const fullSlots =
+      this.state.ownership.equipped.length >= this.state.maxEquipped &&
+      !equipped;
+    const h = 168;
+
+    const bg = this.add.graphics();
+    drawPanel(bg, originX, top, maxW, h, {
+      stroke: equipped ? COLOR.brass : COLOR.brassDeep,
+      strokeWidth: equipped ? 3 : 2,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 14,
+      shadowOffset: 4,
+      shadowAlpha: 0.26,
+    });
+    this.body.container.add(bg);
+
+    // Portrait — falls back to a glyph if the sprite isn't loaded
+    // yet (sprite art lands separately via the admin tool).
+    const portraitX = originX + 56;
+    const portraitY = top + h / 2;
+    if (this.textures.exists(def.spriteKey)) {
+      const img = this.add.image(portraitX, portraitY, def.spriteKey);
+      img.setDisplaySize(96, 96);
+      this.body.container.add(img);
+    } else {
+      // Procedural fallback: brass disc + first letter, mirrors
+      // BootScene's placeholder pattern for unit kinds. Disc is
+      // sized to match the eventual sprite footprint so cards stay
+      // visually aligned once art lands.
+      const circle = this.add.graphics();
+      circle.fillStyle(COLOR.brass, 1);
+      circle.fillCircle(portraitX, portraitY, 44);
+      circle.lineStyle(3, COLOR.brassDeep, 1);
+      circle.strokeCircle(portraitX, portraitY, 44);
+      this.body.container.add(circle);
+      this.body.container.add(
+        crispText(
+          this,
+          portraitX,
+          portraitY,
+          def.name.charAt(0),
+          displayTextStyle(28, COLOR.textDark, 2),
+        ).setOrigin(0.5, 0.5),
+      );
+    }
+
+    const textX = originX + 124;
+    this.body.container.add(
+      crispText(
+        this,
+        textX,
+        top + 14,
+        def.name,
+        displayTextStyle(18, COLOR.textGold, 3),
+      ),
+    );
+    this.body.container.add(
+      crispText(this, textX, top + 42, def.role, labelTextStyle(11, COLOR.textPrimary)),
+    );
+    this.body.container.add(
+      crispText(
+        this,
+        textX,
+        top + 60,
+        Types.describeAura(def.aura),
+        bodyTextStyle(12, COLOR.textPrimary),
+      ).setWordWrapWidth(maxW - (textX - originX) - 124, true),
+    );
+    this.body.container.add(
+      crispText(
+        this,
+        textX,
+        top + h - 26,
+        `HP ${def.hpMax} · DMG ${def.attackDamage} · SPD ${def.speed}`,
+        labelTextStyle(11, COLOR.textDim),
+      ),
+    );
+
+    // Right-side action area. Owned ⇒ Equip/Unequip toggle. Not
+    // owned + chest claimed ⇒ Buy CTA. Not owned + chest available
+    // ⇒ disabled chest hint (the chest card above is the entry).
+    const actionX = originX + maxW - 80;
+    const actionY = top + h - 30;
+    if (owned) {
+      const btn = makeHiveButton(this, {
+        x: actionX,
+        y: actionY,
+        width: 130,
+        height: 36,
+        label: equipped ? 'Equipped' : (fullSlots ? 'Slots full' : 'Equip'),
+        variant: equipped ? 'ghost' : 'primary',
+        fontSize: 13,
+        onPress: () => {
+          if (fullSlots) return;
+          void this.toggleEquip(kind, !equipped);
+        },
+        enabled: !fullSlots || equipped,
+      });
+      this.body.container.add(btn.container);
+    } else if (this.state.ownership.chestClaimed) {
+      const cost = this.state.nextBuyCost;
+      const canAfford =
+        this.state.wallet.sugar >= cost.sugar &&
+        this.state.wallet.aphidMilk >= cost.aphidMilk;
+      const btn = makeHiveButton(this, {
+        x: actionX,
+        y: actionY,
+        width: 150,
+        height: 36,
+        label: `${cost.sugar.toLocaleString()}🍯 ${cost.aphidMilk}🥛`,
+        variant: canAfford ? 'primary' : 'ghost',
+        fontSize: 12,
+        onPress: () => {
+          if (!canAfford) return;
+          void this.buy(kind);
+        },
+        enabled: canAfford,
+      });
+      this.body.container.add(btn.container);
+    } else {
+      // Chest still available — point the player to the chest card
+      // above instead of letting them buy at full price. This stays
+      // a hint rather than a button so the affordance reads clearly.
+      this.body.container.add(
+        crispText(
+          this,
+          actionX,
+          actionY,
+          'Open the chest above',
+          labelTextStyle(11, COLOR.textDim),
+        ).setOrigin(0.5, 0.5),
+      );
+    }
+    return top + h;
+  }
+
+  private async toggleEquip(kind: Types.HeroKind, equipped: boolean): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      await runtime.api.equipHero(kind, equipped);
+      await this.refresh();
+    } catch (err) {
+      this.flashErr((err as Error).message);
+    }
+  }
+
+  private async buy(kind: Types.HeroKind): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const res = await runtime.api.buyHero(kind);
+      if (runtime.player) {
+        runtime.player.player.sugar = res.wallet.sugar;
+        runtime.player.player.aphidMilk = res.wallet.aphidMilk;
+      }
+      await this.refresh();
+    } catch (err) {
+      this.flashErr((err as Error).message);
+    }
+  }
+
+  // Modal that lets the player pick which hero to receive from the
+  // free chest. Renders all four cards on a backdrop; tapping one
+  // claims and refreshes the scene.
+  private openChestModal(): void {
+    if (!this.state) return;
+    const w = Math.min(560, this.scale.width - 32);
+    const h = Math.min(420, this.scale.height - 64);
+    const ox = (this.scale.width - w) / 2;
+    const oy = (this.scale.height - h) / 2;
+    const container = this.add.container(0, 0).setDepth(DEPTHS.drawerBackdrop);
+
+    const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.62)
+      .setOrigin(0, 0)
+      .setInteractive();
+    dim.on('pointerdown', () => container.destroy(true));
+    container.add(dim);
+
+    const bg = this.add.graphics();
+    drawPanel(bg, ox, oy, w, h, {
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.32,
+      radius: 16,
+      shadowOffset: 6,
+      shadowAlpha: 0.4,
+    });
+    container.add(bg);
+    container.add(
+      crispText(this, ox + 18, oy + 14, '🎁 Pick your starter hero',
+        displayTextStyle(18, COLOR.textGold, 3)),
+    );
+    container.add(
+      crispText(this, ox + 18, oy + 44, 'Free choice. Tap a hero to claim.',
+        bodyTextStyle(12, COLOR.textPrimary)),
+    );
+
+    // 2×2 grid of hero tiles inside the modal.
+    const kinds = Object.keys(this.state.catalog) as Types.HeroKind[];
+    const cellW = (w - 60) / 2;
+    const cellH = (h - 90) / 2;
+    kinds.forEach((kind, i) => {
+      if (!this.state) return;
+      const def = this.state.catalog[kind];
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const cx = ox + 20 + col * (cellW + 20);
+      const cy = oy + 70 + row * (cellH + 8);
+      const tile = this.add.graphics();
+      drawPanel(tile, cx, cy, cellW, cellH, {
+        stroke: COLOR.brassDeep,
+        strokeWidth: 1,
+        highlight: COLOR.brass,
+        highlightAlpha: 0.14,
+        radius: 10,
+        shadowOffset: 2,
+        shadowAlpha: 0.2,
+      });
+      container.add(tile);
+      container.add(
+        crispText(this, cx + 14, cy + 12, def.name, displayTextStyle(14, COLOR.textGold, 2)),
+      );
+      container.add(
+        crispText(this, cx + 14, cy + 36, def.role, labelTextStyle(10, COLOR.textPrimary)),
+      );
+      container.add(
+        crispText(this, cx + 14, cy + 56, Types.describeAura(def.aura),
+          bodyTextStyle(11, COLOR.textPrimary)).setWordWrapWidth(cellW - 28, true),
+      );
+      const hit = this.add.zone(cx + cellW / 2, cy + cellH / 2, cellW, cellH)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', () => {
+        container.destroy(true);
+        void this.claimChest(kind);
+      });
+      container.add(hit);
+    });
+  }
+
+  private async claimChest(kind: Types.HeroKind): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      await runtime.api.claimHeroChest(kind);
+      await this.refresh();
+    } catch (err) {
+      this.flashErr((err as Error).message);
+    }
+  }
+
+  private flashErr(msg: string): void {
+    const t = crispText(this, this.scale.width / 2, this.scale.height - 80,
+      msg, bodyTextStyle(13, COLOR.textError)).setOrigin(0.5, 0.5).setDepth(DEPTHS.toast);
+    this.tweens.add({ targets: t, alpha: 0, delay: 1800, duration: 320,
+      onComplete: () => t.destroy() });
+  }
+}

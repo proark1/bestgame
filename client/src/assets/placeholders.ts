@@ -820,8 +820,52 @@ export function generateMissingPlaceholders(
     if (key === 'board-background') drawBoardBackground(scene);
     else if (key.startsWith('unit-')) drawUnit(scene, key);
     else if (key.startsWith('building-')) drawBuilding(scene, key);
+    else if (key.startsWith('hero-')) drawHero(scene, key);
     else if (key.startsWith('ui-')) drawUi(scene, key);
   }
+}
+
+// Hero placeholder — brass disc + first letter + halo so a missing
+// hero sprite still reads as "legendary" rather than identical to a
+// regular unit. PR C ships heroes with no real art yet; the admin
+// sprite tab points the artist at this slot to fill in.
+function drawHero(scene: Phaser.Scene, key: string): void {
+  if (scene.textures.exists(key)) return;
+  const size = 128;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  // Halo behind the disc (legendary glow).
+  g.fillStyle(0xffd97a, 0.35);
+  g.fillCircle(size / 2, size / 2, size / 2 - 4);
+  // Disc body.
+  g.fillStyle(0xffd97a, 1);
+  g.fillCircle(size / 2, size / 2, size / 2 - 14);
+  g.lineStyle(4, 0xc99b3a, 1);
+  g.strokeCircle(size / 2, size / 2, size / 2 - 14);
+  // Letter glyph.
+  const letter = key.replace(/^hero-/, '').charAt(0).toUpperCase();
+  const text = scene.make.text({
+    x: size / 2,
+    y: size / 2,
+    text: letter,
+    style: {
+      fontFamily: "'Arial Black', sans-serif",
+      fontSize: '54px',
+      color: '#0c0e22',
+      stroke: '#fff8ec',
+      strokeThickness: 3,
+      fontStyle: 'bold',
+    },
+  });
+  text.setOrigin(0.5, 0.5);
+  // Compose graphics + text into a render texture so the texture
+  // manager has a single backing image keyed under the hero name.
+  const rt = scene.add.renderTexture(0, 0, size, size).setVisible(false);
+  rt.draw(g, 0, 0);
+  rt.draw(text, size / 2, size / 2);
+  rt.saveTexture(key);
+  g.destroy();
+  text.destroy();
+  rt.destroy();
 }
 
 // Small helper used by RaidScene to draw a soft pheromone-trail dot even
