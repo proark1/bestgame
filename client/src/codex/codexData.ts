@@ -568,12 +568,86 @@ export const RESOURCE_CODEX: Record<'sugar' | 'leaf' | 'milk', CodexEntry> = {
   },
 };
 
+// Hero cards (PR C). Heroes are special, persistent units the
+// player owns and equips into raids — distinct from regular units.
+// Each card mirrors the in-game catalog (HERO_CATALOG in
+// shared/types/heroes.ts) so the codex stays the canonical
+// reference even when the player hasn't unlocked them yet.
+export const HERO_CODEX: Record<
+  'Mantis' | 'HerculesBeetle' | 'WaspQueen' | 'StagBeetle',
+  CodexEntry
+> = {
+  Mantis: {
+    kind: 'Mantis',
+    name: 'Praying Mantis',
+    role: 'Hero · assassin',
+    faction: 'Ants',
+    spriteKey: 'hero-Mantis',
+    story:
+      'A blade with eyes. Found a colony in distress on the eastern ' +
+      'fringe and never left — folds her wings into a scarf, leans ' +
+      'against the chamber wall, listens. When she moves, three ' +
+      'turrets are already down.',
+    power:
+      'High damage, low HP. Aura grants +25% attack speed to allied ' +
+      'units within 3 tiles. Best deployed alongside a tank so the ' +
+      'aura sticks long enough to sweep a wing.',
+  },
+  HerculesBeetle: {
+    kind: 'HerculesBeetle',
+    name: 'Hercules Beetle',
+    role: 'Hero · tank',
+    faction: 'Ants',
+    spriteKey: 'hero-HerculesBeetle',
+    story:
+      'A walking siege engine. Carapace older than most colonies; ' +
+      'turret splash buffs its breastplate, doesn\'t scratch it. ' +
+      'Plants himself in the breach and the swarm files past him.',
+    power:
+      'Massive HP, modest damage. Aura grants +30% max HP to ' +
+      'allied units within 3 tiles, applied as a flat overshield ' +
+      'when they enter range.',
+  },
+  WaspQueen: {
+    kind: 'WaspQueen',
+    name: 'Wasp Queen',
+    role: 'Hero · support flyer',
+    faction: 'Ants',
+    spriteKey: 'hero-WaspQueen',
+    story:
+      'Defected from a rival hive after the elders refused to back ' +
+      'her run on a mortar nest. Now she trades sting for nectar — ' +
+      'follows the swarm, drips honey on every wound.',
+    power:
+      'Flying. Heals allied units in a 3-tile radius for 10 HP/sec. ' +
+      'Frail (600 HP) — keep her on the back line and let melee ' +
+      'heroes draw fire.',
+  },
+  StagBeetle: {
+    kind: 'StagBeetle',
+    name: 'Stag Beetle',
+    role: 'Hero · siege',
+    faction: 'Ants',
+    spriteKey: 'hero-StagBeetle',
+    story:
+      'Big horns, bigger problem if you\'re a wall. Old enough to ' +
+      'remember the queens who first drew the boundary line, and ' +
+      'spends his retirement re-drawing it.',
+    power:
+      'Hits buildings hard. Aura grants +20% building damage to ' +
+      'allied units within 3 tiles. Stack with cheap workers for a ' +
+      'controlled wave that chews through walls.',
+  },
+};
+
 // Stable ordering for Codex navigation. Matches the deck order in
 // RaidScene so players learn the same layout twice. Resource cards
 // sit at the front so a confused player who opens the codex sees
-// the economy explainer first.
+// the economy explainer first; heroes follow as the next layer up
+// from regular units.
 export const ALL_CODEX_ENTRIES: CodexEntry[] = [
   ...(Object.values(RESOURCE_CODEX) as CodexEntry[]),
+  ...(Object.values(HERO_CODEX) as CodexEntry[]),
   ...(Object.values(UNIT_CODEX) as CodexEntry[]),
   ...(Object.values(BUILDING_CODEX) as CodexEntry[]),
 ];

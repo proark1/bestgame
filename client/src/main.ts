@@ -21,6 +21,7 @@ import { CampaignScene } from './scenes/CampaignScene.js';
 import { ClanWarsScene } from './scenes/ClanWarsScene.js';
 import { ReplayFeedScene } from './scenes/ReplayFeedScene.js';
 import { QueenSkinScene } from './scenes/QueenSkinScene.js';
+import { HeroesScene } from './scenes/HeroesScene.js';
 import { BuilderQueueScene } from './scenes/BuilderQueueScene.js';
 import { ProgressionScene } from './scenes/ProgressionScene.js';
 import { ClanBaseTourScene } from './scenes/ClanBaseTourScene.js';
@@ -225,6 +226,7 @@ async function main(): Promise<void> {
       new ClanWarsScene(),
       new ReplayFeedScene(),
       new QueenSkinScene(),
+      new HeroesScene(),
       new BuilderQueueScene(),
       new ProgressionScene(),
       new ClanBaseTourScene(),

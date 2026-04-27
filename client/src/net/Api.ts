@@ -1,6 +1,40 @@
 import type { Types } from '@hive/shared';
 import type { AuthClient } from './Auth.js';
 
+// Heroes shape (PR C). Keeping the TS shape inline so the client
+// doesn't need to runtime-import the catalog from shared until a
+// scene actually asks for it; the GET /player/heroes endpoint
+// echoes the full catalog in its response.
+export interface HeroesStateResponse {
+  catalog: Record<Types.HeroKind, Types.HeroDef>;
+  ladder: ReadonlyArray<{ sugar: number; aphidMilk: number }>;
+  maxEquipped: number;
+  ownership: {
+    owned: Partial<Record<Types.HeroKind, true>>;
+    equipped: Types.HeroKind[];
+    chestClaimed: boolean;
+  };
+  nextBuyCost: { sugar: number; aphidMilk: number };
+  wallet: { sugar: number; aphidMilk: number };
+}
+
+export interface HeroBuyResponse {
+  ok: true;
+  ownership: HeroesStateResponse['ownership'];
+  wallet: { sugar: number; aphidMilk: number };
+  spent: { sugar: number; aphidMilk: number };
+}
+
+export interface HeroEquipResponse {
+  ok: true;
+  equipped: Types.HeroKind[];
+}
+
+export interface HeroChestClaimResponse {
+  ok: true;
+  ownership: HeroesStateResponse['ownership'];
+}
+
 // HTTP client for @hive/api. Attaches the session token to every
 // protected request and re-authenticates automatically on 401.
 //
@@ -319,6 +353,58 @@ export class Api {
       throw new Error(msg);
     }
     return (await res.json()) as HarvestResponse;
+  }
+
+  // --- Heroes (PR C) ---------------------------------------------------------
+  // Catalog + ownership + equip state in one round-trip. Used by
+  // HeroesScene on entry. Refreshes after buy/equip so the scene
+  // doesn't need to manually splice state.
+  async getHeroes(): Promise<HeroesStateResponse> {
+    const res = await this.authedFetch('/player/heroes');
+    if (!res.ok) throw new Error(`heroes fetch ${res.status}`);
+    return (await res.json()) as HeroesStateResponse;
+  }
+
+  async claimHeroChest(kind: Types.HeroKind): Promise<HeroChestClaimResponse> {
+    const res = await this.authedFetch('/player/heroes/chest-claim', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    });
+    if (!res.ok) {
+      let msg = `claim ${res.status}`;
+      try { const j = (await res.json()) as { error?: string }; if (j.error) msg = j.error; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return (await res.json()) as HeroChestClaimResponse;
+  }
+
+  async buyHero(kind: Types.HeroKind): Promise<HeroBuyResponse> {
+    const res = await this.authedFetch('/player/heroes/buy', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind }),
+    });
+    if (!res.ok) {
+      let msg = `buy ${res.status}`;
+      try { const j = (await res.json()) as { error?: string }; if (j.error) msg = j.error; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return (await res.json()) as HeroBuyResponse;
+  }
+
+  async equipHero(kind: Types.HeroKind, equipped: boolean): Promise<HeroEquipResponse> {
+    const res = await this.authedFetch('/player/heroes/equip', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind, equipped }),
+    });
+    if (!res.ok) {
+      let msg = `equip ${res.status}`;
+      try { const j = (await res.json()) as { error?: string }; if (j.error) msg = j.error; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return (await res.json()) as HeroEquipResponse;
   }
 
   async placeBuilding(args: {

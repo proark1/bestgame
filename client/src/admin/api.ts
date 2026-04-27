@@ -40,6 +40,10 @@ export interface PromptsFile {
   // /admin/api/settings/ui-overrides, the game renders these in
   // place of the default Graphics/CSS fallback.
   menuUi?: Record<string, string>;
+  // Hero prompts (PR C). Persistent special units the player owns
+  // and equips per raid. Parallel to `units` — same 128x128 single-
+  // sprite output, just routed through the heroes admin tab.
+  heroes?: Record<string, string>;
 }
 
 export interface GeminiImage {
@@ -99,7 +103,7 @@ export async function fetchPrompts(): Promise<PromptsFile> {
 }
 
 export async function updatePrompt(args: {
-  category: 'units' | 'buildings' | 'walkCycles' | 'menuUi' | 'styleLock';
+  category: 'units' | 'buildings' | 'walkCycles' | 'menuUi' | 'styleLock' | 'heroes';
   key?: string;
   value: string;
 }): Promise<void> {

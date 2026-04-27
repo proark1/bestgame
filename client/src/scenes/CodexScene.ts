@@ -169,17 +169,19 @@ export class CodexScene extends Phaser.Scene {
     );
   }
 
-  private filterMode: 'all' | 'units' | 'buildings' | 'resources' = 'all';
+  private filterMode: 'all' | 'units' | 'buildings' | 'resources' | 'heroes' = 'all';
   private filterLabel(): string {
     if (this.filterMode === 'all') return 'All ▾';
     if (this.filterMode === 'units') return 'Units ▾';
     if (this.filterMode === 'buildings') return 'Buildings ▾';
+    if (this.filterMode === 'heroes') return 'Heroes ▾';
     return 'Resources ▾';
   }
   private cycleFilter(): void {
-    const order: Array<'all' | 'units' | 'buildings' | 'resources'> = [
+    const order: Array<'all' | 'resources' | 'heroes' | 'units' | 'buildings'> = [
       'all',
       'resources',
+      'heroes',
       'units',
       'buildings',
     ];
@@ -190,6 +192,7 @@ export class CodexScene extends Phaser.Scene {
       : ALL_CODEX_ENTRIES.filter((e) => {
           if (next === 'units') return e.spriteKey.startsWith('unit-');
           if (next === 'buildings') return e.spriteKey.startsWith('building-');
+          if (next === 'heroes') return e.spriteKey.startsWith('hero-');
           return e.spriteKey.startsWith('ui-resource-');
         });
     this.currentIdx = Math.min(this.currentIdx, this.entries.length - 1);

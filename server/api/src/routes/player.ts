@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { Types } from '@hive/shared';
+import { Types } from '@hive/shared';
+const { HERO_CATALOG, HERO_PRICE_LADDER, MAX_EQUIPPED_HEROES } = Types;
+type HeroKind = Types.HeroKind;
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
 import {
@@ -136,6 +138,13 @@ interface PlayerRow {
   // raid. Map of unit kind → count. Credited by /clan/donate;
   // cleared by /raid/submit on success. See migrations/0018.
   donation_inventory: Record<string, number>;
+  // Hero ownership + equip state (migrations/0023). owned is a
+  // presence map keyed by HeroKind; equipped is an ordered array
+  // of HeroKind capped at MAX_EQUIPPED_HEROES; chest_claimed gates
+  // the free first-hero chest CTA.
+  hero_ownership: Record<string, true>;
+  hero_equipped: string[];
+  hero_chest_claimed: boolean;
 }
 
 interface BaseRow {
@@ -1867,6 +1876,286 @@ export function registerPlayer(app: FastifyInstance): void {
       };
     },
   );
+
+  // --- Heroes ---------------------------------------------------------------
+  // GET /player/heroes — full catalog + the player's ownership /
+  // equipped state. The client merges these into one screen of
+  // cards. Catalog ships from shared/types/heroes.ts so the client
+  // can also import HERO_CATALOG directly; sending it on the wire
+  // means a future server-side balance change ships without a
+  // client redeploy.
+  app.get('/player/heroes', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+    const res = await pool.query<Pick<PlayerRow,
+      'hero_ownership' | 'hero_equipped' | 'hero_chest_claimed' | 'sugar' | 'aphid_milk'
+    >>(
+      `SELECT hero_ownership, hero_equipped, hero_chest_claimed, sugar, aphid_milk
+         FROM players WHERE id = $1`,
+      [playerId],
+    );
+    if (res.rows.length === 0) {
+      reply.code(404);
+      return { error: 'player not found' };
+    }
+    const row = res.rows[0]!;
+    const ownedCount = Object.keys(row.hero_ownership ?? {}).length;
+    return {
+      catalog: HERO_CATALOG,
+      ladder: HERO_PRICE_LADDER,
+      maxEquipped: MAX_EQUIPPED_HEROES,
+      ownership: {
+        owned: row.hero_ownership ?? {},
+        equipped: row.hero_equipped ?? [],
+        chestClaimed: !!row.hero_chest_claimed,
+      },
+      // Cost the NEXT buy (not chest) would charge. The chest gift
+      // is free, so when chestClaimed = false the client should
+      // call /heroes/chest-claim instead of /heroes/buy.
+      nextBuyCost: HERO_PRICE_LADDER[
+        Math.min(HERO_PRICE_LADDER.length - 1, ownedCount)
+      ],
+      wallet: {
+        sugar: safeBigintToNumber(String(row.sugar), 'sugar', app.log),
+        aphidMilk: safeBigintToNumber(String(row.aphid_milk), 'aphid_milk', app.log),
+      },
+    };
+  });
+
+  // POST /player/heroes/chest-claim — first-hero free gift. Body
+  // selects which hero to receive; idempotent (a second call after
+  // claim returns the existing state).
+  interface HeroClaimBody { kind: HeroKind }
+  app.post<{ Body: HeroClaimBody }>('/player/heroes/chest-claim', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+    const body = req.body ?? ({} as HeroClaimBody);
+    if (!body.kind || !HERO_CATALOG[body.kind]) {
+      reply.code(400);
+      return { error: 'unknown hero kind' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const r = await client.query<Pick<PlayerRow,
+        'hero_ownership' | 'hero_equipped' | 'hero_chest_claimed'
+      >>(
+        `SELECT hero_ownership, hero_equipped, hero_chest_claimed
+           FROM players WHERE id = $1 FOR UPDATE`,
+        [playerId],
+      );
+      if (r.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const row = r.rows[0]!;
+      if (row.hero_chest_claimed) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'chest already claimed' };
+      }
+      const owned = { ...(row.hero_ownership ?? {}), [body.kind]: true };
+      // Auto-equip the new hero so the player isn't asked twice
+      // (claim → equip). A first-time claim with no other heroes
+      // lands directly in the equipped slot.
+      const equipped = Array.isArray(row.hero_equipped) ? [...row.hero_equipped] : [];
+      if (equipped.length < MAX_EQUIPPED_HEROES && !equipped.includes(body.kind)) {
+        equipped.push(body.kind);
+      }
+      await client.query(
+        `UPDATE players
+            SET hero_ownership = $2::jsonb,
+                hero_equipped = $3::jsonb,
+                hero_chest_claimed = TRUE
+          WHERE id = $1`,
+        [playerId, JSON.stringify(owned), JSON.stringify(equipped)],
+      );
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        ownership: { owned, equipped, chestClaimed: true },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/heroes/chest-claim failed');
+      reply.code(500);
+      return { error: 'claim failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /player/heroes/buy — purchase the Nth hero per the price
+  // ladder. The Nth (0-indexed) bought hero pays HERO_PRICE_LADDER[N].
+  // Index 0 is the free chest gift, so we start at index 1.
+  interface HeroBuyBody { kind: HeroKind }
+  app.post<{ Body: HeroBuyBody }>('/player/heroes/buy', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+    const body = req.body ?? ({} as HeroBuyBody);
+    if (!body.kind || !HERO_CATALOG[body.kind]) {
+      reply.code(400);
+      return { error: 'unknown hero kind' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const r = await client.query<Pick<PlayerRow,
+        'hero_ownership' | 'hero_equipped' | 'sugar' | 'aphid_milk'
+      >>(
+        `SELECT hero_ownership, hero_equipped, sugar, aphid_milk
+           FROM players WHERE id = $1 FOR UPDATE`,
+        [playerId],
+      );
+      if (r.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const row = r.rows[0]!;
+      const ownedMap = (row.hero_ownership ?? {}) as Record<string, true>;
+      if (ownedMap[body.kind]) {
+        await client.query('ROLLBACK');
+        reply.code(409);
+        return { error: 'hero already owned' };
+      }
+      const ownedCount = Object.keys(ownedMap).length;
+      // Index 0 = free chest gift slot. The first BUY is at
+      // ladder index 1 (assuming chest already claimed). If a player
+      // tries to buy without claiming, we still charge from index 1
+      // — they're skipping the free reward of their own accord.
+      const ladderIdx = Math.max(1, Math.min(HERO_PRICE_LADDER.length - 1, ownedCount));
+      const cost = HERO_PRICE_LADDER[ladderIdx]!;
+      const sugarHave = BigInt(row.sugar);
+      const milkHave = BigInt(row.aphid_milk);
+      if (sugarHave < BigInt(cost.sugar) || milkHave < BigInt(cost.aphidMilk)) {
+        await client.query('ROLLBACK');
+        reply.code(402);
+        return {
+          error: 'insufficient resources',
+          needSugar: cost.sugar,
+          needMilk: cost.aphidMilk,
+          haveSugar: Number(sugarHave),
+          haveMilk: Number(milkHave),
+        };
+      }
+      const newSugar = (sugarHave - BigInt(cost.sugar)).toString();
+      const newMilk = (milkHave - BigInt(cost.aphidMilk)).toString();
+      const newOwned = { ...ownedMap, [body.kind]: true };
+      const equipped = Array.isArray(row.hero_equipped) ? [...row.hero_equipped] : [];
+      if (equipped.length < MAX_EQUIPPED_HEROES && !equipped.includes(body.kind)) {
+        equipped.push(body.kind);
+      }
+      await client.query(
+        `UPDATE players
+            SET hero_ownership = $2::jsonb,
+                hero_equipped = $3::jsonb,
+                sugar = $4,
+                aphid_milk = $5
+          WHERE id = $1`,
+        [playerId, JSON.stringify(newOwned), JSON.stringify(equipped), newSugar, newMilk],
+      );
+      await client.query('COMMIT');
+      return {
+        ok: true,
+        ownership: { owned: newOwned, equipped, chestClaimed: true },
+        wallet: {
+          sugar: safeBigintToNumber(newSugar, 'sugar', app.log),
+          aphidMilk: safeBigintToNumber(newMilk, 'aphid_milk', app.log),
+        },
+        spent: cost,
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/heroes/buy failed');
+      reply.code(500);
+      return { error: 'buy failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /player/heroes/equip — toggle a hero in/out of the
+  // equipped slot. Caps at MAX_EQUIPPED_HEROES; equipping a
+  // 3rd while two are slotted returns 409.
+  interface HeroEquipBody { kind: HeroKind; equipped: boolean }
+  app.post<{ Body: HeroEquipBody }>('/player/heroes/equip', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+    const body = req.body ?? ({} as HeroEquipBody);
+    if (!body.kind || !HERO_CATALOG[body.kind]) {
+      reply.code(400);
+      return { error: 'unknown hero kind' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const r = await client.query<Pick<PlayerRow, 'hero_ownership' | 'hero_equipped'>>(
+        `SELECT hero_ownership, hero_equipped FROM players WHERE id = $1 FOR UPDATE`,
+        [playerId],
+      );
+      if (r.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const row = r.rows[0]!;
+      const ownedMap = (row.hero_ownership ?? {}) as Record<string, true>;
+      if (!ownedMap[body.kind]) {
+        await client.query('ROLLBACK');
+        reply.code(403);
+        return { error: 'hero not owned' };
+      }
+      let equipped = Array.isArray(row.hero_equipped) ? [...row.hero_equipped] : [];
+      if (body.equipped) {
+        if (equipped.includes(body.kind)) {
+          // Idempotent — already equipped is a no-op.
+        } else if (equipped.length >= MAX_EQUIPPED_HEROES) {
+          await client.query('ROLLBACK');
+          reply.code(409);
+          return { error: `cannot equip more than ${MAX_EQUIPPED_HEROES} heroes` };
+        } else {
+          equipped.push(body.kind);
+        }
+      } else {
+        equipped = equipped.filter((k) => k !== body.kind);
+      }
+      await client.query(
+        `UPDATE players SET hero_equipped = $2::jsonb WHERE id = $1`,
+        [playerId, JSON.stringify(equipped)],
+      );
+      await client.query('COMMIT');
+      return { ok: true, equipped };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/heroes/equip failed');
+      reply.code(500);
+      return { error: 'equip failed' };
+    } finally {
+      client.release();
+    }
+  });
 
   // --- Tutorial / prologue stage --------------------------------------------
   interface TutorialBody { stage: number }

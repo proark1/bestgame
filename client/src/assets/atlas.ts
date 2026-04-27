@@ -97,9 +97,22 @@ export const WALK_CYCLE_FRAME_COUNT = 2;
 // look frantic at the small in-game sprite scale.
 export const WALK_CYCLE_FPS = 6;
 
+// Hero sprite keys (PR C). Heroes are persistent special units the
+// player owns and equips per raid; the per-hero sprite lives at
+// assets/sprites/hero-<Kind>.png and falls back to a procedural
+// placeholder when the disk asset isn't present. See
+// shared/types/heroes.ts for the matching HeroKind union.
+export const HERO_SPRITE_KEYS = [
+  'hero-Mantis',
+  'hero-HerculesBeetle',
+  'hero-WaspQueen',
+  'hero-StagBeetle',
+] as const;
+
 export const ALL_SPRITE_KEYS = [
   ...UNIT_SPRITE_KEYS,
   ...BUILDING_SPRITE_KEYS,
+  ...HERO_SPRITE_KEYS,
   ...UI_SPRITE_KEYS,
 ] as const;
 

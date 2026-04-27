@@ -31,6 +31,7 @@ import { compressBase64Image, humanBytes } from './compress.js';
 import { renderPreviewPanel } from './PreviewPanel.js';
 import {
   BUILDING_SPRITE_KEYS,
+  HERO_SPRITE_KEYS,
   UNIT_SPRITE_KEYS,
 } from '../assets/atlas.js';
 import {
@@ -48,6 +49,7 @@ const UNIT_KEYS = UNIT_SPRITE_KEYS.map((key) => key.replace(/^unit-/, ''));
 const BUILDING_KEYS = BUILDING_SPRITE_KEYS.map((key) =>
   key.replace(/^building-/, ''),
 );
+const HERO_KEYS = HERO_SPRITE_KEYS.map((key) => key.replace(/^hero-/, ''));
 
 interface Compression {
   format: 'webp' | 'png';
@@ -175,11 +177,11 @@ function writeActiveTab(tab: AdminTab): void {
 }
 
 // Active sprite category filter — persisted for convenience
-type SpriteCategory = 'units' | 'ui' | 'branding';
+type SpriteCategory = 'units' | 'heroes' | 'ui' | 'branding';
 const CATEGORY_STORAGE_KEY = 'hive.spriteCategory';
 function readActiveCategory(): SpriteCategory {
   const v = localStorage.getItem(CATEGORY_STORAGE_KEY);
-  if (v === 'ui' || v === 'branding') return v;
+  if (v === 'ui' || v === 'branding' || v === 'heroes') return v;
   return 'units';
 }
 function writeActiveCategory(cat: SpriteCategory): void {
@@ -450,7 +452,7 @@ const MENU_UI_KEYS = [
 
 function composePrompt(
   description: string,
-  kind: 'unit' | 'building' | 'menuUi',
+  kind: 'unit' | 'building' | 'hero' | 'menuUi',
   key?: string,
 ): string {
   const style = state.prompts?.styleLock ?? '';
@@ -670,6 +672,7 @@ function renderSpritesTab(): HTMLElement {
   categoryBar.className = 'category-bar';
   const categories: Array<{ id: SpriteCategory; label: string }> = [
     { id: 'units', label: 'Units' },
+    { id: 'heroes', label: 'Heroes' },
     { id: 'ui', label: 'UI Elements' },
     { id: 'branding', label: 'Logo & Branding' },
   ];
@@ -772,7 +775,7 @@ function renderSpritesTab(): HTMLElement {
   };
 
   const mk = (
-    kind: 'unit' | 'building' | 'menuUi',
+    kind: 'unit' | 'building' | 'hero' | 'menuUi',
     baseName: string,
   ): SpriteCard => {
     const key = kind === 'menuUi' ? baseName : `${kind}-${baseName}`;
@@ -783,7 +786,9 @@ function renderSpritesTab(): HTMLElement {
         ? 'units'
         : kind === 'building'
           ? 'buildings'
-          : 'menuUi';
+          : kind === 'hero'
+            ? 'heroes'
+            : 'menuUi';
     const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
     const opts: import('./SpriteCard.js').SpriteCardOptions = {
       key,
@@ -861,6 +866,12 @@ function renderSpritesTab(): HTMLElement {
   if (state.activeCategory === 'units') {
     for (const u of UNIT_KEYS) {
       const card = mk('unit', u);
+      state.cards.push(card);
+      grid.append(card.root);
+    }
+  } else if (state.activeCategory === 'heroes') {
+    for (const h of HERO_KEYS) {
+      const card = mk('hero', h);
       state.cards.push(card);
       grid.append(card.root);
     }
