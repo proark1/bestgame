@@ -2707,6 +2707,22 @@ export class HomeScene extends Phaser.Scene {
         const spr = this.homeBuildingSprites.get(queen.id);
         if (spr && spr.active) return spr;
       }
+      return null;
+    }
+    // Guest / starter-base path: drawBuildings() pushes sprites
+    // straight onto boardContainer without populating
+    // homeBuildingSprites, so the indexed lookup above misses every
+    // guest. Walk the container's children and find the one whose
+    // texture key is the QueenChamber sprite. Cheap (a base has
+    // ~10-20 children) and only runs once per coachmark step.
+    for (const child of this.boardContainer.list) {
+      if (
+        child instanceof Phaser.GameObjects.Image &&
+        child.texture.key === 'building-QueenChamber' &&
+        child.active
+      ) {
+        return child;
+      }
     }
     return null;
   }
