@@ -123,23 +123,28 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     this.drawAmbient();
+    // Full-screen layout (Clash-of-Clans style): boardContainer first
+    // so HUD elements (added in drawHud) render above with explicit
+    // DEPTHS.hud. Board fills the viewport; HUD chips overlay.
+    this.boardContainer = this.add.container(0, 0).setDepth(DEPTHS.board);
     this.drawHud();
     this.drawBoardFrame();
-    this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
     this.drawStatusCard();
 
     // Responsive scaling — same pattern as RaidScene. Board container
-    // shrinks on narrow viewports, pointer math below unscales.
+    // shrinks on narrow viewports, pointer math below unscales. The
+    // 80 px bottom reserve is for the status card; no top reserve
+    // because the HUD floats overlaid.
     const applyLayout = (): void => {
       const availW = this.scale.width - 24;
-      const availH = this.scale.height - HUD_H - 80;
+      const availH = this.scale.height - 80;
       const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
       this.boardContainer.setScale(scale);
       const scaledW = BOARD_W * scale;
       const scaledH = BOARD_H * scale;
       const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
-      const yOffset = HUD_H + Math.max(8, (availH - scaledH) / 2);
+      const yOffset = Math.max(8, (availH - scaledH) / 2);
       this.boardContainer.setPosition(xOffset, yOffset);
       this.layoutBoardFrame(xOffset, yOffset, scaledW, scaledH);
       this.layoutStatusCard(yOffset + scaledH);
@@ -197,24 +202,17 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
+    // Clash-of-Clans-style overlay HUD: the chrome panel/shadow strip
+    // is gone; only the floating chips (PvP pill, Home button, Live
+    // Arena title) remain, each pinned at DEPTHS.hud so they render
+    // above the board.
     const w = this.scale.width;
-    const g = this.add.graphics();
-    drawPanel(g, 0, 0, w, HUD_H, {
-      topColor: COLOR.bgPanelHi,
-      botColor: COLOR.bgPanelLo,
-      strokeWidth: 0,
-      highlight: COLOR.brass,
-      highlightAlpha: 0.12,
-      radius: 0,
-      shadowOffset: 0,
-      shadowAlpha: 0,
-    });
-    g.fillStyle(0x000000, 0.42);
-    g.fillRect(0, HUD_H, w, 3);
 
-    const pill = this.add.graphics();
+    const pill = this.add.graphics().setDepth(DEPTHS.hud);
     drawPill(pill, w / 2 - 184, 18, 74, 20, { brass: true });
-    crispText(this, w / 2 - 147, 28, 'PvP', labelTextStyle(10, COLOR.textGold)).setOrigin(0.5, 0.5);
+    crispText(this, w / 2 - 147, 28, 'PvP', labelTextStyle(10, COLOR.textGold))
+      .setOrigin(0.5, 0.5)
+      .setDepth(DEPTHS.hud);
 
     makeHiveButton(this, {
       x: 72,
@@ -228,10 +226,10 @@ export class ArenaScene extends Phaser.Scene {
         void this.arena?.leave();
         fadeToScene(this, 'HomeScene');
       },
-    });
-    crispText(this, w / 2, HUD_H / 2, 'Live Arena', displayTextStyle(20, COLOR.textGold, 4)).setOrigin(
-      0.5,
-    );
+    }).container.setDepth(DEPTHS.hud);
+    crispText(this, w / 2, HUD_H / 2, 'Live Arena', displayTextStyle(20, COLOR.textGold, 4))
+      .setOrigin(0.5)
+      .setDepth(DEPTHS.hud);
   }
 
   private drawBoardFrame(): void {
@@ -414,7 +412,19 @@ export class ArenaScene extends Phaser.Scene {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (!this.started || this.hasError) return;
-      if (p.y < HUD_H || p.y > HUD_H + BOARD_H) return;
+      // Reject pointerdowns outside the actual board rectangle. The
+      // board is now centered (and may be scaled) inside a full-screen
+      // viewport, so we read its live bounds rather than assuming the
+      // old fixed (HUD_H..HUD_H+BOARD_H) y range.
+      const bounds = this.boardContainer.getBounds();
+      if (
+        p.x < bounds.x ||
+        p.x > bounds.x + bounds.width ||
+        p.y < bounds.y ||
+        p.y > bounds.y + bounds.height
+      ) {
+        return;
+      }
       this.isDrawing = true;
       this.drawingPoints = [{ x: p.x, y: p.y }];
       this.renderTrailPreview();
