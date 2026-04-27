@@ -270,6 +270,60 @@ export class HomeScene extends Phaser.Scene {
       // so the drill kicks in promptly on a brand-new account.
       this.time.delayedCall(armed ? 1200 : 700, () => this.runCoachmarkStep());
     }
+
+    // Welcome-back harvest banner. The server credits offline
+    // production into the wallet on /me (clamped to storage caps +
+    // an 8h MAX_OFFLINE_SECONDS), then echoes the credited amounts
+    // back as `offlineTrickle`. Surfacing them as a brief toast lets
+    // the player understand "this is how production / harvest works"
+    // without a separate explainer screen. Skipped when nothing
+    // landed (fresh install, instant return) or when this is a
+    // post-raid re-entry (which already shows the loot card).
+    if (runtime?.player) {
+      const trickle = runtime.player.offlineTrickle;
+      if (
+        trickle &&
+        trickle.secondsElapsed > 0 &&
+        (trickle.sugarGained + trickle.leafGained + trickle.milkGained) > 0
+      ) {
+        // One-shot — clear so a coachmark / scene restart doesn't
+        // re-fire the toast on the same trickle payload.
+        runtime.player.offlineTrickle = {
+          secondsElapsed: 0,
+          sugarGained: 0,
+          leafGained: 0,
+          milkGained: 0,
+        };
+        this.time.delayedCall(450, () => {
+          this.flashHarvestToast(trickle);
+        });
+      }
+    }
+  }
+
+  // Multi-line "welcome back" banner showing the offline harvest the
+  // server just credited. Reads from the offlineTrickle echo that
+  // /player/me returns; the wallet has already been updated, so this
+  // is purely an explainer. Auto-dismisses after a few seconds; the
+  // player can also tap to dismiss early.
+  private flashHarvestToast(trickle: {
+    secondsElapsed: number;
+    sugarGained: number;
+    leafGained: number;
+    milkGained: number;
+  }): void {
+    const parts: string[] = [];
+    if (trickle.sugarGained > 0) parts.push(`+${trickle.sugarGained} sugar`);
+    if (trickle.leafGained > 0) parts.push(`+${trickle.leafGained} leaf`);
+    if (trickle.milkGained > 0) parts.push(`+${trickle.milkGained} milk`);
+    const hours = Math.floor(trickle.secondsElapsed / 3600);
+    const minutes = Math.floor((trickle.secondsElapsed % 3600) / 60);
+    const elapsed =
+      hours > 0
+        ? `${hours}h${minutes > 0 ? ` ${minutes}m` : ''}`
+        : `${minutes}m`;
+    const summary = `${parts.join('  ')} from ${elapsed} of production`;
+    this.flashToast(`Harvest delivered — ${summary}`);
   }
 
   // Tracks whether we're currently being entered from a replay
@@ -368,18 +422,36 @@ export class HomeScene extends Phaser.Scene {
     });
   }
 
-  // Formats the inside-pill value text. Pills show ONLY the current
-  // wallet number — the cap, income rate, and "next milestone in N
-  // seconds" detail moves to the popover that opens on tap (see
-  // openResourcePopover). Cleaner glance state, full detail on click.
-  // Milk is always raw — uncapped in MVP.
+  // Formats the inside-pill value text. Sugar + leaf show
+  // "current/cap" so the player understands storage gates production
+  // (when the value reaches the cap, producers stop crediting until
+  // the wallet drains). Both numbers use k-formatting (1240 → 1.2k)
+  // once they exceed 1000 so the pill stays narrow on phone.
   private formatPillValue(kind: 'sugar' | 'leaf' | 'milk'): string {
-    if (kind === 'sugar') return `${this.resources.sugar}`;
-    if (kind === 'leaf') return `${this.resources.leafBits}`;
+    const fmt = (n: number): string => {
+      if (n < 1000) return String(Math.floor(n));
+      const thousands = n / 1000;
+      // 1.2k below 10k; 10k+ rounds to whole-k so "12k" not "12.3k".
+      return thousands >= 10
+        ? `${Math.round(thousands)}k`
+        : `${thousands.toFixed(1).replace(/\.0$/, '')}k`;
+    };
+    if (kind === 'sugar') {
+      const cap = this.storageCaps.sugar;
+      return cap !== null
+        ? `${fmt(this.resources.sugar)} / ${fmt(cap)}`
+        : fmt(this.resources.sugar);
+    }
+    if (kind === 'leaf') {
+      const cap = this.storageCaps.leaf;
+      return cap !== null
+        ? `${fmt(this.resources.leafBits)} / ${fmt(cap)}`
+        : fmt(this.resources.leafBits);
+    }
     // aphidMilk accumulates fractional locally (see update() trickle); we
     // floor for display so the HUD pill stays integer-clean and matches
     // what the server has banked at the last /me roundtrip.
-    return `${Math.floor(this.resources.aphidMilk)}`;
+    return fmt(this.resources.aphidMilk);
   }
 
   // Sums the per-second production from the active server base (or the
@@ -415,6 +487,22 @@ export class HomeScene extends Phaser.Scene {
     return total;
   }
 
+  // True when the wallet has hit the storage cap for this resource.
+  // Used by the HUD to swap the per-pill rate subtitle from
+  // "+8/s" to "FULL" so the player understands production is gated
+  // until they spend the wallet down.
+  private isResourceCapped(kind: 'sugar' | 'leaf' | 'milk'): boolean {
+    if (kind === 'sugar') {
+      const cap = this.storageCaps.sugar;
+      return cap !== null && this.resources.sugar >= cap;
+    }
+    if (kind === 'leaf') {
+      const cap = this.storageCaps.leaf;
+      return cap !== null && this.resources.leafBits >= cap;
+    }
+    return false; // milk is uncapped in MVP
+  }
+
   // Single point of truth for refreshing the HUD pills after any
   // resource mutation (trickle, raid result, upgrade debit, place /
   // move building changing the production curve). Keeps the cap
@@ -423,18 +511,23 @@ export class HomeScene extends Phaser.Scene {
     if (this.sugarText) this.sugarText.setText(this.formatPillValue('sugar'));
     if (this.leafText) this.leafText.setText(this.formatPillValue('leaf'));
     if (this.milkText) this.milkText.setText(this.formatPillValue('milk'));
-    if (this.sugarRateText) {
-      const r = this.computeRate('sugar');
-      this.sugarRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
-    }
-    if (this.leafRateText) {
-      const r = this.computeRate('leaf');
-      this.leafRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
-    }
-    if (this.milkRateText) {
-      const r = this.computeRate('milk');
-      this.milkRateText.setText(r > 0 ? `+${formatRate(r)}/sec` : '');
-    }
+    const refreshRate = (
+      text: Phaser.GameObjects.Text | null,
+      kind: 'sugar' | 'leaf' | 'milk',
+    ): void => {
+      if (!text) return;
+      if (this.isResourceCapped(kind)) {
+        text.setText('FULL');
+        text.setColor(COLOR.textError);
+        return;
+      }
+      const r = this.computeRate(kind);
+      text.setText(r > 0 ? `+${formatRate(r)}/s` : '');
+      text.setColor(COLOR.textDim);
+    };
+    refreshRate(this.sugarRateText, 'sugar');
+    refreshRate(this.leafRateText, 'leaf');
+    refreshRate(this.milkRateText, 'milk');
   }
 
   // Scene-wide ambient: a continuous grass background behind the
@@ -608,7 +701,10 @@ export class HomeScene extends Phaser.Scene {
     ];
 
     const PILL_H = tier === 'phone' ? 30 : 34;
-    const PILL_W = tier === 'phone' ? 110 : 140;
+    // Wider pills so "current / cap" (e.g. "1240 / 12000") fits
+    // without truncation. Phone keeps the narrower variant; cap on
+    // phone reads as "1240" alone (formatPillValue sized for it).
+    const PILL_W = tier === 'phone' ? 122 : 168;
     const PILL_PAD_X = tier === 'phone' ? 8 : 10;
     const PILL_GAP = tier === 'phone' ? 6 : SPACING.sm;
     const ICON_SIZE = tier === 'phone' ? 20 : 24;
@@ -646,17 +742,22 @@ export class HomeScene extends Phaser.Scene {
       });
 
       // Inline rate badge: "+8/s" sits centered between the icon and
-      // the value, dim cream so it reads as a subtitle. Skipped for
-      // resources with no producers or on the phone tier where the
-      // pill is too tight to hold extra text.
+      // the value, dim cream so it reads as a subtitle. Switches to
+      // "FULL" in coral when the wallet has hit the storage cap so
+      // the player understands "I need a vault before I'll produce
+      // more". Skipped on phone tier (no horizontal room) and for
+      // kinds with no producers.
       const rateValue = this.computeRate(kind);
-      if (tier !== 'phone' && rateValue > 0) {
+      const isFull = this.isResourceCapped(kind);
+      const rateLabel = isFull ? 'FULL' : `+${formatRate(rateValue)}/s`;
+      const rateColor = isFull ? COLOR.textError : COLOR.textDim;
+      if (tier !== 'phone' && (rateValue > 0 || isFull)) {
         const rateText = crispText(
           this,
           pillX + PILL_PAD_X + ICON_SIZE + 6,
           pcy,
-          `+${formatRate(rateValue)}/s`,
-          labelTextStyle(9, COLOR.textDim),
+          rateLabel,
+          labelTextStyle(9, rateColor),
         ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
         if (kind === 'sugar') this.sugarRateText = rateText;
         else if (kind === 'leaf') this.leafRateText = rateText;
@@ -987,12 +1088,12 @@ export class HomeScene extends Phaser.Scene {
     void glyph;
   }
 
-  // Clash-of-Clans-style profile card. Far-left disc holds the
-  // colony level (Queen Chamber tier); to its right a pill shows
-  // the player's name + trophy count. Tapping anywhere on the card
-  // opens the account menu. On phone the card collapses to just the
-  // level disc + a small trophy badge so it doesn't crowd the
-  // burger button.
+  // Icon-only profile card — Clash-of-Clans style. A brass level
+  // disc sits in the top-left corner with a compact trophy chip
+  // underneath. The username pill is gone in fullscreen-map mode;
+  // the player can still open the account menu (login / claim /
+  // logout) by tapping the disc. Username is surfaced inside the
+  // account modal once opened.
   private drawAccountChip(tier: 'wide' | 'narrow' | 'phone'): void {
     const cy = HUD_H / 2;
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
@@ -1016,92 +1117,44 @@ export class HomeScene extends Phaser.Scene {
       displayTextStyle(tier === 'phone' ? 16 : 20, COLOR.textDark, 2),
     ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
 
-    if (tier === 'phone') {
-      // Phone layout: just the level disc — full name pill would
-      // overlap the right-side resource stack on a 375 px viewport.
-      // accountChip stays defined as an off-screen text so the
-      // fetchMe() callback below has somewhere to write.
-      this.accountChip = crispText(this, -9999, -9999, '', labelTextStyle(10));
-      this.add
-        .zone(discX, cy, discSize, discSize)
-        .setOrigin(0.5, 0.5)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(DEPTHS.hud)
-        .on('pointerdown', () => this.openAccountMenu());
-      // Trophy chip below the disc — keeps the trophy count visible
-      // even when the name pill is hidden.
-      const trophyW = 56;
-      const trophyH = 18;
-      const trophyY = cy + discSize / 2 + 4;
-      const trophyBg = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(trophyBg, discX - trophyW / 2, trophyY, trophyW, trophyH, {
-        brass: false,
-      });
-      crispText(
-        this,
-        discX,
-        trophyY + trophyH / 2,
-        `▲ ${trophies}`,
-        labelTextStyle(10, COLOR.textGold),
-      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
-      void trophyBg;
-    } else {
-      // Wide / narrow: full name pill with trophy badge inset.
-      const pillX = discX + discSize / 2 - 10; // overlap so disc reads as anchored
-      const pillW = tier === 'wide' ? 168 : 132;
-      const pillH = tier === 'wide' ? 36 : 32;
-      const pill = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(pill, pillX, cy - pillH / 2, pillW, pillH, { brass: false });
-      // Trophy badge along the bottom edge of the pill — small brass
-      // strip with "▲ trophies" so the player sees their league rank
-      // without leaving the home screen.
-      const trophyBadgeW = 64;
-      const trophyBadgeH = 16;
-      const trophyBadgeX = pillX + pillW - trophyBadgeW - 6;
-      const trophyBadgeY = cy + pillH / 2 - trophyBadgeH / 2 - 4;
-      const trophyBadge = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(
-        trophyBadge,
-        trophyBadgeX,
-        trophyBadgeY,
-        trophyBadgeW,
-        trophyBadgeH,
-        { brass: true },
-      );
-      crispText(
-        this,
-        trophyBadgeX + trophyBadgeW / 2,
-        trophyBadgeY + trophyBadgeH / 2,
-        `▲ ${trophies}`,
-        labelTextStyle(10, COLOR.textDark),
-      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+    // Off-screen accountChip placeholder — kept so the fetchMe()
+    // callback has somewhere to write. The username is no longer
+    // shown on the HUD; it surfaces inside the account modal when
+    // the disc is tapped.
+    this.accountChip = crispText(this, -9999, -9999, '', labelTextStyle(10));
 
-      this.accountChip = crispText(
-        this,
-        pillX + 14,
-        cy - 4,
-        'GUEST',
-        displayTextStyle(tier === 'wide' ? 14 : 12, COLOR.textPrimary, 2),
-      ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
-      // Hit zone covers the full visual area: pill + the disc that
-      // overlaps to its left. Using max(pillH, discSize) keeps the
-      // disc's top/bottom inside the tappable region — pillH alone
-      // is shorter than the 44 px disc, leaving dead bands.
-      const hitH = Math.max(pillH, discSize);
-      this.add
-        .zone(discX + (pillW + discSize) / 2 - discSize / 2, cy, pillW + discSize, hitH)
-        .setOrigin(0.5, 0.5)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(DEPTHS.hud)
-        .on('pointerdown', () => this.openAccountMenu());
-      void pill;
-      void trophyBadge;
-    }
+    // Trophy chip directly under the disc. Same on every tier so the
+    // top-left icon stack is consistent across viewports.
+    const trophyW = tier === 'phone' ? 52 : 60;
+    const trophyH = tier === 'phone' ? 16 : 18;
+    const trophyY = cy + discSize / 2 + 4;
+    const trophyBg = this.add.graphics().setDepth(DEPTHS.hud);
+    drawPill(trophyBg, discX - trophyW / 2, trophyY, trophyW, trophyH, {
+      brass: false,
+    });
+    crispText(
+      this,
+      discX,
+      trophyY + trophyH / 2,
+      `▲ ${trophies}`,
+      labelTextStyle(tier === 'phone' ? 9 : 10, COLOR.textGold),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+    void trophyBg;
 
-    // fetchMe runs for every tier so the username + color update
-    // even when the player first lands on a phone-tier viewport.
-    // accountChip is always defined (off-screen for phone), so this
-    // never null-derefs.
+    // Single hit zone covering disc + trophy chip — entire icon
+    // stack is tappable so even fat-finger taps catch the menu.
+    const hitH = discSize + 4 + trophyH;
+    this.add
+      .zone(discX, cy + 2, Math.max(discSize, trophyW), hitH)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(DEPTHS.hud)
+      .on('pointerdown', () => this.openAccountMenu());
+
+    // fetchMe still runs so the off-screen accountChip stays in
+    // sync; the modal that opens on tap reads from rt.auth, not
+    // from accountChip, but keeping the field warm avoids dead
+    // state across scene restarts.
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (rt) {
       void rt.auth.fetchMe().then((me) => {
@@ -1247,46 +1300,20 @@ export class HomeScene extends Phaser.Scene {
       }
     }
 
-    // Thick CoC-style wooden frame around the playable area. Two-
-    // ring stroke + a thin brass inner highlight + a drop shadow
-    // below. Makes the board read as a discrete, raised object
-    // against the scene ambient.
+    // No visible board frame in fullscreen-map mode. The previous
+    // render painted a rounded mint outline + drop shadow, which
+    // read as a raised "card" floating on the grass — the user
+    // perceived it as letterboxing. Letting the playfield bleed
+    // straight into the surrounding ambient grass gives the true
+    // CoC-style "village inside one continuous map" feel.
     const frame = this.add.graphics();
-    // Soft navy-tinted ambient shadow under the playfield.
-    frame.fillStyle(0x1f2148, 0.22);
-    frame.fillRoundedRect(-3, -1, BOARD_W + 6, BOARD_H + 8, 14);
-    // Outer ring — soft mint outline so the board reads as a card on
-    // the cream scene without the heavy wooden look.
-    frame.lineStyle(4, COLOR.outline, 0.85);
-    frame.strokeRoundedRect(1, 1, BOARD_W - 2, BOARD_H - 2, 12);
-    // Inner soft white highlight (subtle bevel)
-    frame.lineStyle(1, 0xffffff, 0.45);
-    frame.strokeRoundedRect(3, 3, BOARD_W - 6, BOARD_H - 6, 10);
+    void frame;
 
-    // Clash-of-Clans-style layer banner: a single brass chip with
-    // just the mode title, vertically centered. The prior version
-    // stacked a descriptive subtitle BELOW the chip (outside the
-    // pill outline), which read as two disconnected labels rather
-    // than one banner. Dropping the subtitle and centering the
-    // title keeps the label clean and matches the "chip + icon"
-    // pattern used elsewhere in the game.
-    const badgeW = 180;
-    const badgeH = 34;
-    const badgeX = 18;
-    const badgeY = 16;
-    const badge = this.add.graphics();
-    drawPill(badge, badgeX, badgeY, badgeW, badgeH, { brass: true });
-    const modeTitle =
-      this.layer === 0 ? 'Surface Colony' : 'Underground Warren';
-    const badgeTitle = crispText(
-      this,
-      badgeX + badgeW / 2,
-      badgeY + badgeH / 2,
-      modeTitle,
-      displayTextStyle(14, COLOR.textGold, 3),
-    ).setOrigin(0.5, 0.5);
-
-    this.boardContainer.add([bg, deco, grid, frame, badge, badgeTitle]);
+    // No mode-title banner inside the board — the layer-flip button
+    // in the bottom-left corner doubles as the mode indicator (☀ for
+    // surface, ⛏ for underground), so a redundant brass chip on the
+    // playfield would just compete with building art for attention.
+    this.boardContainer.add([bg, deco, grid, frame]);
   }
 
   // Index of server-base building sprites keyed by the building's
@@ -2487,10 +2514,16 @@ export class HomeScene extends Phaser.Scene {
   // can dispose them on scene restart without touching the rest of
   // the HUD.
   private cornerActionButtons: HiveButton[] = [];
+  // Direct reference to the corner Raid CTA so the coachmark drill
+  // can halo it without needing to introspect cornerActionButtons by
+  // index (the index shifts when stack-top-budget hides entries on
+  // shorter viewports).
+  private cornerRaidButton: HiveButton | null = null;
 
   private drawCornerActionStacks(): void {
     for (const btn of this.cornerActionButtons) btn.destroy();
     this.cornerActionButtons = [];
+    this.cornerRaidButton = null;
 
     // Compact icon-only buttons — 44 px square, big enough for a
     // thumb tap, small enough that two columns of three buttons fit
@@ -2509,13 +2542,41 @@ export class HomeScene extends Phaser.Scene {
     // so the early-out triggered at i=0 and no icons rendered.
     const stackTopBudget = HUD_H + 130;
 
-    type Entry = { label: string; onPress: () => void };
+    type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
+    // Layer flip is the BOTTOM entry of the left stack so it sits in
+    // the corner where the player's thumb naturally rests; Quests +
+    // Recent + Help climb up from there. The icon flips with the
+    // current layer so the player can tell at a glance which side
+    // they're on without a separate text banner.
+    const flipIcon = this.layer === 0 ? '⛏' : '☀';
     const leftStack: Entry[] = [
+      {
+        label: flipIcon,
+        onPress: () => {
+          this.exitMoveMode();
+          this.layer = this.layer === 0 ? 1 : 0;
+          this.boardContainer.removeAll(true);
+          this.drawBoard();
+          this.drawBuildings();
+          this.drawCornerActionStacks();
+        },
+      },
       { label: '🗓', onPress: () => fadeToScene(this, 'QuestsScene') },
       { label: '📜', onPress: () => fadeToScene(this, 'RaidHistoryScene') },
       { label: '❓', onPress: () => openTutorial({ force: true }) },
     ];
+    // Raid is the bottom-most right-stack entry — primary variant so
+    // the gold pill reads as the main action of the screen even at
+    // 44 px square. Settings / Upgrades / Clan / Ranks climb up.
     const rightStack: Entry[] = [
+      {
+        label: '⚔',
+        variant: 'primary',
+        onPress: () => {
+          this.advanceCoachmark('raid');
+          fadeToScene(this, 'RaidScene');
+        },
+      },
       { label: '⚙', onPress: () => openSettings() },
       { label: '⚒', onPress: () => fadeToScene(this, 'UpgradeScene') },
       { label: '👥', onPress: () => fadeToScene(this, 'ClanScene') },
@@ -2523,13 +2584,10 @@ export class HomeScene extends Phaser.Scene {
     ];
 
     const placeColumn = (entries: Entry[], anchorX: number, side: 'left' | 'right'): void => {
-      // Stack rises bottom-up from above the corner CTA. Each entry
-      // sits one (size + gap) higher than the previous so the topmost
-      // icon is the most-distant from the CTA.
-      const startY = ctaTop - SPACING.sm - iconBtnSize / 2;
+      const bottomY = this.scale.height - bottomPad - iconBtnSize / 2;
       for (let i = 0; i < entries.length; i++) {
         const e = entries[i]!;
-        const y = startY - i * (iconBtnSize + stackGap);
+        const y = bottomY - i * (iconBtnSize + stackGap);
         if (y < stackTopBudget) break; // Don't paint into the HUD pills.
         const x = side === 'left'
           ? anchorX + iconBtnSize / 2
@@ -2540,21 +2598,25 @@ export class HomeScene extends Phaser.Scene {
           width: iconBtnSize,
           height: iconBtnSize,
           label: e.label,
-          variant: 'secondary',
-          fontSize: 18,
+          variant: e.variant ?? 'secondary',
+          fontSize: 20,
           onPress: e.onPress,
         });
         btn.container.setDepth(DEPTHS.hud);
         this.cornerActionButtons.push(btn);
+        // Stash the Raid button by label so the coachmark can halo
+        // it without indexing the array (shifted on small heights).
+        if (e.label === '⚔') this.cornerRaidButton = btn;
       }
     };
 
-    // Left column sits above-and-just-right-of the bottom-left CTA.
-    // Right column sits above-and-just-left-of the bottom-right CTA.
+    // Left column anchors at bottom-left; right column at bottom-
+    // right. Both grow upward.
     const leftAnchorX = HomeScene.FOOTER_MARGIN_X;
     const rightAnchorX = this.scale.width - HomeScene.FOOTER_MARGIN_X;
     placeColumn(leftStack, leftAnchorX, 'left');
     placeColumn(rightStack, rightAnchorX, 'right');
+    void ctaTop; // ctaTop kept for layout reference; not currently used.
   }
 
   private drawFooter(): void {
@@ -2579,63 +2641,20 @@ export class HomeScene extends Phaser.Scene {
       return;
     }
 
-    // Clash-of-Clans-style corner action stacks. Two big CTAs anchor
-    // the bottom corners (Attack, Shop) and a column of small icon
-    // buttons sits on the inside of each — Help/Recent/Layer-flip on
-    // the left, Settings/Clan/Campaign on the right. The previous
-    // 8-button horizontal row ate ~120 px of board height; corners
-    // cost zero board height because the playfield can scroll under
-    // them.
-    const flipFull = (): string =>
-      this.layer === 0 ? 'Flip → Underground' : 'Flip → Surface';
-    const flipShort = (): string =>
-      this.layer === 0 ? '↓ Underground' : '↑ Surface';
-
-    // We still keep `buttons` around because layoutFooter +
-    // footerLabelForIndex + advanceCoachmark expect this.footerButtons
-    // populated. Index 0 is the layer-flip button (referenced by the
-    // burger flow + this footer's flip handler). The "raid" coachmark
-    // halos the LAST footer button — we put the primary Attack CTA
-    // there to keep that target right.
-    const buttons: Array<{
-      full: () => string;
-      short: () => string;
-      variant: 'primary' | 'secondary';
-      onPress: () => void;
-    }> = [
-      {
-        full: flipFull,
-        short: flipShort,
-        variant: 'secondary',
-        onPress: () => {
-          this.exitMoveMode();
-          this.layer = this.layer === 0 ? 1 : 0;
-          const btn = this.footerButtons[0];
-          btn?.setLabel(this.footerLabelForIndex(0));
-          this.boardContainer.removeAll(true);
-          this.drawBoard();
-          this.drawBuildings();
-        },
-      },
-      {
-        full: () => 'Raid →',
-        short: () => 'Raid →',
-        variant: 'primary',
-        onPress: () => {
-          this.advanceCoachmark('raid');
-          fadeToScene(this, 'RaidScene');
-        },
-      },
-    ];
-
-    this.footerButtonDefs = buttons;
-    this.footerButtons = buttons.map((b) =>
-      this.makeButton(0, 0, b.full(), b.variant, b.onPress),
-    );
-    for (const btn of this.footerButtons) {
-      btn.container.setDepth(DEPTHS.hud);
+    // The flip and raid actions used to be wide labelled CTAs in the
+    // bottom corners. Per CoC's pattern (and the user's ask) they are
+    // now the same size as the rest of the corner stack — small icon
+    // rectangles that read alongside Quests / Recent / Settings / etc.
+    // footerButtons stays empty in fullscreen-map mode; the layer
+    // flip + raid trigger live inside drawCornerActionStacks below.
+    this.footerButtonDefs = [];
+    this.footerButtons = [];
+    if (!this.layerLabel) {
+      this.layerLabel = crispText(this, -9999, -9999, '', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '1px',
+      });
     }
-    this.layoutFooter();
     this.drawCornerActionStacks();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.
@@ -2705,15 +2724,14 @@ export class HomeScene extends Phaser.Scene {
       });
     } else if (this.coachmarkStep === 'raid') {
       // Halo whichever Raid CTA is live for the current layout —
-      // mobileRaidCta on phones, footerButtons[1] (the Raid CTA) on
-      // desktop. footerButtons[0] is the layer-flip button; halo'ing
-      // that would point the player at the wrong action.
+      // mobileRaidCta on phones, cornerRaidButton (bottom-right
+      // primary corner button) on desktop.
       let target = { x: 16, y: 16, w: 120, h: 48 };
       if (this.mobileRaidCta) {
         const r = this.mobileRaidCta.container.getBounds();
         target = { x: r.x, y: r.y, w: r.width, h: r.height };
-      } else if (this.footerButtons[1]) {
-        const r = this.footerButtons[1].container.getBounds();
+      } else if (this.cornerRaidButton) {
+        const r = this.cornerRaidButton.container.getBounds();
         target = { x: r.x, y: r.y, w: r.width, h: r.height };
       }
       this.activeCoachmark = showCoachmark({
