@@ -1468,18 +1468,34 @@ export class HomeScene extends Phaser.Scene {
       const cx = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
       const cy = b.anchor.y * TILE - 10;
       const chip = this.add.container(cx, cy).setDepth(DEPTHS.boardOverlay);
+      // Per-resource icon — reads as "tap to harvest sugar" rather
+      // than a generic ✨. Picked from whichever resource has the
+      // largest pending bucket on this building (a DewCollector
+      // pends only sugar; an AphidFarm only milk; a SugarVault
+      // pends both sugar trickle + leaf-on-destroy, but vault
+      // production is sugar-dominant). Renders the matching
+      // sprite from `ui-harvest-{kind}` if available, otherwise
+      // an emoji glyph fallback (pre-art rendering).
+      const dominant = this.dominantPendingResource(b);
+      const spriteKey = `ui-harvest-${dominant}`;
+      const fallbackGlyph = dominant === 'sugar' ? '🍯' : dominant === 'leaf' ? '🍃' : '🥛';
       const bg = this.add.graphics();
       bg.fillStyle(COLOR.brass, 0.95);
       bg.fillCircle(0, 0, 14);
       bg.lineStyle(2, COLOR.brassDeep, 1);
       bg.strokeCircle(0, 0, 14);
-      const label = crispText(this, 0, 1, '✨', displayTextStyle(13, COLOR.textDark, 1)).setOrigin(0.5, 0.5);
+      let face: Phaser.GameObjects.GameObject;
+      if (this.textures.exists(spriteKey)) {
+        face = this.add.image(0, 0, spriteKey).setDisplaySize(20, 20);
+      } else {
+        face = crispText(this, 0, 1, fallbackGlyph, displayTextStyle(13, COLOR.textDark, 1)).setOrigin(0.5, 0.5);
+      }
       const hit = this.add.zone(0, 0, 36, 36).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
       hit.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
         e?.stopPropagation?.();
         void this.runHarvest();
       });
-      chip.add([bg, label, hit]);
+      chip.add([bg, face, hit]);
       // Gentle bobbing tween so the chip reads as "ready to claim"
       // — same affordance CoC uses on its mortar / collector ready
       // state. Cheap, single tween per chip.
@@ -1503,6 +1519,19 @@ export class HomeScene extends Phaser.Scene {
     const p = b.pendingHarvest;
     if (!p) return false;
     return (p.sugar | 0) > 0 || (p.leafBits | 0) > 0 || (p.aphidMilk | 0) > 0;
+  }
+
+  // Pick which resource icon to show on a producer's harvest chip.
+  // Defaults to whichever bucket holds the largest pending value;
+  // ties broken by sugar > leaf > milk (the order the player
+  // unlocks them).
+  private dominantPendingResource(b: Types.Building): 'sugar' | 'leaf' | 'milk' {
+    const p = b.pendingHarvest;
+    if (!p) return 'sugar';
+    const s = p.sugar | 0, l = p.leafBits | 0, m = p.aphidMilk | 0;
+    if (s >= l && s >= m) return 'sugar';
+    if (l >= m) return 'leaf';
+    return 'milk';
   }
 
   private async runHarvest(): Promise<void> {

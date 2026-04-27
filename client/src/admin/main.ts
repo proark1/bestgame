@@ -421,6 +421,13 @@ const MENU_UI_KEYS = [
   'ui-resource-sugar',
   'ui-resource-leaf',
   'ui-resource-milk',
+  // Harvest-ready chips that float over producer buildings when
+  // offline production has banked. HomeScene picks the right one
+  // based on each producer's dominant pending bucket; admin
+  // generates the matching art the same way as other ui-* keys.
+  'ui-harvest-sugar',
+  'ui-harvest-leaf',
+  'ui-harvest-milk',
   'ui-icon-unit-frame',
   'ui-icon-building-frame',
   'ui-badge-victory',

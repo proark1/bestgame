@@ -1090,7 +1090,19 @@
         });
         // Step 2: probe the manifest for a real generated sprite. If
         // the deployed server has one, swap the SVG out for the real
-        // PNG/WEBP at the same key.
+        // PNG/WEBP at the same key. Manifest stores keys with their
+        // category prefix (`unit-WorkerAnt`, `building-QueenChamber`,
+        // `ui-logo`); the data-sprite-key attributes mostly omit the
+        // prefix (just `WorkerAnt`), so we try the literal key first
+        // and then prefix-prepended variants. Without this the page
+        // never matched a real sprite for any unit/building image and
+        // the SVG placeholders stayed visible even when art existed.
+        const candidates = (raw) => {
+          const list = [raw];
+          if (!raw.startsWith('unit-')) list.push(`unit-${raw}`);
+          if (!raw.startsWith('building-')) list.push(`building-${raw}`);
+          return list;
+        };
         fetch('/api/sprites/manifest', { credentials: 'omit' })
           .then((r) => (r.ok ? r.json() : null))
           .then((manifest) => {
@@ -1100,7 +1112,12 @@
             allEntries.forEach((entry) => { byKey[entry.key] = entry; });
             const version = manifest.updatedAt ? `?v=${manifest.updatedAt}` : '';
             imgs.forEach((img) => {
-              const entry = byKey[img.dataset.spriteKey];
+              const raw = img.dataset.spriteKey;
+              if (!raw) return;
+              let entry;
+              for (const k of candidates(raw)) {
+                if (byKey[k]) { entry = byKey[k]; break; }
+              }
               if (!entry || !entry.ext) return;
               const url = `/assets/sprites/${entry.key}.${entry.ext}${version}`;
               const probe = new Image();
