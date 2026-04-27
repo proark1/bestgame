@@ -6,6 +6,261 @@ a new unit, building, or quest should crack this open first — the
 cosmology is tight, and the art pipeline reads best when the writer and
 the painter share a map.
 
+The opening narrative — **The Tale of the Four Crowns** — is the in-
+universe hook. Every named unit, building, and hero earns a beat. Use it
+as the marketing trailer copy, the chest-opening cinematic spine, and
+the canonical answer to "why does any of this matter?"
+
+---
+
+## The Tale of the Four Crowns
+
+> *"The garden is not a garden. The garden is a continent under a sun
+> that does not know our names. We were one queen. Now we are four
+> crowns, and the war is teaching us how to count."*
+> — fragment, scratched into a sugar-vault wall, author unknown
+
+### Cold open — Three nights before the Long Cold breaks
+
+The frost has held for ninety days. In a cracked terracotta pot at the
+edge of the world, a **Queen Chamber** glows from within — a single
+warm coal in a continent of white. Her surface turret is dark. Her
+underground throne is not.
+
+A **Worker Ant** climbs a frozen stem with a leaf folded twice over her
+back. She is the last forager out tonight; everyone else gave up at
+sundown. Her sister waits inside the **Dew Collector** at the base of
+the stem, palms cupped, ready to catch what the leaf brings down.
+
+Above them both, somewhere up where the stars hang too still, a
+**Dragonfly** is circling. Watching. Counting.
+
+The leaf reaches the collector. The dew falls. The sister smiles.
+
+The dragonfly stoops.
+
+And the swarm comes.
+
+### Act I — The Bladewidow comes home
+
+The **Praying Mantis** they would later call the **Bladewidow** is
+not, that night, a hero. She is a tired duellist with a torn silk
+scarf and two scythes she has not cleaned since the eastern raid. She
+arrives at the gate of an unknown colony because her own queen is
+dead, her own chamber is rubble, and the pheromone trail to the next
+nearest garden led here.
+
+She does not knock. She steps over the **Leaf Wall**, ducks under the
+**Thorn Hedge**, and lands in the courtyard between a sleeping
+**Pebble Bunker** and a humming **Mushroom Turret** that swings to
+track her on instinct, then — recognising no scent of war — pivots
+politely back to neutral.
+
+Inside, three **Soldier Ants** stand in a triangle around the chamber
+mouth, jaws set. The youngest opens her mouth to challenge.
+
+The Bladewidow lifts one scythe — slow, ceremonial — and lays it flat
+across her own throat in the old gesture: *I am yours. Use me.*
+
+The queen, watching from the throne below, says only: "Feed her."
+
+A **Forager** brings her honey-dew in a stitched petal cup. A **Larva
+Nursery** worker brings her a fresh blanket of spun root-fibre. The
+Mantis sleeps for the first time in eight days. Outside, the dragonfly
+wheels once more, sees nothing it likes, and rides the night wind back
+to whoever sent it.
+
+When she wakes, a war begins.
+
+### Act II — The Bulwark, who would not move
+
+The first raid arrives at noon, from the eastern tunnels — the **rival
+beetle colony** that holds the ridge. Their swarm is honest about
+itself: a wall of carapace, hauling momentum. **Shield Beetles** in
+front, **Rollers** spinning up behind, **Bomb Beetles** giggling
+nervously in the rear, fuses already cut short.
+
+The colony's outer **Pebble Bunkers** take the first salvo. Two of
+them crack. A **Termite** the rivals brought along gets to work on the
+**Sugar Vault** wall — chrome mandibles, hungry sawdust raining — and
+behind him a column of enemy **Worker Ants** are already moving up to
+loot what spills.
+
+This is the day the **Hercules Beetle** chooses a side.
+
+He has been sleeping in a stone orchard north of the flagstone path
+for three winters. Older than most queens. His carapace remembers a
+**Mushroom Turret** salvo that other beetles only know from songs. He
+walks — slow, the ground shaking on the *off-beat* of his step —
+through the breach in the leaf-wall, plants himself in the gap where
+the **Pebble Bunker** used to stand, and refuses, on principle, to be
+a door anyone can walk through.
+
+The lavender shimmer rolling off his shoulders is not magic. It is the
+oath he is keeping. Every soldier within three tiles of him stands a
+little taller, takes a turret hit a little better, finishes a fight a
+little later than they otherwise would have.
+
+The rival roller crashes into him at full momentum.
+
+The roller stops.
+
+The Hercules Beetle does not.
+
+By dusk the eastern push is broken, the **Bomb Beetles** are scattered
+giggling into the underground, and the colony's queen calls her
+generals to the chamber. The Bladewidow is one. The Hercules Beetle —
+**the Bulwark** — is the other.
+
+Two crowns. The colony exhales for the first time in a season.
+
+### Act III — The Honey Sovereign defects
+
+She does not arrive at the gate. She arrives at the *roof* of the
+**Queen Chamber**, hovers there with four golden wings spread wide,
+and lays a crown of amber-and-pearl down on the surface tiles like a
+calling card.
+
+The **Wasp Queen** has been a sovereign-in-exile for two months. Her
+elders refused to back her run on a rival mortar nest; she lost a
+sister to that refusal. The elders thought the matter closed. She has
+been carrying the closed matter in her head for eight weeks, and last
+night, two fence panels over, she made her decision.
+
+She defects with a hive's worth of grudges and a single droplet of
+glowing nectar in her front legs.
+
+The colony's regular **Wasp** snipers — mercenaries, paid in sugar —
+hover at the edges of the courtyard, uncertain. The colony's
+**Foragers** look up at her like they're seeing a queen for the first
+time. (They are.)
+
+She lands. She kneels. She presses the nectar drop to the wound on a
+**Soldier Ant** who took the worst of the eastern push, and the wound
+closes the way a flower closes at dusk.
+
+Three crowns.
+
+The **Aphid Farm**, never previously a strategic structure, becomes
+overnight the colony's most-defended building — because the Honey
+Sovereign demands fresh **aphid milk** for her healing draughts, and
+every forager wants to be the one who brings her a cup. The **Leaf
+Silo** doubles its leaf throughput in a week. The **Milk Pot** is
+ringed with **Spore Towers** for the first time in its history.
+
+The colony has a healer now. Everything else is downstream of that.
+
+### Act IV — The Wallbreaker chooses the queen
+
+He comes to the gate openly. **Stag Beetle**. Old enough to have
+helped draw the original boundary line. War-hammer slung diagonally
+across a back so wide it casts its own shadow. A circle of soldiers
+forms around him at the courtyard, jaws bared on instinct, and he
+does not even look at them — he looks past them, at the Queen
+Chamber, at the queen herself, and he says one word: *"Where?"*
+
+He doesn't mean *where to sit*. He means *where do you want me to
+break the wall.*
+
+The fourth crown is the simplest of the four. He hits buildings. He
+hits them harder than anyone in the yard. The little crackling red
+energy motes that dance around his mandibles are not a power he uses
+on living things — they're the weight of the doors he's already
+broken talking back.
+
+The queen names him the **Wallbreaker**. She gives him a
+**Tunnel Junction** of his own, on the eastern edge, with a mouth that
+opens straight at the rival beetle ridge. He sleeps next to it like a
+dog at a fire.
+
+Four crowns. The war can begin.
+
+### The marching season
+
+Spring arrives in the garden — the gardener has not been seen for a
+fortnight — and the colony fields its first true raid in three years.
+The deck is the war:
+
+- The **Bladewidow** drops first, on a tight pheromone trail, and is
+  through the rival's outer **Leaf Wall** before the **Acid Spitters**
+  on the ridge have finished tracking. Her aura makes the **Soldier
+  Ants** behind her swing 25% faster, and the rival's first turret
+  line falls before its second salvo.
+- The **Bulwark** plants himself two tiles inside the breach. The
+  swarm files past him — **Worker Ants** with leaves, **Foragers**
+  with empty satchels, a single **Shield Beetle** mercenary keeping
+  the right flank — and his shimmer makes every one of them harder to
+  kill on the way past.
+- A **Dirt Digger** column splits off, drops through a crack in the
+  surface, and surfaces *behind* the rival **Sugar Vault**. They are
+  carrying **Termites**. The vault wall starts singing the
+  particular high note of mandibles meeting bark.
+- A **Web Setter** lays a slowing thread across the rival's main
+  avenue, and a **Roller** crashes into the **Honey Tank** that comes
+  to clear the thread — both go down in a tangle, and the rival's
+  mid-line is already a step out of position.
+- An **Ambusher** comes up from a half-leaf cloak inside a tunnel
+  the colony was not supposed to know about — a **Spider Nest** her
+  handlers had seeded last winter, dormant until the silk thread
+  pulled — and she takes the rival's queen guard from behind in
+  perfect silence.
+- A **Jumper** vaults the inner **Thorn Hedge**, lands on a
+  **Mushroom Turret** roof, and is already at the chamber mouth
+  before the turret has decided what to track.
+- The **FireAnt** column sets the **Aphid Farm** alight; the rival
+  loses its milk in the first minute of the raid.
+- The **Wasp** snipers — the regular mercenaries, not the queen — cut
+  a corridor in the air for a flight of **Dragonflies** the colony
+  has been quietly breeding for a month, and the dragonflies dive on
+  the rival's **Hidden Stingers** before they can spring.
+- A **Scarab** the rival queen had been saving for emergencies enters
+  the field and is killed in seven seconds; from her shell crawls a
+  litter of **MiniScarabs**, who scatter in every direction and whom
+  the colony's **NestSpiders** — defending the home tunnels back at
+  base — never get a chance to taste, because they're not the ones
+  on this front.
+- The **Honey Sovereign** stays high, follows the swarm, drips honey
+  on every wound. A **Bomb Beetle** the rivals have left guarding the
+  inner courtyard takes one look at her halo and detonates *prematurely
+  out of nerves*, killing nothing but a **Root Snare** and his own
+  fuse.
+- The **Wallbreaker** comes last, walks past the burning **Aphid
+  Farm**, past the toppled **Spore Tower**, past the cracked
+  **Pebble Bunker**, past the slumped **HoneyTank** corpse, and he
+  reaches the rival **Queen Chamber** at exactly the moment his
+  +20% building-damage aura overlaps with a column of the colony's
+  **Termites**.
+
+The chamber falls in eleven seconds.
+
+The rival queen, knowing the rules of the old single kingdom, lays
+her seal-ring at the Wallbreaker's feet. He picks it up. He does not
+crush it. He takes it back, three days later, and lays it on the
+colony's queen's throne.
+
+One war is over. The next four start that night.
+
+### The slow truth
+
+The frost did not break the kingdom. The kingdom broke the kingdom.
+
+What the four heroes know — what the queen now knows, what the
+**Honey Sovereign** flew across two fences to say out loud — is that
+every one of the four crowns is a piece of the *same* old crown,
+broken three winters ago in the chamber where a hairline crack still
+runs the length of the throne. The Bladewidow is the precision of it.
+The Bulwark is the patience of it. The Honey Sovereign is the mercy
+of it. The Wallbreaker is the hand of it.
+
+Whether the four can be welded back into one — whether the four
+queens of the four colonies of the four corners of the garden can
+ever again sit at one chamber and eat one dew at one dawn — is the
+question the war is asking.
+
+The player is the answer it gets.
+
+---
+
 ## The World — One Backyard
 
 Everything in Hive Wars happens in a single overgrown garden: loose
