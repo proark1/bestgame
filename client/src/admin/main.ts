@@ -759,13 +759,16 @@ function renderSpritesTab(): HTMLElement {
   // the freshly-saved walk strip on the next renderAnimationPanel
   // call. fileByKey is built once at renderSpritesTab() entry and
   // would otherwise stay stale until a hard reload.
+  //
+  // Compares the two known filename forms directly (lowercased) so
+  // the inner loop allocates nothing — a regex .replace() per file
+  // per call adds up across the whole sprite grid.
   const hasAnimationFile = (kind: string): boolean => {
-    const exact = `unit-${kind}-walk`;
-    for (const f of state.files) {
-      const base = f.name.replace(/\.(png|webp)$/i, '');
-      if (base === exact) return true;
-    }
-    return false;
+    const exact = `unit-${kind}-walk`.toLowerCase();
+    return state.files.some((f) => {
+      const name = f.name.toLowerCase();
+      return name === `${exact}.webp` || name === `${exact}.png`;
+    });
   };
 
   const mk = (
@@ -833,15 +836,21 @@ function renderSpritesTab(): HTMLElement {
         getPoseBPrompt: () =>
           state.prompts?.walkCycles?.[poseBKey] ?? '',
         setPoseBPrompt: async (value: string) => {
+          // Update local state EAGERLY — generateAnimationFromSprite
+          // reads state.prompts.walkCycles[poseBKey] synchronously,
+          // so if the admin clicks Generate immediately after editing
+          // the textarea (without waiting for the server roundtrip),
+          // we want the in-flight generate to see their new prompt
+          // rather than the stale one from the server.
+          if (state.prompts) {
+            if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
+            state.prompts.walkCycles[poseBKey] = value;
+          }
           await updatePrompt({
             category: 'walkCycles',
             key: poseBKey,
             value,
           });
-          if (state.prompts) {
-            if (!state.prompts.walkCycles) state.prompts.walkCycles = {};
-            state.prompts.walkCycles[poseBKey] = value;
-          }
         },
       };
     }
