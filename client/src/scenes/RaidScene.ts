@@ -606,8 +606,15 @@ export class RaidScene extends Phaser.Scene {
       void this.fetchMatchFromServer();
     }
 
+    // Full-screen layout (Clash-of-Clans style): the board fills the
+    // viewport top-to-bottom and the HUD floats overlaid on top. The
+    // modifier bar + deck tray below are gameplay-critical chrome that
+    // stays in fixed positions; layout() handles their reservations.
+    // boardContainer is created BEFORE the HUD so HUD elements (added
+    // later, with explicit DEPTHS.hud) render above. Position is
+    // recomputed in layout() — (0, 0) is just a placeholder.
+    this.boardContainer = this.add.container(0, 0).setDepth(DEPTHS.board);
     this.drawHud();
-    this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
     this.drawBuildingsFromState();
     this.trailGraphics = this.add.graphics().setDepth(DEPTHS.boardOverlay);
@@ -690,24 +697,10 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    const g = this.add.graphics();
-    g.fillGradientStyle(
-      COLOR.bgPanelHi,
-      COLOR.bgPanelHi,
-      COLOR.bgPanelLo,
-      COLOR.bgPanelLo,
-      1,
-    );
-    g.fillRect(0, 0, this.scale.width, HUD_H);
-    g.fillStyle(COLOR.brass, 0.35);
-    g.fillRect(0, 1, this.scale.width, 1);
-    g.fillStyle(COLOR.brassDeep, 1);
-    g.fillRect(0, HUD_H - 4, this.scale.width, 1);
-    g.fillStyle(COLOR.brass, 0.7);
-    g.fillRect(0, HUD_H - 3, this.scale.width, 2);
-    g.fillStyle(0x000000, 0.45);
-    g.fillRect(0, HUD_H, this.scale.width, 3);
-
+    // Clash-of-Clans-style overlay HUD: no full-width strip, just
+    // floating elements (Home button, timer, badges, score/loot) that
+    // sit above the board. Each HUD element gets DEPTHS.hud so it
+    // renders above the boardContainer (DEPTHS.board).
     makeHiveButton(this, {
       x: 80,
       y: HUD_H / 2,
@@ -717,7 +710,7 @@ export class RaidScene extends Phaser.Scene {
       variant: 'ghost',
       fontSize: 13,
       onPress: () => fadeToScene(this, 'HomeScene'),
-    });
+    }).container.setDepth(DEPTHS.hud);
 
     this.timerText = this.add
       .text(this.scale.width / 2, HUD_H / 2, '1:30', {
@@ -725,7 +718,8 @@ export class RaidScene extends Phaser.Scene {
         fontSize: '20px',
         color: '#ffd98a',
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setDepth(DEPTHS.hud);
 
     // Layer activity badges. Live counters showing how many of the
     // attacker's units are on each layer right now. Drawn dim by
@@ -737,14 +731,16 @@ export class RaidScene extends Phaser.Scene {
         fontSize: '13px',
         color: '#9fc79a',
       })
-      .setOrigin(1, 0.5);
+      .setOrigin(1, 0.5)
+      .setDepth(DEPTHS.hud);
     this.layerBadgeUnderground = this.add
       .text(0, 0, '⛏ 0', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
         color: '#9fc79a',
       })
-      .setOrigin(1, 0.5);
+      .setOrigin(1, 0.5)
+      .setDepth(DEPTHS.hud);
 
     this.starsText = this.add
       .text(this.scale.width - 16, HUD_H / 2 - 10, '★ 0', {
@@ -752,7 +748,8 @@ export class RaidScene extends Phaser.Scene {
         fontSize: '16px',
         color: '#ffd98a',
       })
-      .setOrigin(1, 0.5);
+      .setOrigin(1, 0.5)
+      .setDepth(DEPTHS.hud);
 
     this.lootText = this.add
       .text(this.scale.width - 16, HUD_H / 2 + 10, 'loot: 0', {
@@ -760,7 +757,8 @@ export class RaidScene extends Phaser.Scene {
         fontSize: '13px',
         color: '#c3e8b0',
       })
-      .setOrigin(1, 0.5);
+      .setOrigin(1, 0.5)
+      .setDepth(DEPTHS.hud);
 
     // Pre-raid loot preview — sums every defender building's
     // drops-on-destroy so the player sees the upper bound of what they
@@ -782,7 +780,8 @@ export class RaidScene extends Phaser.Scene {
           },
         )
         .setOrigin(0.5, 0)
-        .setAlpha(0.85);
+        .setAlpha(0.85)
+        .setDepth(DEPTHS.hud);
     }
   }
 
@@ -3118,19 +3117,22 @@ export class RaidScene extends Phaser.Scene {
   }
 
   private layout(): void {
-    // Mobile-aware board sizing. Reserve HUD + modifier bar + deck,
-    // scale board to fit the remaining rectangle, center with padding.
-    // Everything else (units, buildings, trail graphics) lives inside
-    // the container so they scale together; pointer math unscales.
+    // Full-screen layout (Clash-of-Clans style). The HUD chips at the
+    // top float as overlay cards above the board (no chrome strip),
+    // so the board no longer reserves HUD_H. The modifier bar and
+    // deck tray are gameplay-critical chrome that DO get reserved
+    // because their interactive areas need stable, exclusive footprints.
+    // Everything inside boardContainer (units, buildings, trail
+    // graphics) scales together; pointer math unscales.
     const deckLayout = this.deckLayoutMetrics();
     const availW = this.scale.width - 24;
-    const availH = this.scale.height - HUD_H - MODIFIER_BAR_H - deckLayout.trayHeight - 40;
+    const availH = this.scale.height - MODIFIER_BAR_H - deckLayout.trayHeight - 40;
     const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
     this.boardContainer.setScale(scale);
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
     const xOffset = Math.max(12, (this.scale.width - scaledW) / 2);
-    const yOffset = HUD_H + MODIFIER_BAR_H + Math.max(8, (availH - scaledH) / 2);
+    const yOffset = MODIFIER_BAR_H + Math.max(8, (availH - scaledH) / 2);
     this.boardContainer.setPosition(xOffset, yOffset);
 
     // Modifier bar — positioned between HUD and the board. Width is
