@@ -1013,7 +1013,7 @@ export class HomeScene extends Phaser.Scene {
       discX,
       cy,
       String(level),
-      displayTextStyle(tier === 'phone' ? 16 : 20, '#3a2a08', 2),
+      displayTextStyle(tier === 'phone' ? 16 : 20, COLOR.textDark, 2),
     ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
 
     if (tier === 'phone') {
@@ -1045,54 +1045,63 @@ export class HomeScene extends Phaser.Scene {
         labelTextStyle(10, COLOR.textGold),
       ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
       void trophyBg;
-      return;
+    } else {
+      // Wide / narrow: full name pill with trophy badge inset.
+      const pillX = discX + discSize / 2 - 10; // overlap so disc reads as anchored
+      const pillW = tier === 'wide' ? 168 : 132;
+      const pillH = tier === 'wide' ? 36 : 32;
+      const pill = this.add.graphics().setDepth(DEPTHS.hud);
+      drawPill(pill, pillX, cy - pillH / 2, pillW, pillH, { brass: false });
+      // Trophy badge along the bottom edge of the pill — small brass
+      // strip with "▲ trophies" so the player sees their league rank
+      // without leaving the home screen.
+      const trophyBadgeW = 64;
+      const trophyBadgeH = 16;
+      const trophyBadgeX = pillX + pillW - trophyBadgeW - 6;
+      const trophyBadgeY = cy + pillH / 2 - trophyBadgeH / 2 - 4;
+      const trophyBadge = this.add.graphics().setDepth(DEPTHS.hud);
+      drawPill(
+        trophyBadge,
+        trophyBadgeX,
+        trophyBadgeY,
+        trophyBadgeW,
+        trophyBadgeH,
+        { brass: true },
+      );
+      crispText(
+        this,
+        trophyBadgeX + trophyBadgeW / 2,
+        trophyBadgeY + trophyBadgeH / 2,
+        `▲ ${trophies}`,
+        labelTextStyle(10, COLOR.textDark),
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+
+      this.accountChip = crispText(
+        this,
+        pillX + 14,
+        cy - 4,
+        'GUEST',
+        displayTextStyle(tier === 'wide' ? 14 : 12, COLOR.textPrimary, 2),
+      ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
+      // Hit zone covers the full visual area: pill + the disc that
+      // overlaps to its left. Using max(pillH, discSize) keeps the
+      // disc's top/bottom inside the tappable region — pillH alone
+      // is shorter than the 44 px disc, leaving dead bands.
+      const hitH = Math.max(pillH, discSize);
+      this.add
+        .zone(discX + (pillW + discSize) / 2 - discSize / 2, cy, pillW + discSize, hitH)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(DEPTHS.hud)
+        .on('pointerdown', () => this.openAccountMenu());
+      void pill;
+      void trophyBadge;
     }
 
-    // Wide / narrow: full name pill with trophy badge inset.
-    const pillX = discX + discSize / 2 - 10; // overlap so disc reads as anchored
-    const pillW = tier === 'wide' ? 168 : 132;
-    const pillH = tier === 'wide' ? 36 : 32;
-    const pill = this.add.graphics().setDepth(DEPTHS.hud);
-    drawPill(pill, pillX, cy - pillH / 2, pillW, pillH, { brass: false });
-    // Trophy badge along the bottom edge of the pill — small brass
-    // strip with "▲ trophies" so the player sees their league rank
-    // without leaving the home screen.
-    const trophyBadgeW = 64;
-    const trophyBadgeH = 16;
-    const trophyBadgeX = pillX + pillW - trophyBadgeW - 6;
-    const trophyBadgeY = cy + pillH / 2 - trophyBadgeH / 2 - 4;
-    const trophyBadge = this.add.graphics().setDepth(DEPTHS.hud);
-    drawPill(
-      trophyBadge,
-      trophyBadgeX,
-      trophyBadgeY,
-      trophyBadgeW,
-      trophyBadgeH,
-      { brass: true },
-    );
-    crispText(
-      this,
-      trophyBadgeX + trophyBadgeW / 2,
-      trophyBadgeY + trophyBadgeH / 2,
-      `▲ ${trophies}`,
-      labelTextStyle(10, COLOR.textDark),
-    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
-
-    this.accountChip = crispText(
-      this,
-      pillX + 14,
-      cy - 4,
-      'GUEST',
-      displayTextStyle(tier === 'wide' ? 14 : 12, COLOR.textPrimary, 2),
-    ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
-    this.add
-      .zone(discX + (pillW + discSize) / 2 - discSize / 2, cy, pillW + discSize, pillH)
-      .setOrigin(0.5, 0.5)
-      .setInteractive({ useHandCursor: true })
-      .setDepth(DEPTHS.hud)
-      .on('pointerdown', () => this.openAccountMenu());
-    void pill;
-    void trophyBadge;
+    // fetchMe runs for every tier so the username + color update
+    // even when the player first lands on a phone-tier viewport.
+    // accountChip is always defined (off-screen for phone), so this
+    // never null-derefs.
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (rt) {
       void rt.auth.fetchMe().then((me) => {
@@ -2493,9 +2502,12 @@ export class HomeScene extends Phaser.Scene {
     const bottomCtaH = HomeScene.FOOTER_BTN_H;
     const bottomPad = 18;
     const ctaTop = this.scale.height - bottomPad - bottomCtaH;
-    // Stack columns rise from just above the corner CTAs so the
-    // icon column never drifts into the resource pills at the top.
-    const stackTopBudget = Math.max(80, ctaTop - SPACING.lg);
+    // Fixed top boundary just below the HUD pills + profile card.
+    // The previous formulation derived this from `ctaTop - SPACING.lg`,
+    // which puts the budget at e.g. 674 px on a 768 px screen — but
+    // the FIRST icon already sits at ~664 px (above the budget),
+    // so the early-out triggered at i=0 and no icons rendered.
+    const stackTopBudget = HUD_H + 130;
 
     type Entry = { label: string; onPress: () => void };
     const leftStack: Entry[] = [
