@@ -354,6 +354,44 @@ button {
   gap: 18px;
 }
 
+/* Story tab — full-width header banner above each story's panel cards.
+   grid-column: 1 / -1 keeps the banner spanning every column of the
+   sprite grid no matter how wide the viewport gets. */
+.story-group-header {
+  grid-column: 1 / -1;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.story-group-header:first-child {
+  border-top: none;
+  margin-top: 0;
+}
+.story-group-title {
+  font-family: var(--font);
+  color: var(--accent);
+  font-size: 22px;
+  margin: 0;
+}
+.story-group-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted, #999);
+  font-size: 13px;
+}
+.story-panel-caption {
+  font-family: var(--font);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  letter-spacing: 0.02em;
+}
+.empty-note {
+  grid-column: 1 / -1;
+  color: var(--text-muted, #999);
+  font-style: italic;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--border);

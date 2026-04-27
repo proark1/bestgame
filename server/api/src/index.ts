@@ -20,6 +20,7 @@ import { registerWars } from './routes/wars.js';
 import { registerArena } from './routes/arena.js';
 import { registerSettings } from './routes/settings.js';
 import { registerSpritesManifest } from './routes/sprites.js';
+import { registerStories } from './routes/stories.js';
 import { registerQuests } from './routes/quests.js';
 import { registerCampaign } from './routes/campaign.js';
 import { registerBuilder } from './routes/builder.js';
@@ -167,6 +168,7 @@ async function start(): Promise<void> {
       registerArena(scope);
       registerSettings(scope);
       registerSpritesManifest(scope);
+      registerStories(scope);
       registerQuests(scope);
       registerCampaign(scope);
       registerBuilder(scope);

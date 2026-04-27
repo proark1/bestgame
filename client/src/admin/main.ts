@@ -9,6 +9,7 @@ import {
   fetchAnimationSettings,
   fetchPrompts,
   fetchStatus,
+  fetchStories,
   fetchUiOverrideSettings,
   generateImages,
   getToken,
@@ -22,6 +23,7 @@ import {
   type AdminUser,
   type AnimationSettings,
   type PromptsFile,
+  type StoriesFile,
   type UiOverrideSettings,
   type SpriteFile,
 } from './api.js';
@@ -59,6 +61,7 @@ interface Compression {
 
 interface AdminState {
   prompts: PromptsFile | null;
+  stories: StoriesFile | null;
   files: SpriteFile[];
   cards: SpriteCard[];
   compression: Compression;
@@ -70,6 +73,7 @@ interface AdminState {
 
 const state: AdminState = {
   prompts: null,
+  stories: null,
   files: [],
   cards: [],
   compression: { format: 'webp', quality: 0.85, maxDim: 256 },
@@ -143,6 +147,16 @@ async function bootstrap(): Promise<void> {
     if ((err as Error).message === 'unauthorized') return;
     return;
   }
+  // Story-strip metadata is a public endpoint — fetched alongside the
+  // authed prompts so the Story tab can render its per-panel grouping.
+  // Best-effort: a stale or missing stories.json shouldn't block the
+  // rest of the admin panel from loading.
+  try {
+    state.stories = await fetchStories();
+  } catch (err) {
+    state.stories = null;
+    statusToast(`Stories metadata unavailable: ${(err as Error).message}`, 'error');
+  }
   // Animation settings are best-effort — the admin panel is still
   // usable without them (the rest of the sprite pipeline doesn't
   // depend on the toggle). If the DB is offline the server returns
@@ -177,11 +191,11 @@ function writeActiveTab(tab: AdminTab): void {
 }
 
 // Active sprite category filter — persisted for convenience
-type SpriteCategory = 'units' | 'heroes' | 'ui' | 'branding';
+type SpriteCategory = 'units' | 'heroes' | 'story' | 'ui' | 'branding';
 const CATEGORY_STORAGE_KEY = 'hive.spriteCategory';
 function readActiveCategory(): SpriteCategory {
   const v = localStorage.getItem(CATEGORY_STORAGE_KEY);
-  if (v === 'ui' || v === 'branding' || v === 'heroes') return v;
+  if (v === 'ui' || v === 'branding' || v === 'heroes' || v === 'story') return v;
   return 'units';
 }
 function writeActiveCategory(cat: SpriteCategory): void {
@@ -459,7 +473,7 @@ const MENU_UI_KEYS = [
 
 function composePrompt(
   description: string,
-  kind: 'unit' | 'building' | 'hero' | 'menuUi',
+  kind: 'unit' | 'building' | 'hero' | 'story' | 'menuUi',
   key?: string,
 ): string {
   const style = state.prompts?.styleLock ?? '';
@@ -481,6 +495,19 @@ function composePrompt(
       `Style: ${visualStyle}`,
       `Camera: cinematic painterly hero illustration. Wide landscape framing with clear foreground / midground / background depth, dramatic directional lighting, atmospheric perspective. Characters and scenery are encouraged.`,
       `Delivery: full-bleed PNG, opaque background is fine (the page crops it inside a rounded card). No text, no UI overlays, no logos, no watermarks, no borders, no signature.`,
+    ].join(' ');
+  }
+  // Comic-strip story panels follow the same cinematic shape as the
+  // landing-hero painting but at a 16:9 panel size (1024x576). Same
+  // styleLock-without-sprite-constraints trick as the landing branch
+  // so the painter has license to use scenery, characters, depth.
+  if (kind === 'story') {
+    const visualStyle = (style.split('128x128')[0] ?? style).trim();
+    return [
+      `Subject: ${description}`,
+      `Style: ${visualStyle}`,
+      `Camera: cinematic painterly comic-panel illustration. Wide 16:9 landscape framing with clear foreground / midground / background depth, dramatic directional lighting, atmospheric perspective. Multi-character scenes and storytelling are encouraged.`,
+      `Delivery: 1024x576 PNG, opaque background is fine (panels sit inside a rounded card on the landing page). No text, no UI overlays, no logos, no captions, no watermarks, no borders, no signature.`,
     ].join(' ');
   }
   // Menu UI assets are larger and designed for 9-slice scaling —
@@ -683,6 +710,7 @@ function renderSpritesTab(): HTMLElement {
   const categories: Array<{ id: SpriteCategory; label: string }> = [
     { id: 'units', label: 'Units' },
     { id: 'heroes', label: 'Heroes' },
+    { id: 'story', label: 'Story' },
     { id: 'ui', label: 'UI Elements' },
     { id: 'branding', label: 'Logo & Branding' },
   ];
@@ -785,10 +813,15 @@ function renderSpritesTab(): HTMLElement {
   };
 
   const mk = (
-    kind: 'unit' | 'building' | 'hero' | 'menuUi',
+    kind: 'unit' | 'building' | 'hero' | 'story' | 'menuUi',
     baseName: string,
   ): SpriteCard => {
-    const key = kind === 'menuUi' ? baseName : `${kind}-${baseName}`;
+    // Story panel keys (e.g. `story-springs-1`) and menuUi keys
+    // (e.g. `landing-hero`) already include their category prefix —
+    // unit/building/hero keys are stored bare in the atlas and get
+    // prefixed here so the sprite filename matches the manifest.
+    const key =
+      kind === 'menuUi' || kind === 'story' ? baseName : `${kind}-${baseName}`;
     const file = fileByKey.get(key);
     const ext = file ? (file.name.endsWith('.webp') ? 'webp' : 'png') : null;
     const bucket =
@@ -798,7 +831,9 @@ function renderSpritesTab(): HTMLElement {
           ? 'buildings'
           : kind === 'hero'
             ? 'heroes'
-            : 'menuUi';
+            : kind === 'story'
+              ? 'stories'
+              : 'menuUi';
     const initialPrompt = state.prompts?.[bucket]?.[baseName] ?? '';
     const opts: import('./SpriteCard.js').SpriteCardOptions = {
       key,
@@ -884,6 +919,43 @@ function renderSpritesTab(): HTMLElement {
       const card = mk('hero', h);
       state.cards.push(card);
       grid.append(card.root);
+    }
+  } else if (state.activeCategory === 'story') {
+    // Story tab is structurally different from the others — panels are
+    // grouped by the story they belong to (title + subtitle banner)
+    // before the panel cards. The grid CSS still applies inside each
+    // story group; the wrapper here provides the per-story headers.
+    if (!state.stories || state.stories.stories.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'empty-note';
+      empty.textContent =
+        'No stories defined yet. Add them to tools/gemini-art/stories.json.';
+      grid.append(empty);
+    } else {
+      for (const story of state.stories.stories) {
+        const header = document.createElement('div');
+        header.className = 'story-group-header';
+        const title = document.createElement('h3');
+        title.className = 'story-group-title';
+        title.textContent = story.title;
+        const subtitle = document.createElement('p');
+        subtitle.className = 'story-group-subtitle';
+        subtitle.textContent = story.subtitle;
+        header.append(title, subtitle);
+        grid.append(header);
+        for (const panel of story.panels) {
+          const card = mk('story', panel.key);
+          // Surface the human caption above the prompt textarea so the
+          // admin can see which story beat each card represents without
+          // cross-referencing stories.json.
+          const captionEl = document.createElement('div');
+          captionEl.className = 'story-panel-caption';
+          captionEl.textContent = panel.caption;
+          card.root.prepend(captionEl);
+          state.cards.push(card);
+          grid.append(card.root);
+        }
+      }
     }
   } else if (state.activeCategory === 'ui') {
     for (const u of MENU_UI_KEYS.filter(k => !k.startsWith('landing-') && !k.startsWith('queen-'))) {
