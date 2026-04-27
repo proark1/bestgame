@@ -372,6 +372,14 @@
         color: var(--text-muted);
         font-size: 13px;
       }
+      .story-group-intro {
+        margin: 10px 4px 4px;
+        max-width: 720px;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--text);
+        font-weight: 500;
+      }
       .story-rail {
         display: flex;
         gap: 14px;
@@ -428,6 +436,68 @@
         line-height: 1.25;
         color: var(--text);
         margin: 0;
+      }
+      .story-panel-body {
+        margin: 8px 0 0;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--text-muted);
+      }
+      .story-panel-body em {
+        font-style: italic;
+        color: var(--wood-deep);
+      }
+      /* Long-form story setup that sits between the section title and
+         the comic-strip rails — gives the page room to actually tell
+         the player what world they're walking into before the swipe
+         strip starts. Two columns on desktop so the prose breathes;
+         single column on mobile for normal reading flow. */
+      .story-prose {
+        max-width: 880px;
+        margin: 0 auto 32px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+        text-align: left;
+      }
+      @media (min-width: 760px) {
+        .story-prose { grid-template-columns: 1fr 1fr; gap: 28px; }
+      }
+      .story-prose h3 {
+        font-family: "Arial Black", "Helvetica Neue", Impact, sans-serif;
+        font-size: 18px;
+        margin: 0 0 8px;
+        color: var(--wood-deep);
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+      .story-prose p {
+        margin: 0 0 10px;
+        font-size: 15px;
+        line-height: 1.6;
+        color: var(--text);
+      }
+      .story-prose p:last-child { margin-bottom: 0; }
+      .story-pull {
+        max-width: 760px;
+        margin: 0 auto 32px;
+        padding: 18px 22px;
+        background: rgba(0, 0, 0, 0.04);
+        border-left: 4px solid var(--wood-deep);
+        border-radius: 6px;
+        font-style: italic;
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--wood-deep);
+      }
+      .story-pull cite {
+        display: block;
+        margin-top: 8px;
+        font-style: normal;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        color: var(--text-muted);
+        text-transform: uppercase;
       }
 
       /* ---------- Economy section (the loop + 3 resources) ---------- */
@@ -969,6 +1039,37 @@
       <div class="story-inner">
         <h2 class="display display-md story-title">The Tale, in Strips</h2>
         <p class="story-intro">Swipe through the story of how the kingdom split, and the four heroes who took its place.</p>
+
+        <blockquote class="story-pull">
+          "The garden is not a garden. The garden is a continent under a sun
+          that does not know our names. We were one queen. Now we are four
+          crowns, and the war is teaching us how to count."
+          <cite>— fragment, scratched into a sugar-vault wall, author unknown</cite>
+        </blockquote>
+
+        <div class="story-prose">
+          <div>
+            <h3>One backyard. One continent.</h3>
+            <p>Everything in Hive Wars happens in a single overgrown garden — loose stones, roots, leaf litter, a cracked terracotta pot, a dripping hose. From a human window it's a patch of neglect. From the ants' angle it's a continent, and every tile in it has been walked across, fought over, and remembered.</p>
+            <p>Two layers cut through the world. The <b>Surface</b> is sun, dew, birdsong, and the long threat of the gardener's boot. The <b>Underground</b> is humid, glowing with fungus, always warm — where larvae hatch and the throne keeps its heart. Only the <b>Queen Chamber</b> bridges both. Lose it, and your story ends there.</p>
+          </div>
+          <div>
+            <h3>The Long Cold broke the kingdom.</h3>
+            <p>Three winters ago a frost came down through the garden and did not lift for a full season. Collectors froze on their stems. Tunnel junctions collapsed under thaws that never came. The old single kingdom — one queen for every creature in the yard — broke with the ice.</p>
+            <p>Smaller colonies emerged. Each crowned a new queen. Each claimed to be the true continuation of the old throne. What had been ritual became politics; what had been family became rivals. The <b>Hive Wars</b> are the long bloom of that fracture, and you have inherited a chamber on the day the war is asking its loudest question.</p>
+          </div>
+          <div>
+            <h3>Four factions. One pheromone alphabet.</h3>
+            <p>The ancient alliance survived as four factions. They share a pheromone alphabet inherited from the pre-Cold colony — and a grudge — but each lives and fights very differently. The <b>Ants</b> are the only side that fields buildings; everyone else is a mercenary, signed in sugar and silk.</p>
+            <p>The <b>Wasp Court</b> sells air support from two fence panels over. The <b>Stone Orchards</b> — beetle country — trade carapace for ore. The <b>Silk Court</b> spiders speak in thread, not scent, and are the most expensive sword in the yard. Your raid deck is whoever you can afford this season.</p>
+          </div>
+          <div>
+            <h3>You draw the song.</h3>
+            <p>The "draw a path" gesture you'll learn in your first raid is the player's queen <em>composing in pheromone</em>. A raid is a scripted song: a sequence of trails, each one carrying a unit type, a priority, a destination. Mercenaries follow because they're paid to. Spiders follow a silk bead laid along the same line.</p>
+            <p>If your queen chamber falls, the trails go silent. The mercenaries walk home. The raid ends. So every tile you place on defense, and every breath of pheromone you spend on offense, is the same answer to the same question: <b>which crown survives the spring?</b></p>
+          </div>
+        </div>
+
         <div class="story-list" id="story-list"></div>
       </div>
     </section>
@@ -1195,6 +1296,37 @@
         const section = document.getElementById('story-section');
         const list = document.getElementById('story-list');
         if (!section || !list) return;
+        // Allow a tiny inline-emphasis subset in story panel body
+        // copy so authors can italicize a remembered line of dialogue
+        // ("I am yours. Use me.") without us shipping a markdown
+        // parser. Anything else — script tags, stray attributes, raw
+        // HTML pasted in — falls through as plain text.
+        const STORY_ALLOWED_TAGS = new Set(['EM', 'I', 'B', 'STRONG']);
+        const sanitizeStoryHtml = (raw) => {
+          const tmpl = document.createElement('template');
+          tmpl.innerHTML = String(raw);
+          const walk = (node) => {
+            const out = [];
+            node.childNodes.forEach((child) => {
+              if (child.nodeType === Node.TEXT_NODE) {
+                const span = document.createElement('span');
+                span.textContent = child.textContent;
+                out.push(span.innerHTML);
+                return;
+              }
+              if (child.nodeType !== Node.ELEMENT_NODE) return;
+              const tag = child.tagName;
+              if (STORY_ALLOWED_TAGS.has(tag)) {
+                out.push(`<${tag.toLowerCase()}>${walk(child)}</${tag.toLowerCase()}>`);
+              } else {
+                // Strip the wrapper but keep the inner text content.
+                out.push(walk(child));
+              }
+            });
+            return out.join('');
+          };
+          return walk(tmpl.content);
+        };
         // Click-drag fallback for desktop browsers (mobile gets native
         // touch swipe + scroll-snap for free). Tracks pointer down/move
         // to translate into scrollLeft, then re-centers on the closest
@@ -1239,6 +1371,12 @@
               sub.textContent = story.subtitle || '';
               head.append(h3, sub);
               group.append(head);
+              if (story.intro) {
+                const intro = document.createElement('p');
+                intro.className = 'story-group-intro';
+                intro.textContent = story.intro;
+                group.append(intro);
+              }
               const rail = document.createElement('div');
               rail.className = 'story-rail';
               const total = story.panels.length;
@@ -1262,6 +1400,18 @@
                 caption.className = 'story-panel-caption';
                 caption.textContent = panel.caption;
                 meta.append(num, caption);
+                if (panel.body) {
+                  // Body copy is authored in stories.json and may
+                  // contain a small set of trusted inline tags (<em>,
+                  // <b>, <i>) to italicise dialogue beats. Sanitize by
+                  // round-tripping through the DOM and only allowing
+                  // those tags through; everything else is treated as
+                  // plain text.
+                  const body = document.createElement('p');
+                  body.className = 'story-panel-body';
+                  body.innerHTML = sanitizeStoryHtml(panel.body);
+                  meta.append(body);
+                }
                 card.append(img, meta);
                 rail.append(card);
               });

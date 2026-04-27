@@ -1,30 +1,80 @@
 {
-  "_doc": "Comic-strip metadata for the landing-page story rail. Each panel's actual prompt lives in tools/gemini-art/prompts.json under the `stories` bucket, keyed by `key` here. Sprite output: cinematic 1024x576 painterly illustration, opaque PNG fine. Saved to assets/sprites/<key>.{webp,png} via the same admin save path as units/heroes.",
+  "_doc": "Comic-strip metadata for the landing-page story rail. Each panel's actual prompt lives in tools/gemini-art/prompts.json under the `stories` bucket, keyed by `key` here. Sprite output: cinematic 1024x576 painterly illustration, opaque PNG fine. Saved to assets/sprites/<key>.{webp,png} via the same admin save path as units/heroes. The `body` field is short narrative copy shown under each panel on the landing-page story rail (see client/index.html), kept to 2–3 sentences so it reads on a phone without scrolling.",
   "stories": [
     {
       "id": "three-springs-ago",
       "title": "Three Springs Ago",
       "subtitle": "How the kingdom broke. Six panels, frost to first raid.",
+      "intro": "Before the four crowns, there was one. A single throne in a single chamber, one queen for every creature in the yard. Then a frost came down through the garden and did not lift for a full season — and the old peace went with it.",
       "panels": [
-        { "key": "story-springs-1", "caption": "The Last Warm Morning" },
-        { "key": "story-springs-2", "caption": "The Cold" },
-        { "key": "story-springs-3", "caption": "The Throne Splits" },
-        { "key": "story-springs-4", "caption": "The Wasp at the Gate" },
-        { "key": "story-springs-5", "caption": "The Pact" },
-        { "key": "story-springs-6", "caption": "The First Raid" }
+        {
+          "key": "story-springs-1",
+          "caption": "The Last Warm Morning",
+          "body": "The old queen sits on the surface tiles, eating dew from a folded petal. Her daughters crowd at her feet — a worker with a leaf, a soldier with her jaws still wet from breakfast. Sunlight pools on the terracotta pot. Nobody yet knows it is the last warm morning of the old kingdom."
+        },
+        {
+          "key": "story-springs-2",
+          "caption": "The Cold",
+          "body": "A single line of frost creeps across the garden in one night. Collectors freeze on their stems. Tunnel junctions buckle under the weight of a thaw that never comes. For ninety days the white does not lift, and inside every chamber a queen counts daughters who will not wake again."
+        },
+        {
+          "key": "story-springs-3",
+          "caption": "The Throne Splits",
+          "body": "Deep underground, a hairline crack runs the length of the chamber's stone throne. Two daughters of the old queen stare at each other across it — neither will yield, and neither has the words yet for what is happening. The crack stays. The kingdom does not."
+        },
+        {
+          "key": "story-springs-4",
+          "caption": "The Wasp at the Gate",
+          "body": "A wasp hovers at the chamber mouth, one foreleg extended, holding a folded contract written in sugar-ink. The queen's guards stand on either side of the door, jaws tense, unmoving. Nobody has hired a mercenary in a thousand seasons. By dawn, somebody will have."
+        },
+        {
+          "key": "story-springs-5",
+          "caption": "The Pact",
+          "body": "An ant queen and a beetle chieftain press their seal-rings into the same leaf, silhouetted against the torch in the throne room. A spider watches from the corner of the frame, polite, silent, already counting. The first hired sword has been bought. Three more factions are listening."
+        },
+        {
+          "key": "story-springs-6",
+          "caption": "The First Raid",
+          "body": "On a wet spring morning the player's queen stands at the chamber mouth, pheromone whorls rising from her antennae. Through the leaf-fringe a rival hive smolders on the far ridge. The first true raid of the new world is hers to draw, tile by tile, breath by breath."
+        }
       ]
     },
     {
       "id": "four-crowns",
       "title": "The Tale of the Four Crowns",
       "subtitle": "Four heroes. Four crowns. One war.",
+      "intro": "Three winters after the Long Cold, four strangers walk into one chamber on four different nights. A duellist with a torn scarf. A beetle older than most queens. A wasp queen carrying a single drop of glowing nectar. A stag beetle who only ever asks one question. Together they will be remembered as the Four Crowns. Apart, none of them would have survived the spring.",
       "panels": [
-        { "key": "story-crowns-1", "caption": "Cold Open — The Last Forager" },
-        { "key": "story-crowns-2", "caption": "The Bladewidow Comes Home" },
-        { "key": "story-crowns-3", "caption": "The Bulwark Holds the Breach" },
-        { "key": "story-crowns-4", "caption": "The Honey Sovereign Defects" },
-        { "key": "story-crowns-5", "caption": "The Wallbreaker at the Gate" },
-        { "key": "story-crowns-6", "caption": "The Marching Season" }
+        {
+          "key": "story-crowns-1",
+          "caption": "Cold Open — The Last Forager",
+          "body": "Three nights before the Long Cold breaks, a worker ant carries the last leaf of the season down a frozen stem. Her sister waits at the dew collector with cupped palms. Above them, a dragonfly circles the chamber and counts what it sees. Then the swarm comes."
+        },
+        {
+          "key": "story-crowns-2",
+          "caption": "The Bladewidow Comes Home",
+          "body": "A praying mantis with a torn silk scarf and two un-cleaned scythes steps over the leaf wall and lands in the courtyard. Her own queen is dead, her own chamber is rubble, and the pheromone trail led here. She lays a scythe across her own throat — the old gesture: <em>I am yours. Use me.</em> The queen below says only: <em>Feed her.</em>"
+        },
+        {
+          "key": "story-crowns-3",
+          "caption": "The Bulwark Holds the Breach",
+          "body": "At noon the rival beetle colony hits the eastern wall with everything they have. A Hercules Beetle who has slept three winters in a stone orchard wakes, walks through the breach, and plants himself in the gap where a pebble bunker used to stand. The roller crashes into him at full speed. The roller stops. The Bulwark does not."
+        },
+        {
+          "key": "story-crowns-4",
+          "caption": "The Honey Sovereign Defects",
+          "body": "She does not arrive at the gate. She arrives on the <em>roof</em> of the queen chamber, four golden wings spread wide, and lays a crown of amber-and-pearl on the surface tiles like a calling card. A drop of glowing nectar in her front legs closes a soldier's wound the way a flower closes at dusk. The colony has a healer now — and everything else is downstream of that."
+        },
+        {
+          "key": "story-crowns-5",
+          "caption": "The Wallbreaker at the Gate",
+          "body": "A stag beetle old enough to remember the original boundary line walks up to the gate and looks past every soldier who tries to stop him. He stares straight at the queen and says one word: <em>Where?</em> He doesn't mean where to sit. He means where to break the wall."
+        },
+        {
+          "key": "story-crowns-6",
+          "caption": "The Marching Season",
+          "body": "Spring arrives and the colony fields its first true raid in three years. The Bladewidow drops first. Diggers surface behind the rival vault. The Honey Sovereign drips honey on every wound. The Wallbreaker comes last, walks past the burning aphid farm, and reaches the rival queen chamber the moment his aura overlaps with a column of termites. The chamber falls in eleven seconds. One war ends. The next four begin that night."
+        }
       ]
     }
   ]
