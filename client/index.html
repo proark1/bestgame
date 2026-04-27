@@ -443,7 +443,8 @@
         line-height: 1.5;
         color: var(--text-muted);
       }
-      .story-panel-body em {
+      .story-panel-body em,
+      .story-panel-body i {
         font-style: italic;
         color: var(--wood-deep);
       }
@@ -1302,30 +1303,35 @@
         // parser. Anything else — script tags, stray attributes, raw
         // HTML pasted in — falls through as plain text.
         const STORY_ALLOWED_TAGS = new Set(['EM', 'I', 'B', 'STRONG']);
+        // Singleton template + text-encoder so we don't allocate fresh
+        // DOM nodes for every panel body. The template's innerHTML is
+        // overwritten on each sanitize() call; the encoder span is
+        // re-used purely to round-trip text through the browser's
+        // own HTML escaper.
+        const sanitizeTmpl = document.createElement('template');
+        const sanitizeEncoder = document.createElement('span');
+        const walkSanitize = (node) => {
+          const out = [];
+          node.childNodes.forEach((child) => {
+            if (child.nodeType === Node.TEXT_NODE) {
+              sanitizeEncoder.textContent = child.textContent;
+              out.push(sanitizeEncoder.innerHTML);
+              return;
+            }
+            if (child.nodeType !== Node.ELEMENT_NODE) return;
+            const tag = child.tagName;
+            if (STORY_ALLOWED_TAGS.has(tag)) {
+              out.push(`<${tag.toLowerCase()}>${walkSanitize(child)}</${tag.toLowerCase()}>`);
+            } else {
+              // Strip the wrapper but keep the inner text content.
+              out.push(walkSanitize(child));
+            }
+          });
+          return out.join('');
+        };
         const sanitizeStoryHtml = (raw) => {
-          const tmpl = document.createElement('template');
-          tmpl.innerHTML = String(raw);
-          const walk = (node) => {
-            const out = [];
-            node.childNodes.forEach((child) => {
-              if (child.nodeType === Node.TEXT_NODE) {
-                const span = document.createElement('span');
-                span.textContent = child.textContent;
-                out.push(span.innerHTML);
-                return;
-              }
-              if (child.nodeType !== Node.ELEMENT_NODE) return;
-              const tag = child.tagName;
-              if (STORY_ALLOWED_TAGS.has(tag)) {
-                out.push(`<${tag.toLowerCase()}>${walk(child)}</${tag.toLowerCase()}>`);
-              } else {
-                // Strip the wrapper but keep the inner text content.
-                out.push(walk(child));
-              }
-            });
-            return out.join('');
-          };
-          return walk(tmpl.content);
+          sanitizeTmpl.innerHTML = String(raw);
+          return walkSanitize(sanitizeTmpl.content);
         };
         // Click-drag fallback for desktop browsers (mobile gets native
         // touch swipe + scroll-snap for free). Tracks pointer down/move
