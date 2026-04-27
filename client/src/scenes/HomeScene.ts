@@ -445,11 +445,12 @@ export class HomeScene extends Phaser.Scene {
   private drawAmbient(): void {
     const g = this.add.graphics().setDepth(DEPTHS.background);
     // Grass gradient: a saturated mid-green at the top eases into a
-    // slightly cooler shade at the bottom. Matches the on-board grass
-    // (drawBoard fills 0x6cbf6a) so the playfield blends into the
-    // surrounding field instead of floating on a pastel page.
-    const top = 0x7fcb7c;
-    const bot = 0x549c54;
+    // slightly cooler shade at the bottom. Tokens live in theme.ts
+    // (COLOR.grassTop/grassBot) so RaidScene + ArenaScene render the
+    // same field tone — the playfield reads as a village inside one
+    // continuous map rather than three differently-tinted pages.
+    const top = COLOR.grassTop;
+    const bot = COLOR.grassBot;
     const BANDS = 22;
     for (let i = 0; i < BANDS; i++) {
       const t = i / (BANDS - 1);
@@ -468,7 +469,7 @@ export class HomeScene extends Phaser.Scene {
     // a "pool of light" — slightly brighter than the surrounding grass
     // so the eye finds the playable rectangle.
     const glow = this.add.graphics().setDepth(DEPTHS.ambient);
-    glow.fillStyle(0xfff4d6, 0.08);
+    glow.fillStyle(COLOR.warmGlow, 0.08);
     glow.fillEllipse(
       this.scale.width / 2,
       HUD_H + BOARD_H / 2 - 24,
@@ -477,7 +478,7 @@ export class HomeScene extends Phaser.Scene {
     );
     // Soft darker vignette at the very bottom so the footer buttons
     // pop against the grass.
-    glow.fillStyle(0x2a4a26, 0.18);
+    glow.fillStyle(COLOR.mossDark, 0.18);
     glow.fillEllipse(
       this.scale.width / 2,
       this.scale.height + 40,
@@ -491,7 +492,7 @@ export class HomeScene extends Phaser.Scene {
           40 + (i * (this.scale.width - 80)) / 13,
           HUD_H + 70 + ((i * 47) % Math.max(160, this.scale.height - 220)),
           i % 3 === 0 ? 3 : 2,
-          i % 4 === 0 ? 0xfff4d6 : COLOR.greenHi,
+          i % 4 === 0 ? COLOR.warmGlow : COLOR.greenHi,
           0.16,
         )
         .setDepth(DEPTHS.ambientParticles);

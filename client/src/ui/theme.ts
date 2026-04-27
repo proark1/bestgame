@@ -56,6 +56,23 @@ export const COLOR = {
   strokeDark: 0x1f2148,    // deep navy
   strokeLight: 0xfff8ec,
   outline: 0x4d9b5c,       // mint stroke
+
+  // Grass field — used as the scene-wide ambient on map-based scenes
+  // (Home / Raid / Arena) so the area outside the bordered playfield
+  // reads as continuous grass rather than a separate-colored backdrop.
+  // grassTop/grassBot drive the gradient; grassFill matches the
+  // on-board fill so the playfield blends with the surround.
+  grassTop: 0x7fcb7c,
+  grassFill: 0x6cbf6a,
+  grassBot: 0x549c54,
+  grassFillCss: '#6cbf6a', // CSS string form for camera.setBackgroundColor
+  // Mossy shadow used as a bottom-of-viewport vignette behind the
+  // footer button row so the buttons keep contrast against the grass.
+  mossDark: 0x2a4a26,
+  // Warm cream highlight used for "pool of light" glows + ambient
+  // motes drifting over the grass. Brighter than greenHi so the
+  // accent reads as sun, not foliage.
+  warmGlow: 0xfff4d6,
 } as const;
 
 export const FONT = {

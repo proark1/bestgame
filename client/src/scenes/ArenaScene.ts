@@ -178,21 +178,18 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawAmbient(): void {
     const bg = this.add.graphics().setDepth(-120);
-    // Grass-green gradient matching the on-board fill so the area
-    // outside the bordered playfield reads as continuous map (Clash
-    // style — the arena sits in a larger green field).
-    const top = 0x7fcb7c;
-    const mid = 0x6cbf6a;
-    const bot = 0x4f9a52;
+    // Grass-green gradient using shared theme tokens so HomeScene,
+    // RaidScene and ArenaScene render an identical field tone — the
+    // arena sits in a larger green field, not a separately-tinted
+    // backdrop. Two bands (top → bot) match HomeScene's drawAmbient.
+    const top = COLOR.grassTop;
+    const bot = COLOR.grassBot;
     const bands = 20;
     for (let i = 0; i < bands; i++) {
       const t = i / Math.max(1, bands - 1);
-      const src = t < 0.58 ? top : mid;
-      const dst = t < 0.58 ? mid : bot;
-      const localT = t < 0.58 ? t / 0.58 : (t - 0.58) / 0.42;
-      const r = Math.round(((src >> 16) & 0xff) + (((dst >> 16) & 0xff) - ((src >> 16) & 0xff)) * localT);
-      const g = Math.round(((src >> 8) & 0xff) + (((dst >> 8) & 0xff) - ((src >> 8) & 0xff)) * localT);
-      const b = Math.round((src & 0xff) + ((dst & 0xff) - (src & 0xff)) * localT);
+      const r = Math.round(((top >> 16) & 0xff) + (((bot >> 16) & 0xff) - ((top >> 16) & 0xff)) * t);
+      const g = Math.round(((top >> 8) & 0xff) + (((bot >> 8) & 0xff) - ((top >> 8) & 0xff)) * t);
+      const b = Math.round((top & 0xff) + ((bot & 0xff) - (top & 0xff)) * t);
       bg.fillStyle((r << 16) | (g << 8) | b, 1);
       bg.fillRect(
         0,
@@ -201,7 +198,6 @@ export class ArenaScene extends Phaser.Scene {
         Math.ceil(this.scale.height / bands) + 1,
       );
     }
-
   }
 
   private drawHud(): void {
