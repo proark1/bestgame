@@ -169,23 +169,29 @@ export class CodexScene extends Phaser.Scene {
     );
   }
 
-  private filterMode: 'all' | 'units' | 'buildings' = 'all';
+  private filterMode: 'all' | 'units' | 'buildings' | 'resources' = 'all';
   private filterLabel(): string {
-    return this.filterMode === 'all'
-      ? 'All ▾'
-      : this.filterMode === 'units' ? 'Units ▾' : 'Buildings ▾';
+    if (this.filterMode === 'all') return 'All ▾';
+    if (this.filterMode === 'units') return 'Units ▾';
+    if (this.filterMode === 'buildings') return 'Buildings ▾';
+    return 'Resources ▾';
   }
   private cycleFilter(): void {
-    const order: Array<'all' | 'units' | 'buildings'> = ['all', 'units', 'buildings'];
+    const order: Array<'all' | 'units' | 'buildings' | 'resources'> = [
+      'all',
+      'resources',
+      'units',
+      'buildings',
+    ];
     const next = order[(order.indexOf(this.filterMode) + 1) % order.length]!;
     this.filterMode = next;
     this.entries = next === 'all'
       ? ALL_CODEX_ENTRIES
-      : ALL_CODEX_ENTRIES.filter((e) =>
-          next === 'units'
-            ? e.spriteKey.startsWith('unit-')
-            : e.spriteKey.startsWith('building-'),
-        );
+      : ALL_CODEX_ENTRIES.filter((e) => {
+          if (next === 'units') return e.spriteKey.startsWith('unit-');
+          if (next === 'buildings') return e.spriteKey.startsWith('building-');
+          return e.spriteKey.startsWith('ui-resource-');
+        });
     this.currentIdx = Math.min(this.currentIdx, this.entries.length - 1);
     this.scene.restart();
   }

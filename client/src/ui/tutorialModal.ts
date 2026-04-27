@@ -211,10 +211,11 @@ export function openTutorial(opts: { force?: boolean; onClose?: () => void } = {
 
       <h2>Resources</h2>
       <div class="hive-tutorial-resources">
-        <div class="hive-tutorial-res sugar"><b>Sugar</b>Spent on every building + colony tier-up. Earned from <code>Dew Collectors</code> and raid loot. Capped by <code>Sugar Vaults</code>.</div>
+        <div class="hive-tutorial-res sugar"><b>Sugar</b>Spent on every building + colony tier-up. Earned from <code>Dew Collectors</code> and raid loot. Capped by <code>Sugar Vaults</code> — when the wallet hits the cap, production stops until you spend.</div>
         <div class="hive-tutorial-res leaf"><b>Leaf</b>Spent on unit upgrades + nurseries. Earned from <code>Larva Nurseries</code> and raid loot. Capped by nurseries.</div>
-        <div class="hive-tutorial-res milk"><b>Aphid Milk</b>Late-game premium currency from <code>Aphid Farms</code> (colony 4+). Skips builder timers.</div>
+        <div class="hive-tutorial-res milk"><b>Aphid Milk</b>Premium currency. Earned three ways: <code>Aphid Farms</code> trickle slowly (colony 4+), <code>login streaks</code> reward 1–5 milk on day 5+, and <code>Campaign chapter</code> completions grant 1–5 milk per chapter. Spent to skip builder timers (1 milk per minute remaining) or unlock cosmetic Queen skins from the shop.</div>
       </div>
+      <p style="font-size:12px;opacity:0.7;margin-top:4px">Production happens while you're away — when you come back, the harvest auto-credits up to 8 hours.</p>
 
       <h2>1 · Build your base</h2>
       <ul>

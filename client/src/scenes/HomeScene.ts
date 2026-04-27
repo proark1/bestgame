@@ -2982,14 +2982,22 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    // Full-screen layout (Clash-of-Clans style). The board fills the
-    // entire viewport; the HUD chips and footer buttons float over it
-    // as overlay cards. Tiles always render at their authored 48 px
-    // (1.0× scale); on viewports smaller than the full board the
-    // player pans with a drag gesture (see wireBoardTap), clamped to
-    // board edges via clampBoardPan(). Desktops with viewports larger
-    // than the board sit at 1.0 and centered.
-    const scale = 1.0;
+    // Fit-to-viewport board scale. The base playfield is 16x12 tiles
+    // at 48 px (768x576). On a 1080p desktop that's ~40% of the
+    // viewport with ambient grass eating the rest — the user
+    // perceives that as "not fullscreen". Scaling the boardContainer
+    // up so the playfield fills the visible rect (preserving the 4:3
+    // aspect; grass falls naturally into the leftover bands) gives
+    // the CoC fullscreen-village feel on every desktop / tablet.
+    //
+    // Mobile viewports smaller than the board (e.g. 375x812 portrait
+    // phone) skip the zoom and pan instead — clampBoardPan lets the
+    // player drag to see the whole base, just like CoC. Cap at 2.4x
+    // so 4K monitors don't render comically chunky tiles.
+    const fitW = this.scale.width / BOARD_W;
+    const fitH = this.scale.height / BOARD_H;
+    const fit = Math.min(fitW, fitH);
+    const scale = Math.max(1.0, Math.min(2.4, fit));
     this.boardContainer.setScale(scale);
     this.boardScale = scale;
     // Start centered. clampBoardPan below will keep the edges

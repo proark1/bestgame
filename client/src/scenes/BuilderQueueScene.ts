@@ -252,6 +252,20 @@ export class BuilderQueueScene extends Phaser.Scene {
         onPress: () => { void this.skip(e, true, runtime); },
       });
       this.body.container.add(milkBtn.container);
+      // Inline cost explainer — players see "5🥛" without context
+      // and don't know how the price is computed. The server's rule
+      // (server/api/src/game/builderQueue.ts) is "1 milk per minute
+      // remaining, capped at 60". A one-line label below the button
+      // makes that rule legible at the moment the player decides
+      // whether to spend.
+      const explainer = crispText(
+        this,
+        originX + maxW - 56,
+        y + h / 2 + 26,
+        '1🥛 / min',
+        labelTextStyle(9, COLOR.textMuted),
+      ).setOrigin(0.5, 0);
+      this.body.container.add(explainer);
     }
 
     return y + h + 10;

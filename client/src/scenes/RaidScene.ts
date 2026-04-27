@@ -3127,10 +3127,16 @@ export class RaidScene extends Phaser.Scene {
     // because their interactive areas need stable, exclusive footprints.
     // Everything inside boardContainer (units, buildings, trail
     // graphics) scales together; pointer math unscales.
+    //
+    // Scale fits the available rect AND zooms up so the playfield
+    // fills the viewport on desktop (the previous Math.min(..., 1)
+    // cap stranded the board at 768x576 with grass on the sides).
+    // Capped at 2.4x for ultra-wide / 4K so tiles don't get chunky.
     const deckLayout = this.deckLayoutMetrics();
     const availW = this.scale.width - 24;
     const availH = this.scale.height - MODIFIER_BAR_H - deckLayout.trayHeight - 40;
-    const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+    const fit = Math.min(availW / BOARD_W, availH / BOARD_H);
+    const scale = Math.min(2.4, fit);
     this.boardContainer.setScale(scale);
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
