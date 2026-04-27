@@ -204,9 +204,13 @@ export class HomeScene extends Phaser.Scene {
       }
     }
 
-    // Layout: HUD on top, board below.
+    // Full-screen layout (Clash-of-Clans style): the board fills the
+    // viewport and the HUD floats overlaid on top. boardContainer must
+    // be created BEFORE the HUD so HUD elements (added later, with
+    // explicit DEPTHS.hud) render above. Position is recomputed in
+    // handleResize() — (0, 0) is just a placeholder.
+    this.boardContainer = this.add.container(0, 0).setDepth(DEPTHS.board);
     this.drawHud();
-    this.boardContainer = this.add.container(0, HUD_H);
     this.drawBoard();
     this.drawBuildings();
     this.drawStickyHooks();
@@ -500,41 +504,20 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private drawHud(): void {
-    // CoC-style HUD plane: deep gradient panel + thick brass accent
-    // on the bottom edge + drop-shadow beneath. When the
-    // `ui-hud-bg` override is active and the admin-generated image
-    // is on disk, tile that image across the HUD strip instead. The
-    // generated asset is designed to tile horizontally at 512x96
-    // so the TileSprite reads as one continuous banner at any
-    // viewport width.
+    // Clash-of-Clans-style overlay HUD: no full-width strip, just
+    // floating chips + pills in the corners. The map shows through
+    // everywhere else. Each HUD element draws its own pill background
+    // (drawPill) so it stays legible over the playfield. When the
+    // `ui-hud-bg` admin override is active, an opt-in tiled banner
+    // strip is restored at the very top — this keeps the affordance
+    // for branded skins while leaving the default look transparent.
     const w = this.scale.width;
-    // Background-only swap: override replaces the gradient panel with a
-    // tiled image; the shadow + pill layout below still run so resource
-    // text fields are always initialized.
-    //
-    // Previous build painted brass accent lines along the HUD edges.
-    // They bled above the account/codex chips and read as a stray
-    // yellow glow, so they're gone — the HUD strip is dark-only now,
-    // with just a soft drop shadow below it to keep the "raised
-    // panel" feel.
     if (isUiOverrideActive(this, 'ui-hud-bg')) {
-      this.add.tileSprite(0, 0, w, HUD_H, 'ui-hud-bg').setOrigin(0, 0);
-    } else {
-      const hud = this.add.graphics();
-      hud.fillGradientStyle(
-        COLOR.bgPanelHi,
-        COLOR.bgPanelHi,
-        COLOR.bgPanelLo,
-        COLOR.bgPanelLo,
-        1,
-      );
-      hud.fillRect(0, 0, w, HUD_H);
+      this.add
+        .tileSprite(0, 0, w, HUD_H, 'ui-hud-bg')
+        .setOrigin(0, 0)
+        .setDepth(DEPTHS.hudChrome);
     }
-    const hudShadow = this.add.graphics();
-    hudShadow.fillStyle(0x000000, 0.45);
-    hudShadow.fillRect(0, HUD_H, w, 3);
-    hudShadow.fillStyle(0x000000, 0.2);
-    hudShadow.fillRect(0, HUD_H + 3, w, 3);
 
     // Responsive HUD layout — three tiers:
     //   wide   (≥ 760 px): full layout. Title + chip + 3 resource pills.
@@ -570,7 +553,8 @@ export class HomeScene extends Phaser.Scene {
       const useLogoImage = isUiOverrideActive(this, 'ui-logo');
       if (useLogoImage) {
         const logo = this.add.image(tier === 'wide' ? 24 : 16, cy, 'ui-logo')
-          .setOrigin(0, 0.5);
+          .setOrigin(0, 0.5)
+          .setDepth(DEPTHS.hud);
         const source = logo.texture.getSourceImage();
         const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
         const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
@@ -591,7 +575,7 @@ export class HomeScene extends Phaser.Scene {
           cy,
           'HIVE WARS',
           displayTextStyle(tier === 'wide' ? 20 : 16, '#ffe7b0', 4),
-        ).setOrigin(0, 0.5);
+        ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
       }
     }
 
@@ -648,13 +632,14 @@ export class HomeScene extends Phaser.Scene {
       const pillW = PILL_PAD_X * 2 + ICON_SIZE + PILL_ICON_GAP + textW;
       const pillX = x - pillW;
       const pillY = cy - PILL_H / 2;
-      const pill = this.add.graphics();
+      const pill = this.add.graphics().setDepth(DEPTHS.hud);
       drawPill(pill, pillX, pillY, pillW, PILL_H, { brass: false });
       const icon = this.add
         .image(pillX + PILL_PAD_X + ICON_SIZE / 2, cy, b.icon)
-        .setDisplaySize(ICON_SIZE, ICON_SIZE);
+        .setDisplaySize(ICON_SIZE, ICON_SIZE)
+        .setDepth(DEPTHS.hud);
       b.text.setPosition(pillX + pillW - PILL_PAD_X, cy);
-      b.text.setDepth(DEPTHS.hudChrome);
+      b.text.setDepth(DEPTHS.hud);
       // Tap-to-explain: an interactive zone covering the full pill
       // opens a small popover detailing per-second income and when
       // the next upgrade tier becomes affordable. The numbers alone
@@ -664,7 +649,8 @@ export class HomeScene extends Phaser.Scene {
       const hit = this.add
         .zone(pillX + pillW / 2, cy, pillW, PILL_H)
         .setOrigin(0.5, 0.5)
-        .setInteractive({ useHandCursor: true });
+        .setInteractive({ useHandCursor: true })
+        .setDepth(DEPTHS.hud);
       hit.on('pointerdown', (
         _p: Phaser.Input.Pointer,
         _lx: number,
@@ -687,7 +673,7 @@ export class HomeScene extends Phaser.Scene {
           cy + PILL_H / 2 + 8,
           `+${formatRate(rateValue)}/sec`,
           labelTextStyle(10, COLOR.textDim),
-        ).setOrigin(1, 0).setDepth(DEPTHS.hudChrome);
+        ).setOrigin(1, 0).setDepth(DEPTHS.hud);
         if (kind === 'sugar') this.sugarRateText = rateText;
         else if (kind === 'leaf') this.leafRateText = rateText;
         else this.milkRateText = rateText;
@@ -751,7 +737,7 @@ export class HomeScene extends Phaser.Scene {
     const size = 40;
     const cx = size / 2 + SPACING.sm;
     const cy = HUD_H / 2;
-    const c = this.add.container(cx, cy).setDepth(6);
+    const c = this.add.container(cx, cy).setDepth(DEPTHS.hud);
     const disc = this.add.graphics();
     drawPill(disc, -size / 2, -size / 2, size, size, { brass: true });
     const lines = this.add.graphics();
@@ -997,7 +983,7 @@ export class HomeScene extends Phaser.Scene {
     const pillW = tier === 'phone' ? 34 : tier === 'narrow' ? 70 : 78;
     const pillH = tier === 'phone' ? 34 : 36;
     const left = rightEdgeX - pillW;
-    const pill = this.add.graphics();
+    const pill = this.add.graphics().setDepth(DEPTHS.hud);
     drawPill(pill, left, cy - pillH / 2, pillW, pillH, {
       brass: tier !== 'phone',
     });
@@ -1009,11 +995,12 @@ export class HomeScene extends Phaser.Scene {
       tier === 'phone'
         ? displayTextStyle(14, COLOR.textPrimary, 2)
         : labelTextStyle(11, COLOR.textGold),
-    ).setOrigin(0.5, 0.5);
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
     this.add
       .zone(left + pillW / 2, cy, pillW, pillH)
       .setOrigin(0.5, 0.5)
       .setInteractive({ useHandCursor: true })
+      .setDepth(DEPTHS.hud)
       .on('pointerdown', () => fadeToScene(this, 'CodexScene'));
     void pill;
     void glyph;
@@ -1029,9 +1016,9 @@ export class HomeScene extends Phaser.Scene {
       const chipX = 168;
       const pillW = 136;
       const pillH = 38;
-      const pill = this.add.graphics();
+      const pill = this.add.graphics().setDepth(DEPTHS.hud);
       drawPill(pill, chipX, cy - pillH / 2, pillW, pillH, { brass: false });
-      const badge = this.add.graphics();
+      const badge = this.add.graphics().setDepth(DEPTHS.hud);
       drawPill(badge, chipX + 8, cy - 15, 52, 14, { brass: true });
       crispText(
         this,
@@ -1039,18 +1026,19 @@ export class HomeScene extends Phaser.Scene {
         cy - 8,
         'COLONY',
         labelTextStyle(9, COLOR.textGold),
-      ).setOrigin(0.5, 0.5);
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
       this.accountChip = crispText(
         this,
         chipX + pillW / 2,
         cy + 8,
         'GUEST',
         displayTextStyle(13, COLOR.textDim, 2),
-      ).setOrigin(0.5, 0.5);
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
       this.add
         .zone(chipX + pillW / 2, cy, pillW, pillH)
         .setOrigin(0.5, 0.5)
         .setInteractive({ useHandCursor: true })
+        .setDepth(DEPTHS.hud)
         .on('pointerdown', () => this.openAccountMenu());
       void badge;
     } else {
@@ -1062,7 +1050,7 @@ export class HomeScene extends Phaser.Scene {
       const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
       const chipX =
         tier === 'narrow' ? 120 : burgerSlot + size / 2 + SPACING.sm;
-      const pill = this.add.graphics();
+      const pill = this.add.graphics().setDepth(DEPTHS.hud);
       drawPill(pill, chipX - size / 2, cy - size / 2, size, size, {
         brass: false,
       });
@@ -1072,11 +1060,12 @@ export class HomeScene extends Phaser.Scene {
         cy,
         '@',
         displayTextStyle(tier === 'phone' ? 15 : 16, COLOR.textDim, 2),
-      ).setOrigin(0.5, 0.5);
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
       this.add
         .zone(chipX, cy, size, size)
         .setOrigin(0.5, 0.5)
         .setInteractive({ useHandCursor: true })
+        .setDepth(DEPTHS.hud)
         .on('pointerdown', () => this.openAccountMenu());
     }
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
@@ -2636,8 +2625,9 @@ export class HomeScene extends Phaser.Scene {
     }
     if (this.coachmarkStep === 'tile') {
       // Halo the centre of the board so the eye snaps to "tap
-      // anywhere in here". boardContainer is offset by HUD_H so
-      // its world position picks up the right Y origin.
+      // anywhere in here". boardContainer is centered in the viewport
+      // by handleResize(), so its world position picks up wherever
+      // the board currently sits (centered or panned).
       const bx = this.boardContainer.x;
       const by = this.boardContainer.y;
       const w = GRID_W * TILE * (this.boardContainer.scaleX || 1);
@@ -2865,34 +2855,13 @@ export class HomeScene extends Phaser.Scene {
     // "one of eight". Clamped so we never exceed the hard 220 px cap
     // that keeps ultra-wide footers looking proportional.
     const primaryBtnW = Math.min(260, Math.round(btnW * 1.28));
-    const bottomPad = 36;
-    const footerTop = wide
-      ? this.scale.height - bottomPad - btnH - 18
-      : this.scale.height - bottomPad - btnH * 2 - 12 - 18;
-    const footerHeight = wide ? btnH + 30 : btnH * 2 + 42;
+    const bottomPad = 16;
+    // Footer is now a transparent overlay (Clash-of-Clans style):
+    // individual button pills float over the playfield instead of
+    // sitting on a dark panel that ate ~120 px of board height. The
+    // legacy footerChrome graphic is cleared each layout pass — kept
+    // around as a noop so callers that destroy it don't crash.
     this.footerChrome?.clear();
-    if (this.footerChrome) {
-      drawPanel(
-        this.footerChrome,
-        14,
-        footerTop,
-        this.scale.width - 28,
-        footerHeight,
-        {
-          topColor: 0x182319,
-          botColor: 0x0a120b,
-          stroke: COLOR.brassDeep,
-          strokeWidth: 3,
-          highlight: COLOR.brass,
-          highlightAlpha: 0.14,
-          radius: 18,
-          shadowOffset: 5,
-          shadowAlpha: 0.38,
-        },
-      );
-      this.footerChrome.fillStyle(COLOR.brass, 0.12);
-      this.footerChrome.fillRect(28, footerTop + 34, this.scale.width - 56, 2);
-    }
 
     // Per-button width so the primary CTA can be wider than its
     // secondary siblings. Everything reads off footerButtonDefs[i]
@@ -3001,25 +2970,20 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
-    // Two sizing modes:
-    //
-    // * Desktop / tablet: shrink-to-fit so the whole base is visible
-    //   at once. This matches the Clash-of-Clans-style "see your
-    //   village at a glance" UX players expect on wide viewports.
-    //
-    // * Mobile: render at 1:1 (or larger than the viewport) so tiles,
-    //   buildings and HP bars are big enough to read and tap. The
-    //   user pans the map with a drag gesture (see wireBoardTap),
-    //   clamped to board edges via clampBoardPan(). Freed-up vertical
-    //   space from the burger footer is given back to the playfield.
-    const availW = this.scale.width - 24;
-    const availH = this.scale.height - HUD_H - this.footerReservedHeight() - 16;
+    // Full-screen layout (Clash-of-Clans style). The board fills the
+    // entire viewport; the HUD chips and footer buttons float over it
+    // as overlay cards. The board is always at least 1.0 scale so
+    // tiles and buildings stay readable, and the playfield extends
+    // beyond the viewport edges — the user pans with a drag gesture
+    // (see wireBoardTap), clamped to board edges via clampBoardPan().
+    const availW = this.scale.width;
+    const availH = this.scale.height;
     const fit = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
-    const mobile = this.isMobileLayout();
-    // On mobile, clamp scale up to 1.0 so tiles stay a comfortable
-    // 48 px on-screen; the board will exceed the viewport and be
-    // pannable. Desktop sticks with the fit scale.
-    const scale = mobile ? Math.max(fit, 1.0) : fit;
+    // Always allow the board to be at least 1.0× so tiles render at
+    // their authored 48 px; on viewports smaller than the full board
+    // the player pans, just like CoC. Desktops with viewports larger
+    // than the board sit at 1.0 (centered, no panning needed).
+    const scale = Math.max(fit, 1.0);
     this.boardContainer.setScale(scale);
     this.boardScale = scale;
     // Start centered. clampBoardPan below will keep the edges
@@ -3027,9 +2991,7 @@ export class HomeScene extends Phaser.Scene {
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
     const centeredX = (this.scale.width - scaledW) / 2;
-    const topRegion = HUD_H;
-    const visibleAvailH = this.scale.height - topRegion - this.footerReservedHeight();
-    const centeredY = topRegion + (visibleAvailH - scaledH) / 2;
+    const centeredY = (this.scale.height - scaledH) / 2;
     this.boardContainer.setPosition(centeredX, centeredY);
     this.clampBoardPan();
     // Keep the mobile Raid CTA anchored to the live viewport. Built
@@ -3048,17 +3010,15 @@ export class HomeScene extends Phaser.Scene {
   private boardScale = 1;
 
   // Clamp boardContainer.(x, y) so the playable rectangle always
-  // covers (or is centered inside) the viewport minus HUD / footer
-  // reservations. Called after every pan delta + on layout so
-  // orientation changes / scene restarts can't strand the board off
-  // in an unreachable corner.
+  // covers (or is centered inside) the full viewport. Called after
+  // every pan delta + on layout so orientation changes / scene
+  // restarts can't strand the board off in an unreachable corner.
+  // No HUD/footer reserves — the HUD is a transparent overlay so the
+  // board can scroll freely under it (Clash-of-Clans style).
   private clampBoardPan(): void {
     const scale = this.boardScale;
     const scaledW = BOARD_W * scale;
     const scaledH = BOARD_H * scale;
-    const topRegion = HUD_H;
-    const bottomReserve = this.footerReservedHeight();
-    const availH = this.scale.height - topRegion - bottomReserve;
     if (scaledW <= this.scale.width) {
       this.boardContainer.x = (this.scale.width - scaledW) / 2;
     } else {
@@ -3066,11 +3026,11 @@ export class HomeScene extends Phaser.Scene {
       const maxX = 0;
       this.boardContainer.x = Math.max(minX, Math.min(maxX, this.boardContainer.x));
     }
-    if (scaledH <= availH) {
-      this.boardContainer.y = topRegion + (availH - scaledH) / 2;
+    if (scaledH <= this.scale.height) {
+      this.boardContainer.y = (this.scale.height - scaledH) / 2;
     } else {
-      const minY = topRegion + availH - scaledH;
-      const maxY = topRegion;
+      const minY = this.scale.height - scaledH;
+      const maxY = 0;
       this.boardContainer.y = Math.max(minY, Math.min(maxY, this.boardContainer.y));
     }
   }
@@ -3163,12 +3123,13 @@ export class HomeScene extends Phaser.Scene {
       };
     });
 
-    // Pan while dragging — mobile only, because on desktop the whole
-    // board fits the viewport and there's nothing to pan to. Drag is
-    // gated by the tap-vs-drag threshold so brief jitter never
-    // becomes a pan.
+    // Pan while dragging — Clash-of-Clans style: the board can be
+    // bigger than the viewport on any device, so any layout that has
+    // room to pan does. clampBoardPan() snaps small/centered cases
+    // back to center so this becomes a noop when the board already
+    // fits. Drag is gated by the tap-vs-drag threshold so brief
+    // jitter never becomes a pan.
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (!this.isMobileLayout()) return;
       if (!p.isDown) return;
       if (!this.panAnchor) return;
       if (this.pickerContainer || this.burgerDrawer) return;
