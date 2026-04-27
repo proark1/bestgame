@@ -197,7 +197,7 @@ export class ClanBaseTourScene extends Phaser.Scene {
             return g;
           })();
       if (spr instanceof Phaser.GameObjects.Image) {
-        spr.setOrigin(0.5, 0.75);
+        spr.setOrigin(0.5, 0.5) /* center sprite within footprint cell so it never bleeds above the grid */;
         const tiles = Math.max(b.footprint.w, b.footprint.h);
         spr.setDisplaySize(tiles * TILE * 1.4, tiles * TILE * 1.4);
         // Cross-layer building on the inactive layer renders

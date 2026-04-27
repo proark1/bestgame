@@ -1094,23 +1094,19 @@ export class HomeScene extends Phaser.Scene {
             highlight: 0xd6b58d,
           };
 
-    // Board background sprite (loaded by BootScene or rendered as placeholder)
-    const bgSprite = this.add.image(BOARD_W / 2, BOARD_H / 2, 'board-background');
-    bgSprite.setDisplaySize(BOARD_W, BOARD_H);
-    bgSprite.setDepth(DEPTHS.boardUnder);
-    this.boardContainer.add(bgSprite);
-
-    // Layer underlay — a tinted wash that reads as the actual
-    // material the layer represents. Surface = saturated green grass.
-    // Underground = packed dirt/earth so the underground reads as
-    // "we are inside the earth", not just a re-tinted version of the
-    // surface. Sits above the board sprite (so the colour dominates)
-    // and below the grid + decorations + buildings.
+    // Solid layer underlay — fully opaque so no painterly board-
+    // background sprite shows through with brown patches behind the
+    // grid. Surface = saturated grass green; underground = packed
+    // earth brown (the rocks layer below adds enough texture without
+    // needing the sprite). Skipping the board-background image
+    // entirely also avoids a placeholder-loaded fallback that the
+    // user perceived as "brown boxes behind the grid".
     const underlay = this.add.graphics();
+    underlay.setDepth(DEPTHS.boardUnder);
     if (this.layer === 0) {
-      underlay.fillStyle(0x6cbf6a, 0.55); // grass green
+      underlay.fillStyle(0x6cbf6a, 1);
     } else {
-      underlay.fillStyle(0x6b4524, 0.78); // packed earth brown
+      underlay.fillStyle(0x6b4524, 1);
     }
     underlay.fillRect(0, 0, BOARD_W, BOARD_H);
     this.boardContainer.add(underlay);
@@ -1337,7 +1333,7 @@ export class HomeScene extends Phaser.Scene {
         const x = b.x * TILE + (fw * TILE) / 2;
         const y = b.y * TILE + (fh * TILE) / 2;
         const spr = this.add.image(x, y, `building-${b.kind}`);
-        spr.setOrigin(0.5, 0.75);
+        spr.setOrigin(0.5, 0.5) /* center sprite within footprint cell so it never bleeds above the grid */;
         spr.setAlpha(spansBoth && b.layer !== this.layer ? 0.65 : 1);
         spr.setDisplaySize(fw * TILE, fh * TILE);
         this.tweens.add({
@@ -1371,7 +1367,7 @@ export class HomeScene extends Phaser.Scene {
     const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
     const rot = (b.rotation ?? 0) as 0 | 1 | 2 | 3;
     const spr = this.add.image(x, y, buildingTextureKey(b.kind, rot));
-    spr.setOrigin(0.5, 0.75);
+    spr.setOrigin(0.5, 0.5) /* center sprite within footprint cell so it never bleeds above the grid */;
     spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
     // Buildings render at exactly footprint × TILE so each kind
     // sits inside its grid cells instead of bleeding across the
