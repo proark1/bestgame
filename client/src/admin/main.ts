@@ -76,7 +76,10 @@ const state: AdminState = {
   stories: null,
   files: [],
   cards: [],
-  compression: { format: 'webp', quality: 0.85, maxDim: 256 },
+  // Quality 0.85 was the historical default; bumped to 0.92 to
+  // preserve the painterly carapace shading and the thin dark
+  // outlines that read fuzzy after the in-game downscale.
+  compression: { format: 'webp', quality: 0.92, maxDim: 256 },
   progressEl: null,
   animation: null,
   uiOverrides: null,

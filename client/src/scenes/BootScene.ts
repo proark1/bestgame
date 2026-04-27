@@ -438,6 +438,14 @@ export class BootScene extends Phaser.Scene {
     const renderer = this.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
     const gl: WebGLRenderingContext | null =
       'gl' in renderer && renderer.gl ? renderer.gl : null;
+    // WebGL2 lifts the WebGL1 power-of-two restriction on mipmaps —
+    // any size is fair game. Detect it once via the WebGL2RenderingContext
+    // global so non-POT sources (192 px buildings, 1024×576 story panels)
+    // still get the full mip chain on every modern phone + desktop.
+    // Falls back to the conservative POT gate on WebGL1 hardware.
+    const isWebGL2 =
+      typeof WebGL2RenderingContext !== 'undefined' &&
+      gl instanceof WebGL2RenderingContext;
     for (const key of this.textures.getTextureKeys()) {
       if (key === '__MISSING' || key === '__DEFAULT' || key === '__WHITE') continue;
       const texture = this.textures.get(key);
@@ -458,13 +466,12 @@ export class BootScene extends Phaser.Scene {
         const img = source.image as HTMLImageElement | HTMLCanvasElement;
         const w = 'naturalWidth' in img ? img.naturalWidth : img.width;
         const h = 'naturalHeight' in img ? img.naturalHeight : img.height;
-        // Mipmaps in WebGL1 require power-of-2 on both axes; in
-        // WebGL2 they're always allowed. Gate on POT to stay safe on
-        // WebGL1 — a non-POT texture that gets generateMipmap'd
-        // becomes invalid and samples as solid black. Almost every
-        // sprite is 128 × 128, which IS POT.
+        if (w <= 0 || h <= 0) continue;
+        // WebGL1 requires power-of-2 on both axes — generateMipmap on
+        // a non-POT texture there leaves it sampling as solid black.
+        // WebGL2 has no such restriction.
         const isPot = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
-        if (!isPot(w) || !isPot(h)) continue;
+        if (!isWebGL2 && (!isPot(w) || !isPot(h))) continue;
         gl.bindTexture(gl.TEXTURE_2D, rawTex);
         gl.generateMipmap(gl.TEXTURE_2D);
         gl.texParameteri(

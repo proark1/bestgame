@@ -91,7 +91,11 @@ function parseArgs(argv: string[]): Options {
     only: null,
     missing: false,
     format: 'webp',
-    quality: 85,
+    // Quality 85 was too soft on cartoon line art — gradients in
+    // shaded carapaces and hair-thin outlines dropped enough detail
+    // that buildings + deck thumbnails read fuzzy after the in-game
+    // downscale. 92 is the sweet spot before WebP file size jumps.
+    quality: 92,
     maxDim: 256,
   };
   for (const a of argv) {
@@ -129,7 +133,7 @@ changed. Run after editing prompts.json or when you want fresh art.
 
 Flags:
   --format=webp|png    output format (default: webp)
-  --quality=N          compression quality 1..100 (default: 85)
+  --quality=N          compression quality 1..100 (default: 92)
   --max-dim=N          max pixel size per side, 32..2048 (default: 256)
   --missing            only generate sprites with no file on disk
   --only=KEY           regenerate just one sprite (e.g. unit-SoldierAnt)
