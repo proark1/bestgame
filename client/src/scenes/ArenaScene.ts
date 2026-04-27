@@ -178,9 +178,12 @@ export class ArenaScene extends Phaser.Scene {
 
   private drawAmbient(): void {
     const bg = this.add.graphics().setDepth(-120);
-    const top = 0x223625;
-    const mid = 0x152318;
-    const bot = 0x060b07;
+    // Grass-green gradient matching the on-board fill so the area
+    // outside the bordered playfield reads as continuous map (Clash
+    // style — the arena sits in a larger green field).
+    const top = 0x7fcb7c;
+    const mid = 0x6cbf6a;
+    const bot = 0x4f9a52;
     const bands = 20;
     for (let i = 0; i < bands; i++) {
       const t = i / Math.max(1, bands - 1);

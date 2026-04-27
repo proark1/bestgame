@@ -489,7 +489,10 @@ export class RaidScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor('#0f1b10');
+    // Grass green so the area outside the bordered board reads as
+    // continuous map (Clash style). Matches the on-board grass fill
+    // (0x6cbf6a) in drawBoard().
+    this.cameras.main.setBackgroundColor('#6cbf6a');
     fadeInScene(this);
     installSceneClickDebug(this);
     // Reset all per-run state. Scene instances are reused across raids,
