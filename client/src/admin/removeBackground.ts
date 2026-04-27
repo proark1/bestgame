@@ -300,6 +300,81 @@ function distanceSq(
   return dr * dr + dg * dg + db * db;
 }
 
+// ─── Erase ALL white pixels (interior too) ─────────────────────────
+// Sister to removeNearWhite, but with no flood-fill connectivity
+// gate — every pixel that scores as filler gets its alpha zeroed,
+// regardless of whether it sits outside the silhouette or deep
+// inside the character. Use when Gemini bakes a stubborn white
+// patch into the body itself (e.g. a chest highlight that reads as
+// "missing alpha", a cheek hot-spot, an internal eye-glare blob)
+// that the connectivity-gated removeNearWhite intentionally leaves
+// alone.
+//
+// Destructive by design — eye gems, brass highlights, and metal
+// rims that share the same low-chroma / high-lightness signature
+// will also disappear. The button on the sprite card warns the
+// admin before applying it. Tighter defaults than removeNearWhite
+// (chromaMax=20, lightnessMin=210) so only near-pure whites are
+// hit; the admin can re-generate or re-load if the result eats
+// too much.
+
+export interface EraseAllWhiteOptions {
+  chromaMax?: number;
+  lightnessMin?: number;
+  feather?: number;
+}
+
+export async function eraseAllWhite(
+  base64: string,
+  sourceMime: string,
+  opts: EraseAllWhiteOptions = {},
+): Promise<RemovedBackgroundImage> {
+  const chromaMax = opts.chromaMax ?? 20;
+  const lightnessMin = opts.lightnessMin ?? 210;
+  const feather = opts.feather ?? 25;
+
+  const img = await decodeImage(base64, sourceMime);
+  const width = img.width;
+  const height = img.height;
+  if (width === 0 || height === 0) throw new Error('empty image');
+
+  const canvas = makeCanvas(width, height);
+  const ctx = canvas.getContext('2d', { alpha: true }) as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null;
+  if (!ctx) throw new Error('2D canvas unavailable');
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(img as CanvasImageSource, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+
+  // No flood, no visited array — just a single linear pass that
+  // dims (or zeroes) every white-enough pixel. Feather softens the
+  // boundary so the kept silhouette doesn't get a hard ring of
+  // half-killed pixels around it.
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3]! === 0) continue;
+    const r = pixels[i]!;
+    const g = pixels[i + 1]!;
+    const b = pixels[i + 2]!;
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    if (chroma > chromaMax) continue;
+    const lightness = (r + g + b) / 3;
+    if (lightness < lightnessMin) continue;
+    if (lightness >= lightnessMin + feather) {
+      pixels[i + 3] = 0;
+    } else {
+      const t = (lightness - lightnessMin) / feather;
+      pixels[i + 3] = Math.round(pixels[i + 3]! * (1 - t));
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  return encode(canvas, width, height);
+}
+
 // Samples 8 reference points around the border and returns the channel-wise
 // median. More robust than a corner-only sample when one corner happens to
 // be occupied by the subject.

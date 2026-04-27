@@ -31,7 +31,11 @@ import {
   type PromptsFile,
   type SpriteFile,
 } from './api.js';
-import { removeBackground, removeNearWhite } from './removeBackground.js';
+import {
+  eraseAllWhite,
+  removeBackground,
+  removeNearWhite,
+} from './removeBackground.js';
 import { autoCropAndCenter } from './cropImage.js';
 import {
   WALK_FRAME_COUNT,
@@ -217,6 +221,13 @@ export class WalkCycleEditor {
     const graysBtn = mkButton('Remove grays', 'btn', () =>
       void this.removeGraysOn(label),
     );
+    // Destructive third-pass — wipes near-white pixels anywhere in
+    // the pose, even ones surrounded by colored body, so a baked-in
+    // white smudge inside the character can be cleared. Confirms
+    // first because it can also eat eye whites and metal highlights.
+    const eraseBtn = mkButton('Erase white', 'btn', () =>
+      void this.eraseWhiteOn(label),
+    );
     // Auto-trim transparent space around the pose and re-center it
     // in the 128×128 canvas. "Crop" preserves the subject scale;
     // "Crop + fit" scales up to ~90% of the canvas. Both idempotent
@@ -227,7 +238,7 @@ export class WalkCycleEditor {
     const cropFitBtn = mkButton('Crop + fit', 'btn', () =>
       void this.cropOn(label, 'fit'),
     );
-    actions.append(regenBtn, bgBtn, graysBtn, cropBtn, cropFitBtn);
+    actions.append(regenBtn, bgBtn, graysBtn, eraseBtn, cropBtn, cropFitBtn);
     col.append(actions);
 
     if (label === 'A') {
@@ -367,6 +378,27 @@ export class WalkCycleEditor {
       const cut = await removeNearWhite(gem.data, gem.mimeType);
       return { data: cut.base64, mimeType: cut.mimeType };
     }, 'Remove grays');
+  }
+
+  // Destructive variant — see eraseAllWhite() in removeBackground.ts.
+  // Confirm before applying because eye whites and metal sheen can
+  // get caught in the same pass.
+  private async eraseWhiteOn(label: PoseLabel): Promise<void> {
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.confirm === 'function' &&
+      !window.confirm(
+        `Erase ALL near-white pixels in pose ${label}? ` +
+          'This also removes white pixels INSIDE the character (eye glints, metal sheen). ' +
+          'Regenerate the pose to undo.',
+      )
+    ) {
+      return;
+    }
+    await this.runCleanup(label, async (gem) => {
+      const cut = await eraseAllWhite(gem.data, gem.mimeType);
+      return { data: cut.base64, mimeType: cut.mimeType };
+    }, 'Erase white');
   }
 
   private async cropOn(
