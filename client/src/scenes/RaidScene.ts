@@ -1960,7 +1960,7 @@ export class RaidScene extends Phaser.Scene {
     this.deckUnlockText.setText(
       upcoming.length > 0
         ? `Next unlocks: ${upcoming.join(' • ')}`
-        : 'All attacker units unlocked at your current Queen level.',
+        : 'All attacker units unlocked at your current colony level.',
     );
     const showOnboarding = !this.isDrawing && this.raidInputs.length === 0 && entry.count > 0;
     this.boardGuide.setVisible(showOnboarding);

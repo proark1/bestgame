@@ -5,10 +5,14 @@
 // button, with a secondary "Show tutorial" link added to the account
 // chip menu so they can reopen it later.
 
-// Bumped when the tutorial copy materially changes (e.g. adding the
-// build → raid walkthrough + ambush/split/dig explanation). Returning
+// Bumped when the tutorial copy materially changes. Returning
 // players see the refreshed walkthrough once.
-const SEEN_KEY = 'hive.tutorialSeen.v2';
+//
+// v3 added an Economy section explaining what each resource is for
+// + a Progression section showing what unlocks at colony levels
+// 1–5, so a new player can see the loop and the long-term goal in
+// one read.
+const SEEN_KEY = 'hive.tutorialSeen.v3';
 const STYLE_ID = 'hive-tutorial-style';
 
 const CSS = `
@@ -80,6 +84,74 @@ const CSS = `
   border-radius: 4px;
   font-size: 12px;
 }
+.hive-tutorial-flow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.hive-tutorial-flow-step {
+  background: rgba(255, 217, 138, 0.06);
+  border: 1px solid rgba(255, 217, 138, 0.18);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #cee1b4;
+  text-align: center;
+}
+.hive-tutorial-flow-step b {
+  color: #ffd98a;
+  display: block;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.hive-tutorial-resources {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.hive-tutorial-res {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #cee1b4;
+}
+.hive-tutorial-res b {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.hive-tutorial-res.sugar b { color: #ffd98a; }
+.hive-tutorial-res.leaf b  { color: #c3e8b0; }
+.hive-tutorial-res.milk b  { color: #e6d4ff; }
+.hive-tutorial-tiers {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.hive-tutorial-tier {
+  background: rgba(255, 217, 138, 0.05);
+  border: 1px solid rgba(255, 217, 138, 0.15);
+  border-radius: 6px;
+  padding: 6px 6px;
+  font-size: 10px;
+  text-align: center;
+  color: #cee1b4;
+}
+.hive-tutorial-tier b {
+  display: block;
+  color: #ffd98a;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+@media (max-width: 520px) {
+  .hive-tutorial-flow { grid-template-columns: repeat(2, 1fr); }
+  .hive-tutorial-resources { grid-template-columns: 1fr; }
+  .hive-tutorial-tiers { grid-template-columns: repeat(2, 1fr); }
+}
 .hive-tutorial-actions {
   display: flex;
   gap: 10px;
@@ -129,6 +201,21 @@ export function openTutorial(opts: { force?: boolean; onClose?: () => void } = {
       <h1>Welcome to Hive Wars 🐜</h1>
       <p class="hive-tutorial-sub">A backyard colony-vs-colony strategy game. Build, raid, rank up.</p>
 
+      <h2>The loop</h2>
+      <div class="hive-tutorial-flow">
+        <div class="hive-tutorial-flow-step"><b>1. Build</b>place defenses + producers</div>
+        <div class="hive-tutorial-flow-step"><b>2. Raid</b>attack a rival, loot resources</div>
+        <div class="hive-tutorial-flow-step"><b>3. Upgrade</b>spend loot on your colony</div>
+        <div class="hive-tutorial-flow-step"><b>4. Climb</b>tier up, unlock new units</div>
+      </div>
+
+      <h2>Resources</h2>
+      <div class="hive-tutorial-resources">
+        <div class="hive-tutorial-res sugar"><b>Sugar</b>Spent on every building + colony tier-up. Earned from <code>Dew Collectors</code> and raid loot. Capped by <code>Sugar Vaults</code>.</div>
+        <div class="hive-tutorial-res leaf"><b>Leaf</b>Spent on unit upgrades + nurseries. Earned from <code>Larva Nurseries</code> and raid loot. Capped by nurseries.</div>
+        <div class="hive-tutorial-res milk"><b>Aphid Milk</b>Late-game premium currency from <code>Aphid Farms</code> (colony 4+). Skips builder timers.</div>
+      </div>
+
       <h2>1 · Build your base</h2>
       <ul>
         <li>Tap an empty tile on the Home screen to place a building. Each building snaps to the green grid — bigger kinds (Queen Chamber) take 2×2, the rest are 1×1.</li>
@@ -151,8 +238,18 @@ export function openTutorial(opts: { force?: boolean; onClose?: () => void } = {
       <h2>3 · Climb</h2>
       <ul>
         <li>1–3 stars per raid. Trophies up, loot in. Losing raids costs trophies + loot.</li>
-        <li><code>⚔ Arena</code> — live PvP. <code>👥 Clan</code> — chat and donate units. <code>⚙ Upgrades</code> — spend sugar & leaf to level units.</li>
+        <li><code>⚔ Arena</code> — live PvP. <code>👥 Clan</code> — chat and donate units. <code>⚙ Upgrades</code> — spend leaf to level units.</li>
       </ul>
+
+      <h2>Colony levels — what unlocks</h2>
+      <p>Tap your Queen Chamber after a successful raid to spend sugar on a tier-up. Each tier raises building caps and unlocks new kinds:</p>
+      <div class="hive-tutorial-tiers">
+        <div class="hive-tutorial-tier"><b>L1</b>WorkerAnt, SoldierAnt, DirtDigger, Wasp</div>
+        <div class="hive-tutorial-tier"><b>L2</b>+ FireAnt · Acid Spitter · Spore Tower · Tunnel Junction</div>
+        <div class="hive-tutorial-tier"><b>L3</b>+ Termite · Dragonfly · Hidden Stinger · Root Snare</div>
+        <div class="hive-tutorial-tier"><b>L4</b>+ Mantis · Spider Nest · Thorn Hedge · Aphid Farm</div>
+        <div class="hive-tutorial-tier"><b>L5</b>+ Scarab · max wall + turret cap</div>
+      </div>
 
       <h2>Save your progress</h2>
       <p>You're playing as a guest. Tap the <code>guest ▾</code> chip in the top-left to register — progress carries over to any device.</p>

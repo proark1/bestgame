@@ -56,7 +56,7 @@ export class ProgressionScene extends Phaser.Scene {
     fadeInScene(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     drawSceneAmbient(this);
-    drawSceneHud(this, 'Queen Path', 'HomeScene');
+    drawSceneHud(this, 'Colony Path', 'HomeScene');
     this.body = makeScrollBody(this);
     void this.loadData();
   }
@@ -135,12 +135,12 @@ export class ProgressionScene extends Phaser.Scene {
     drawPill(pill, originX + 16, y + 14, 110, 22, { brass: true });
     this.body.container.add(pill);
     this.body.container.add(
-      crispText(this, originX + 70, y + 25, `QUEEN LEVEL ${this.queenLevel}`,
+      crispText(this, originX + 70, y + 25, `COLONY LEVEL ${this.queenLevel}`,
         labelTextStyle(11, COLOR.textGold)).setOrigin(0.5, 0.5),
     );
     this.body.container.add(
       crispText(this, originX + 18, y + 44,
-        'Each Queen tier unlocks new defender buildings and attacker units.',
+        'Each colony tier unlocks new defender buildings and attacker units.',
         displayTextStyle(13, COLOR.textGold, 3)).setOrigin(0, 0),
     );
     this.body.container.add(
@@ -260,7 +260,7 @@ export class ProgressionScene extends Phaser.Scene {
           y: btnY,
           width: 160,
           height: 32,
-          label: tier.affordable ? '👑  Upgrade Queen' : 'Need more loot',
+          label: tier.affordable ? '👑  Level up colony' : 'Need more loot',
           variant: tier.affordable ? 'primary' : 'ghost',
           fontSize: 12,
           enabled: tier.affordable && !this.upgrading,
