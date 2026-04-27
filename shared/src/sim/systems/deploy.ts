@@ -1,6 +1,7 @@
 import { add, fromInt, fromFloat, mul } from '../fixed.js';
 import type { Fixed } from '../fixed.js';
 import { UNIT_STATS } from '../stats.js';
+import { HERO_STATS_FIXED } from '../heroStats.js';
 import { levelStatPercent } from '../progression.js';
 import type { SimState } from '../state.js';
 import type { PheromonePath } from '../../types/pheromone.js';
@@ -26,15 +27,22 @@ export function applyDeploy(
   path: PheromonePath,
   attackerUnitLevels?: Partial<Record<UnitKind, number>>,
 ): void {
+  // Hero deployments are capped at 1 unit per path regardless of
+  // path.count — heroes are unique, so even a misbehaving client
+  // can't spawn 5 Mantises off one drag.
+  const isHeroPath = !!path.heroKind;
+  const requested = isHeroPath ? Math.min(1, path.count) : path.count;
   const capRemaining = state.deployCapRemaining[ownerSlot];
-  const count = Math.min(path.count, capRemaining);
+  const count = Math.min(requested, capRemaining);
   if (count <= 0) return;
 
   state.deployCapRemaining[ownerSlot] = capRemaining - count;
 
   // Persist the path so pheromoneFollow can walk it each tick. The
   // optional `modifier` is copied through verbatim — pheromone_follow
-  // reads it on each waypoint arrival.
+  // reads it on each waypoint arrival. heroKind is preserved on the
+  // stored path so a future re-spawn or debug tool can recover the
+  // intent.
   const storedPath: PheromonePath = {
     pathId: state.nextPathId++,
     spawnLayer: path.spawnLayer,
@@ -42,18 +50,24 @@ export function applyDeploy(
     count,
     points: path.points,
     ...(path.modifier ? { modifier: path.modifier } : {}),
+    ...(path.heroKind ? { heroKind: path.heroKind } : {}),
   };
   state.paths.push(storedPath);
 
-  const stats = UNIT_STATS[path.unitKind];
+  // Stat lookup: hero deployments use HERO_STATS_FIXED keyed by
+  // heroKind; everything else stays on UNIT_STATS. Hero HP doesn't
+  // scale with attackerUnitLevels — heroes are leveled separately
+  // (PR E will add hero leveling); for PR D every hero is L1.
+  const stats = isHeroPath
+    ? HERO_STATS_FIXED[path.heroKind!]
+    : UNIT_STATS[path.unitKind];
   const first = path.points[0];
   const second = path.points[1] ?? first;
   if (!first || !second) return;
 
-  // Apply per-kind level scaling to HP. Damage scaling happens at hit
-  // time in combat.ts so we only need to persist `hp` + `hpMax` here.
-  // Level only applies to attacker-owned units.
-  const level = ownerSlot === 0 ? attackerUnitLevels?.[path.unitKind] : undefined;
+  const level = ownerSlot === 0 && !isHeroPath
+    ? attackerUnitLevels?.[path.unitKind]
+    : undefined;
   const pct = levelStatPercent(level);
   const hp = scaleFixedByPercent(stats.hpMax, pct);
 
@@ -68,11 +82,6 @@ export function applyDeploy(
       kind: path.unitKind,
       owner: ownerSlot,
       layer: path.spawnLayer,
-      // Stable record of the layer this unit started on. Reading
-      // u.layer at kill time is unreliable because the dig modifier
-      // and forceLayerSwap trapdoor both flip it; spawnLayer is set
-      // exactly once so combat.ts can compare "where you came from"
-      // to "where you killed this building".
       spawnLayer: path.spawnLayer,
       x: first.x,
       y: add(first.y, yOffset),
@@ -82,6 +91,7 @@ export function applyDeploy(
       pathProgress: 0,
       attackCooldown: 0,
       targetBuildingId: 0,
+      ...(path.heroKind ? { heroKind: path.heroKind } : {}),
     });
   }
 

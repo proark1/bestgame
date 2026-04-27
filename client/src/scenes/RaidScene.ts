@@ -49,6 +49,13 @@ interface DeckEntry {
   count: number;
   icon: string;
   label: string;
+  // Hero variant of a deck slot (PR D). When set, deploying this
+  // entry spawns a hero unit (HERO_STATS_FIXED, aura buff) and the
+  // card renders with a gold border so it reads as legendary. The
+  // `kind` field stays a regular UnitKind sentinel so existing deck
+  // code that keys off of `kind` still functions; sim deploy
+  // checks heroKind first.
+  heroKind?: Types.HeroKind;
 }
 
 // A saved tactic captures a finished path geometry so the player can
@@ -227,12 +234,35 @@ function queenLevelFromBase(base: Types.Base | undefined): number {
   return Math.max(1, Math.min(5, Math.floor(lvl)));
 }
 
+// Sentinel UnitKind used by hero deck entries. The sim's deploy
+// system checks heroKind FIRST and never reads UNIT_STATS for hero
+// units, so the sentinel is purely a structural placeholder for
+// type-erased deck-pickling code that keys off `kind`.
+const HERO_DECK_SENTINEL_KIND: Types.UnitKind = 'SoldierAnt';
+
+// Hero icon mapping — matches the spriteKeys registered in
+// client/src/assets/atlas.ts (HERO_SPRITE_KEYS).
+const HERO_ICON: Record<Types.HeroKind, string> = {
+  Mantis: 'hero-Mantis',
+  HerculesBeetle: 'hero-HerculesBeetle',
+  WaspQueen: 'hero-WaspQueen',
+  StagBeetle: 'hero-StagBeetle',
+};
+
+const HERO_LABEL: Record<Types.HeroKind, string> = {
+  Mantis: 'Mantis',
+  HerculesBeetle: 'Hercules',
+  WaspQueen: 'Wasp Q.',
+  StagBeetle: 'Stag',
+};
+
 function buildDeck(
   attackerQueenLevel: number,
   donationInventory?: Record<string, number>,
+  equippedHeroes?: readonly Types.HeroKind[],
 ): DeckEntry[] {
   const donations = donationInventory ?? {};
-  return ALL_DECK
+  const swarm = ALL_DECK
     .filter((d) => d.unlockQueenLevel <= attackerQueenLevel)
     .map((d) => {
       // Strip the gate field from the runtime deck entry — RaidScene
@@ -248,6 +278,19 @@ function buildDeck(
       }
       return rest;
     });
+
+  // Append equipped heroes as additional deck cards, capped at 1
+  // each (heroes are unique). Hero cards sort to the FRONT of the
+  // deck so the player sees them first when scrolling — they're
+  // the most powerful tools per raid.
+  const heroes: DeckEntry[] = (equippedHeroes ?? []).map((kind) => ({
+    kind: HERO_DECK_SENTINEL_KIND,
+    count: 1,
+    icon: HERO_ICON[kind],
+    label: HERO_LABEL[kind],
+    heroKind: kind,
+  }));
+  return [...heroes, ...swarm];
 }
 
 const BOT_BASE: Types.Base = {
@@ -508,7 +551,10 @@ export class RaidScene extends Phaser.Scene {
     // next time regardless of how many donated units were actually
     // deployed.
     const donationInventory = initRuntime?.player?.player.donationInventory ?? {};
-    this.deckEntries = buildDeck(this.attackerQueenLevel, donationInventory);
+    // Equipped heroes (PR D) ride into the deck as bonus cards
+    // capped at 1 each, sorted to the front.
+    const equippedHeroes = initRuntime?.player?.player.heroes?.equipped ?? [];
+    this.deckEntries = buildDeck(this.attackerQueenLevel, donationInventory, equippedHeroes);
     this.deckContainers = [];
     this.deckLabels = [];
     this.buildingSprites.clear();
@@ -1127,6 +1173,11 @@ export class RaidScene extends Phaser.Scene {
               kind: this.currentModifierMode,
               pointIndex: Math.max(1, Math.floor((tilePoints.length - 1) / 2)),
             };
+      // Hero deployments are capped to 1 unit per drag (the sim
+      // also enforces this; clamping client-side keeps the deck
+      // count bookkeeping accurate so a 5-burst hero card doesn't
+      // visually decrement to -4).
+      const heroBurst = entry.heroKind ? 1 : burst;
       const input: Types.SimInput = {
         type: 'deployPath',
         tick: this.state.tick + 1,
@@ -1135,9 +1186,10 @@ export class RaidScene extends Phaser.Scene {
           pathId: 0,
           spawnLayer: 0,
           unitKind: entry.kind,
-          count: burst,
+          count: heroBurst,
           points: tilePoints,
           ...(modifier ? { modifier } : {}),
+          ...(entry.heroKind ? { heroKind: entry.heroKind } : {}),
         },
       };
       this.pendingInputs.push(input);
@@ -1882,14 +1934,23 @@ export class RaidScene extends Phaser.Scene {
     if (!container || !bgObj || !label || !entry) return;
     const selected = index === this.selectedDeckIdx;
     const depleted = entry.count <= 0;
+    const isHero = !!entry.heroKind;
     bgObj.clear();
+    // Heroes get a richer fill (gold-tinted) + a thicker brass
+    // border so they read as legendary in the deck tray.
     bgObj.fillStyle(
-      depleted ? 0x241d1d : selected ? 0x3a7f3a : 0x1a2b1a,
+      depleted ? 0x241d1d
+        : selected ? 0x3a7f3a
+        : isHero ? 0x3a2e10
+        : 0x1a2b1a,
       1,
     );
     bgObj.lineStyle(
-      3,
-      depleted ? 0x5a4141 : selected ? 0xffd98a : 0x2c5a23,
+      isHero ? 4 : 3,
+      depleted ? 0x5a4141
+        : selected ? 0xffd98a
+        : isHero ? 0xffd97a
+        : 0x2c5a23,
       1,
     );
     bgObj.fillRoundedRect(
@@ -2023,16 +2084,24 @@ export class RaidScene extends Phaser.Scene {
     kind: Types.UnitKind,
     x: number,
     y: number,
+    heroKind?: Types.HeroKind,
   ): Phaser.GameObjects.Image | Phaser.GameObjects.Sprite {
+    // Heroes use a static sprite (PR D ships sprite art via the
+    // admin tool; placeholder fallback in placeholders.ts draws a
+    // brass disc with a halo). Heroes also render at 1.4× the
+    // regular unit size so they read as legendary in a swarm.
+    const HERO_SIZE = 44;
+    const UNIT_SIZE = 32;
+    if (heroKind) {
+      return this.add
+        .image(x, y, `hero-${heroKind}`)
+        .setDisplaySize(HERO_SIZE, HERO_SIZE)
+        .setOrigin(0.5, 0.7);
+    }
     const isAnimatedKind = (ANIMATED_UNIT_KINDS as readonly string[]).includes(kind);
     const enabled = this.animationEnabled[kind] !== false;
     const sheetKey = `unit-${kind}-walk`;
     const animKey = `walk-${kind}`;
-    // Units render at 32×32 (≈ ⅔ of a tile) so two adjacent units fit
-    // side-by-side in a single grid cell during a swarm. The previous
-    // 36 px size pushed every unit slightly past its tile and made
-    // packed columns look mushed against neighbouring buildings.
-    const UNIT_SIZE = 32;
     if (
       isAnimatedKind &&
       enabled &&
@@ -2232,7 +2301,7 @@ export class RaidScene extends Phaser.Scene {
       const x = Sim.toFloat(u.x) * TILE;
       const y = Sim.toFloat(u.y) * TILE;
       if (!spr) {
-        spr = this.makeUnitSprite(u.kind, x, y);
+        spr = this.makeUnitSprite(u.kind, x, y, u.heroKind);
         this.boardContainer.add(spr);
         this.unitSprites.set(u.id, spr);
         this.unitLastLayer.set(u.id, u.layer);

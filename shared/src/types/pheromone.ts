@@ -48,6 +48,12 @@ export interface PheromonePath {
   // Optional modifier attached to the path. Absent on legacy/replay
   // inputs — those follow the original pure-walk behaviour exactly.
   modifier?: PathModifier;
+  // Hero deployment marker (PR D). When set, the deploy system
+  // spawns a hero unit (count clamped to 1) using HERO_STATS_FIXED
+  // instead of UNIT_STATS[unitKind]. unitKind is still required by
+  // type but ignored for hero stat lookup; the renderer reads
+  // heroKind first and falls back to unitKind for non-hero paths.
+  heroKind?: import('./heroes.js').HeroKind;
 }
 
 // Sim ticks the unit pauses on an `ambush` marker. 30 ticks = 1 second
