@@ -139,7 +139,10 @@ export class ArenaScene extends Phaser.Scene {
     const applyLayout = (): void => {
       const availW = this.scale.width - 24;
       const availH = this.scale.height - 80;
-      const scale = Math.min(availW / BOARD_W, availH / BOARD_H, 1);
+      // Fit-to-viewport zoom (capped at 2.4x); mirrors HomeScene +
+      // RaidScene so the board feels equally fullscreen on each.
+      const fit = Math.min(availW / BOARD_W, availH / BOARD_H);
+      const scale = Math.min(2.4, fit);
       this.boardContainer.setScale(scale);
       const scaledW = BOARD_W * scale;
       const scaledH = BOARD_H * scale;

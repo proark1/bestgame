@@ -511,9 +511,69 @@ export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {
   },
 };
 
+// Resource cards. Not units or buildings — these document the
+// economy itself so a player who taps Codex can read "where does
+// milk come from?" without digging through the tutorial. spriteKey
+// reuses the HUD pill icons so the card portrait is consistent
+// with what the player already sees in the corner stack.
+export const RESOURCE_CODEX: Record<'sugar' | 'leaf' | 'milk', CodexEntry> = {
+  sugar: {
+    kind: 'sugar',
+    name: 'Sugar',
+    role: 'Build & upgrade currency',
+    faction: 'Ants',
+    spriteKey: 'ui-resource-sugar',
+    story:
+      'The colony runs on sugar. Workers ferry crystallised dewdrops ' +
+      'from the surface chambers, where the morning collectors filter ' +
+      'water sweet enough to fuel a tier-up.',
+    power:
+      'Earn from Dew Collectors (8/sec at L1, scales with level), ' +
+      'Sugar Vaults (slow trickle), and raid loot. Spend on every ' +
+      'building placement, every upgrade, and every colony tier-up. ' +
+      'Capped by Sugar Vaults — production stops at the cap.',
+  },
+  leaf: {
+    kind: 'leaf',
+    name: 'Leaf Bits',
+    role: 'Unit & nursery currency',
+    faction: 'Ants',
+    spriteKey: 'ui-resource-leaf',
+    story:
+      'Strip-cut from the soft inner leaves of the surrounding ' +
+      'forest, leaf bits are the staple of the larval feed. Without ' +
+      'them the nursery stays empty and the swarm thins.',
+    power:
+      'Earn from Larva Nurseries (3/sec at L1) and raid loot. Spend ' +
+      'on unit upgrades and most non-Queen buildings. Capped by ' +
+      'Larva Nurseries.',
+  },
+  milk: {
+    kind: 'milk',
+    name: 'Aphid Milk',
+    role: 'Premium currency',
+    faction: 'Ants',
+    spriteKey: 'ui-resource-milk',
+    story:
+      'The fat-bodied aphids on the rear range secrete a thick milk ' +
+      'the elder workers ferment into something that buys favours: ' +
+      'time itself, or a queen who looks the part.',
+    power:
+      'Earn three ways. (1) Aphid Farms produce 0.2/sec/level once ' +
+      'unlocked at colony 4. (2) Login-streak rewards: 1 milk on ' +
+      'day 5, 2 on day 6, 5 on day 7. (3) Campaign chapter clears: ' +
+      '1 milk for chapter 1, 3 for chapter 2, 5 for chapter 3. ' +
+      'Spend on builder skips (1 milk per minute remaining, max 60) ' +
+      'or unlock cosmetic Queen skins from the shop. Uncapped.',
+  },
+};
+
 // Stable ordering for Codex navigation. Matches the deck order in
-// RaidScene so players learn the same layout twice.
+// RaidScene so players learn the same layout twice. Resource cards
+// sit at the front so a confused player who opens the codex sees
+// the economy explainer first.
 export const ALL_CODEX_ENTRIES: CodexEntry[] = [
+  ...(Object.values(RESOURCE_CODEX) as CodexEntry[]),
   ...(Object.values(UNIT_CODEX) as CodexEntry[]),
   ...(Object.values(BUILDING_CODEX) as CodexEntry[]),
 ];
