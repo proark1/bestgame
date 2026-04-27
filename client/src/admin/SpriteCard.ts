@@ -19,7 +19,11 @@ import {
   type GeminiImage,
   type SpriteHistoryEntry,
 } from './api.js';
-import { removeBackground, removeNearWhite } from './removeBackground.js';
+import {
+  eraseAllWhite,
+  removeBackground,
+  removeNearWhite,
+} from './removeBackground.js';
 import { autoCropAndCenter } from './cropImage.js';
 import {
   WALK_FRAME_COUNT,
@@ -77,6 +81,7 @@ export class SpriteCard {
   private generateBtn!: HTMLButtonElement;
   private removeBgBtn!: HTMLButtonElement;
   private removeGraysBtn!: HTMLButtonElement;
+  private eraseWhiteBtn!: HTMLButtonElement;
   private cropBtn!: HTMLButtonElement;
   private cropFitBtn!: HTMLButtonElement;
   private loadCurrentBtn!: HTMLButtonElement;
@@ -467,6 +472,19 @@ export class SpriteCard {
     this.removeGraysBtn = button('Remove grays', 'btn', () =>
       void this.removeNearWhite(),
     );
+    // Third-stage destructive cleanup. Unlike "Remove BG" / "Remove
+    // grays", this one IGNORES connectivity and zeroes alpha on
+    // every near-white pixel anywhere in the image — including
+    // patches that are completely surrounded by colored body. Use
+    // it when Gemini bakes a stubborn white blob into the
+    // character itself (cheek hot-spot, chest highlight, internal
+    // glare). Tighter chroma/lightness defaults than removeNearWhite
+    // so brass and emerald accents survive, but eye whites and
+    // metallic sheens that share the near-white signature can still
+    // disappear — that's the cost of a global pass.
+    this.eraseWhiteBtn = button('Erase white', 'btn', () =>
+      void this.eraseAllWhite(),
+    );
     // Auto-trim transparent space around the subject and re-center
     // it. Two flavours: "Crop" preserves the subject's native scale
     // (just removes empty side margin); "Crop + fit" also scales the
@@ -493,6 +511,7 @@ export class SpriteCard {
     const delBtn = button('Delete', 'btn ghost danger', () => void this.delete());
     this.removeBgBtn.disabled = true;
     this.removeGraysBtn.disabled = true;
+    this.eraseWhiteBtn.disabled = true;
     this.cropBtn.disabled = true;
     this.cropFitBtn.disabled = true;
     this.saveBtn.disabled = true;
@@ -510,6 +529,7 @@ export class SpriteCard {
       this.loadCurrentBtn,
       this.removeBgBtn,
       this.removeGraysBtn,
+      this.eraseWhiteBtn,
       this.cropBtn,
       this.cropFitBtn,
       this.saveBtn,
@@ -920,6 +940,7 @@ export class SpriteCard {
     this.downloadBtn.disabled = this.selectedIdx < 0;
     this.removeBgBtn.disabled = this.selectedIdx < 0;
     this.removeGraysBtn.disabled = this.selectedIdx < 0;
+    this.eraseWhiteBtn.disabled = this.selectedIdx < 0;
     this.cropBtn.disabled = this.selectedIdx < 0;
     this.cropFitBtn.disabled = this.selectedIdx < 0;
   }
@@ -1055,6 +1076,50 @@ export class SpriteCard {
     } catch (err) {
       this.opts.showStatus(
         `remove grays failed: ${(err as Error).message}`,
+        'error',
+      );
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  // Third-pass cleanup. Destructive: zeroes alpha on every
+  // near-white pixel anywhere in the candidate, not just ones
+  // connected to the outside. Used when Gemini bakes a stubborn
+  // white blob into the character itself that the connectivity-
+  // gated removeNearWhite leaves alone. Eye whites and metallic
+  // highlights that share the same near-white signature can also
+  // disappear, so the admin gets a confirm() prompt before the
+  // pass runs — easier to back off than to undo.
+  async eraseAllWhite(): Promise<void> {
+    if (this.busy || this.selectedIdx < 0) return;
+    const src = this.candidates[this.selectedIdx];
+    if (!src) return;
+    if (
+      typeof window !== 'undefined' &&
+      typeof window.confirm === 'function' &&
+      !window.confirm(
+        `Erase ALL near-white pixels in this ${this.key} candidate? ` +
+          'This also removes white pixels INSIDE the character (eye glints, metal sheen). ' +
+          'Use "Load current" or regenerate to undo.',
+      )
+    ) {
+      return;
+    }
+    this.setBusy(true);
+    this.opts.showStatus(`Erasing white pixels for ${this.key}…`);
+    try {
+      const cut = await eraseAllWhite(src.data, src.mimeType);
+      this.candidates[this.selectedIdx] = {
+        data: cut.base64,
+        mimeType: cut.mimeType,
+      };
+      this.renderCandidates();
+      await this.prepareCompressed();
+      this.opts.showStatus(`White pixels erased for ${this.key}`, 'success');
+    } catch (err) {
+      this.opts.showStatus(
+        `erase white failed: ${(err as Error).message}`,
         'error',
       );
     } finally {

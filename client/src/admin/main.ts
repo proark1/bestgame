@@ -194,11 +194,24 @@ function writeActiveTab(tab: AdminTab): void {
 }
 
 // Active sprite category filter — persisted for convenience
-type SpriteCategory = 'units' | 'heroes' | 'story' | 'ui' | 'branding';
+type SpriteCategory =
+  | 'units'
+  | 'buildings'
+  | 'heroes'
+  | 'story'
+  | 'ui'
+  | 'branding';
 const CATEGORY_STORAGE_KEY = 'hive.spriteCategory';
 function readActiveCategory(): SpriteCategory {
   const v = localStorage.getItem(CATEGORY_STORAGE_KEY);
-  if (v === 'ui' || v === 'branding' || v === 'heroes' || v === 'story') return v;
+  if (
+    v === 'ui' ||
+    v === 'branding' ||
+    v === 'heroes' ||
+    v === 'story' ||
+    v === 'buildings'
+  )
+    return v;
   return 'units';
 }
 function writeActiveCategory(cat: SpriteCategory): void {
@@ -712,6 +725,7 @@ function renderSpritesTab(): HTMLElement {
   categoryBar.className = 'category-bar';
   const categories: Array<{ id: SpriteCategory; label: string }> = [
     { id: 'units', label: 'Units' },
+    { id: 'buildings', label: 'Buildings' },
     { id: 'heroes', label: 'Heroes' },
     { id: 'story', label: 'Story' },
     { id: 'ui', label: 'UI Elements' },
@@ -914,6 +928,12 @@ function renderSpritesTab(): HTMLElement {
   if (state.activeCategory === 'units') {
     for (const u of UNIT_KEYS) {
       const card = mk('unit', u);
+      state.cards.push(card);
+      grid.append(card.root);
+    }
+  } else if (state.activeCategory === 'buildings') {
+    for (const b of BUILDING_KEYS) {
+      const card = mk('building', b);
       state.cards.push(card);
       grid.append(card.root);
     }
