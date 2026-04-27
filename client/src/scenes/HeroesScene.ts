@@ -462,16 +462,25 @@ export class HeroesScene extends Phaser.Scene {
     const H = this.scale.height;
     const overlay = this.add.container(0, 0).setDepth(DEPTHS.resultBackdrop);
 
-    // Solid black backdrop fades in so the playfield drops away.
-    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.0).setOrigin(0, 0).setInteractive();
-    overlay.add(dim);
-    this.tweens.add({ targets: dim, fillAlpha: 0.78, duration: 250, ease: 'Sine.easeOut' });
-
     // Track every deferred timer + scheduled tween so a skip can
     // tear them all down. Without this, a skipped fanfare would
     // leave the stage 2/3 callbacks queued and fire them against a
     // destroyed overlay (review-flagged: high-priority crash).
+    // Every Tween started inside the fanfare is also pushed into
+    // `pendingTweens` and stopped explicitly during cleanup so a
+    // mid-flight tween (e.g. the glow ring) doesn't keep ticking
+    // its onUpdate callback after the overlay is destroyed.
     const pendingTimers: Phaser.Time.TimerEvent[] = [];
+    const pendingTweens: Phaser.Tweens.Tween[] = [];
+    const track = (t: Phaser.Tweens.Tween): Phaser.Tweens.Tween => {
+      pendingTweens.push(t);
+      return t;
+    };
+
+    // Solid black backdrop fades in so the playfield drops away.
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.0).setOrigin(0, 0).setInteractive();
+    overlay.add(dim);
+    track(this.tweens.add({ targets: dim, fillAlpha: 0.78, duration: 250, ease: 'Sine.easeOut' }));
     let resolveDone: () => void = () => undefined;
     const done = new Promise<void>((res) => { resolveDone = res; });
     let finished = false;
@@ -479,8 +488,9 @@ export class HeroesScene extends Phaser.Scene {
       if (finished) return;
       finished = true;
       for (const t of pendingTimers) t.remove(false);
-      this.tweens.killTweensOf(overlay);
-      this.tweens.killTweensOf(dim);
+      for (const tw of pendingTweens) {
+        if (tw.isPlaying() || tw.isPaused()) tw.stop();
+      }
       if (overlay.active) overlay.destroy(true);
       resolveDone();
     };
@@ -503,13 +513,13 @@ export class HeroesScene extends Phaser.Scene {
     overlay.add(chest);
 
     // Pop + shake. Pop scales it up; shake oscillates rotation.
-    this.tweens.add({
+    track(this.tweens.add({
       targets: chest,
       scale: 1,
       duration: 360,
       ease: 'Back.easeOut',
-    });
-    this.tweens.add({
+    }));
+    track(this.tweens.add({
       targets: chest,
       angle: { from: -6, to: 6 },
       duration: 80,
@@ -517,7 +527,7 @@ export class HeroesScene extends Phaser.Scene {
       repeat: 8,
       delay: 360,
       ease: 'Sine.easeInOut',
-    });
+    }));
 
     // Stage 2: glow radiates outward, chest fades; hero rises.
     const ring = this.add.graphics();
@@ -526,7 +536,7 @@ export class HeroesScene extends Phaser.Scene {
     const glowRadius = { r: 0, alpha: 0.5 };
     pendingTimers.push(this.time.delayedCall(1100, () => {
       if (finished) return;
-      this.tweens.add({
+      track(this.tweens.add({
         targets: glowRadius,
         r: chestSize * 1.6,
         alpha: 0,
@@ -539,15 +549,15 @@ export class HeroesScene extends Phaser.Scene {
           ring.fillCircle(W / 2, chestY, glowRadius.r);
         },
         onComplete: () => { if (ring.active) ring.destroy(); },
-      });
-      this.tweens.add({
+      }));
+      track(this.tweens.add({
         targets: chest,
         scale: 0.6,
         alpha: 0,
         duration: 400,
         ease: 'Sine.easeIn',
         onComplete: () => { if (chest.active) chest.destroy(); },
-      });
+      }));
     }));
 
     // Stage 3: hero portrait + name + role panel.
@@ -577,20 +587,20 @@ export class HeroesScene extends Phaser.Scene {
       p.setAlpha(0);
       p.setScale(0.7);
       overlay.add(portrait);
-      this.tweens.add({
+      track(this.tweens.add({
         targets: portrait,
         alpha: 1,
         scale: 1,
         duration: 480,
         ease: 'Back.easeOut',
-      });
+      }));
       // Name + role labels.
       const nameY = heroY + heroSize / 2 + 24;
       const name = crispText(this, W / 2, nameY, def.name, displayTextStyle(28, COLOR.textGold, 4)).setOrigin(0.5, 0.5);
       const role = crispText(this, W / 2, nameY + 32, def.role, labelTextStyle(14, COLOR.textOnDark)).setOrigin(0.5, 0.5);
       name.setAlpha(0); role.setAlpha(0);
       overlay.add(name); overlay.add(role);
-      this.tweens.add({ targets: [name, role], alpha: 1, duration: 360, delay: 200, ease: 'Sine.easeOut' });
+      track(this.tweens.add({ targets: [name, role], alpha: 1, duration: 360, delay: 200, ease: 'Sine.easeOut' }));
     }));
 
     // Auto-finish after the full ceremony — same delay claimChest
