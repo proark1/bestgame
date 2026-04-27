@@ -423,10 +423,12 @@ export class HomeScene extends Phaser.Scene {
   }
 
   // Formats the inside-pill value text. Sugar + leaf show
-  // "current/cap" so the player understands storage gates production
-  // (when the value reaches the cap, producers stop crediting until
-  // the wallet drains). Both numbers use k-formatting (1240 → 1.2k)
-  // once they exceed 1000 so the pill stays narrow on phone.
+  // "current/cap" on tablet/desktop so the player understands storage
+  // gates production (when the value reaches the cap, producers stop
+  // crediting until the wallet drains). Phone hides the cap to keep
+  // the narrower 122 px pill from overflowing — the cap detail is
+  // still reachable via the tap-to-explain popover. Both numbers use
+  // k-formatting (1240 → 1.2k) once they exceed 1000.
   private formatPillValue(kind: 'sugar' | 'leaf' | 'milk'): string {
     const fmt = (n: number): string => {
       if (n < 1000) return String(Math.floor(n));
@@ -436,22 +438,16 @@ export class HomeScene extends Phaser.Scene {
         ? `${Math.round(thousands)}k`
         : `${thousands.toFixed(1).replace(/\.0$/, '')}k`;
     };
-    if (kind === 'sugar') {
-      const cap = this.storageCaps.sugar;
-      return cap !== null
-        ? `${fmt(this.resources.sugar)} / ${fmt(cap)}`
-        : fmt(this.resources.sugar);
-    }
-    if (kind === 'leaf') {
-      const cap = this.storageCaps.leaf;
-      return cap !== null
-        ? `${fmt(this.resources.leafBits)} / ${fmt(cap)}`
-        : fmt(this.resources.leafBits);
-    }
     // aphidMilk accumulates fractional locally (see update() trickle); we
     // floor for display so the HUD pill stays integer-clean and matches
-    // what the server has banked at the last /me roundtrip.
-    return fmt(this.resources.aphidMilk);
+    // what the server has banked at the last /me roundtrip. Milk is
+    // also uncapped in MVP so there's no cap to render.
+    if (kind === 'milk') return fmt(this.resources.aphidMilk);
+
+    const val = kind === 'sugar' ? this.resources.sugar : this.resources.leafBits;
+    const cap = kind === 'sugar' ? this.storageCaps.sugar : this.storageCaps.leaf;
+    const showCap = cap !== null && !this.isMobileLayout();
+    return showCap ? `${fmt(val)} / ${fmt(cap)}` : fmt(val);
   }
 
   // Sums the per-second production from the active server base (or the
@@ -2545,10 +2541,10 @@ export class HomeScene extends Phaser.Scene {
     type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
     // Layer flip is the BOTTOM entry of the left stack so it sits in
     // the corner where the player's thumb naturally rests; Quests +
-    // Recent + Help climb up from there. The icon flips with the
-    // current layer so the player can tell at a glance which side
-    // they're on without a separate text banner.
-    const flipIcon = this.layer === 0 ? '⛏' : '☀';
+    // Recent + Help climb up from there. The icon reflects the
+    // CURRENT mode (not the destination) so the button reads as a
+    // status indicator at a glance — ☀ on surface, ⛏ underground.
+    const flipIcon = this.layer === 0 ? '☀' : '⛏';
     const leftStack: Entry[] = [
       {
         label: flipIcon,
