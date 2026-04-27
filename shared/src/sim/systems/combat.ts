@@ -1,9 +1,33 @@
 import { abs, add, sub, mul, div, dist2, fromInt, fromFloat } from '../fixed.js';
 import type { Fixed } from '../fixed.js';
 import { BUILDING_STATS, BUILDING_BEHAVIOR, UNIT_STATS, UNIT_BEHAVIOR } from '../stats.js';
+import { HERO_STATS_FIXED } from '../heroStats.js';
 import { levelStatPercent } from '../progression.js';
 import type { SimState, SimBuilding } from '../state.js';
-import type { Unit, UnitKind } from '../../types/units.js';
+import type { Unit, UnitKind, UnitStats } from '../../types/units.js';
+
+// Stats lookup that handles both regular swarm units and heroes.
+// Heroes carry a heroKind tag and use HERO_STATS_FIXED instead of
+// UNIT_STATS[kind] so their HP / damage / range / cooldown reflect
+// the hero catalog. PR D introduced heroes; combat reads through
+// this helper everywhere it previously read UNIT_STATS[u.kind] so
+// the same combat loop works for both populations.
+function unitStatsFor(u: Unit): UnitStats {
+  if (u.heroKind) return HERO_STATS_FIXED[u.heroKind];
+  return UNIT_STATS[u.kind];
+}
+
+// Apply the hero attack-speed aura to a freshly-set cooldown. The
+// aura field is a percent (e.g. 25) — divide cooldown by
+// (100 + pct) / 100 ⇔ multiply by 100 / (100 + pct). Done in
+// integer math (no Fixed) since attackCooldown is plain ticks.
+function applyAttackSpeedBuff(baseTicks: number, pct: number): number {
+  if (!pct || pct <= 0) return baseTicks;
+  const scaled = (baseTicks * 100) / (100 + pct);
+  // Floor at 1 tick so a 100% buff doesn't deadlock the loop on a
+  // zero cooldown.
+  return Math.max(1, Math.floor(scaled));
+}
 
 // Combat system — resolves unit↔building, building↔unit, and
 // defender-unit↔attacker-unit attacks. Runs after pheromoneFollow so
@@ -178,7 +202,7 @@ export function combatSystem(
       u.targetBuildingId = 0;
       continue;
     }
-    const stats = UNIT_STATS[u.kind];
+    const stats = unitStatsFor(u);
     const bx = buildingCenterX(b);
     const by = buildingCenterY(b);
     const d2: Fixed = dist2(u.x, u.y, bx, by);
@@ -209,8 +233,17 @@ export function combatSystem(
       if (ub?.vsBuildingPercent) {
         dmg = scaleFixedByPercent(dmg, ub.vsBuildingPercent);
       }
+      // Hero buildingDamage aura — applies only to building hits, so
+      // it lives here rather than in unitStatsFor. StagBeetle's +20%
+      // is the canonical case.
+      if (u.auraBuildingDamagePct && u.auraBuildingDamagePct > 0) {
+        dmg = scaleFixedByPercent(dmg, 100 + u.auraBuildingDamagePct);
+      }
       b.hp = sub(b.hp, dmg);
-      u.attackCooldown = stats.attackCooldownTicks;
+      u.attackCooldown = applyAttackSpeedBuff(
+        stats.attackCooldownTicks,
+        u.auraAttackSpeedPct ?? 0,
+      );
 
       // FireAnt burn: lay a DoT on the building. Subsequent hits re-up
       // the burn (take the max of current + new so stacks don't fall
@@ -260,7 +293,7 @@ export function combatSystem(
   for (let i = 0; i < state.units.length; i++) {
     const u = state.units[i]!;
     if (u.hp <= 0 || u.attackCooldown > 0) continue;
-    const stats = UNIT_STATS[u.kind];
+    const stats = unitStatsFor(u);
     const rangeSq = mul(stats.attackRange, stats.attackRange);
     let bestIdx = -1;
     let bestD2: Fixed = rangeSq + 1;
@@ -283,7 +316,10 @@ export function combatSystem(
     const dmg = scaleFixedByPercent(stats.attackDamage, pct);
     target.hp = sub(target.hp, dmg);
     if (target.hp < 0) target.hp = 0;
-    u.attackCooldown = stats.attackCooldownTicks;
+    u.attackCooldown = applyAttackSpeedBuff(
+      stats.attackCooldownTicks,
+      u.auraAttackSpeedPct ?? 0,
+    );
     // FireAnt-style burn applied to defender units. Building-side burn
     // lives above in loop 1; this is the unit-side branch that makes
     // FireAnt genuinely useful against a NestSpider swarm.
@@ -339,7 +375,7 @@ export function combatSystem(
       // to the previous `u.owner !== 0` hardcode. Symmetric arena
       // makes both sides authoritative without a second branch.
       if (u.owner === b.owner) continue;
-      if (beh?.antiAirOnly && !UNIT_STATS[u.kind].canFly) continue;
+      if (beh?.antiAirOnly && !unitStatsFor(u).canFly) continue;
       const reachable =
         u.layer === b.layer || (b.spans && b.spans.includes(u.layer));
       if (!reachable) continue;
@@ -385,7 +421,7 @@ export function combatSystem(
         // Splash still respects antiAir (spit only catches flyers
         // for SporeTower + splash variant; AcidSpitter has no
         // antiAirOnly, so this just stays permissive).
-        if (beh.antiAirOnly && !UNIT_STATS[u.kind].canFly) continue;
+        if (beh.antiAirOnly && !unitStatsFor(u).canFly) continue;
         const d2 = dist2(u.x, u.y, primary.x, primary.y);
         if (d2 <= splashSq) {
           u.hp = sub(u.hp, effectiveDamage);
@@ -426,7 +462,7 @@ export function combatSystem(
     if (u.owner !== 1) continue;
     if (u.attackCooldown > 0) u.attackCooldown--;
 
-    const stats = UNIT_STATS[u.kind];
+    const stats = unitStatsFor(u);
     // Find nearest attacker on same layer.
     let bestIdx = -1;
     let bestD2: Fixed = fromInt(9999);

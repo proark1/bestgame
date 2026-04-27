@@ -551,6 +551,13 @@ export function registerPlayer(app: FastifyInstance): void {
           // /raid/submit zeroes them on success (war-army-style:
           // refilled per raid, expire whether-or-not used).
           donationInventory: player.donation_inventory ?? {},
+          // Hero ownership echoed on /me so RaidScene can build the
+          // hero deck slots without an extra round-trip on raid open.
+          heroes: {
+            owned: player.hero_ownership ?? {},
+            equipped: player.hero_equipped ?? [],
+            chestClaimed: !!player.hero_chest_claimed,
+          },
         },
         base: base.snapshot,
         offlineTrickle: {

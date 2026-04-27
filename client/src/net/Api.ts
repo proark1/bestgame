@@ -124,6 +124,14 @@ export interface PlayerState {
   // on success. Optional so older servers stay compatible (treated
   // as empty by the client).
   donationInventory?: Record<string, number>;
+  // Hero ownership snapshot from PR D's /me echo. Lets RaidScene
+  // build the hero deck cards on raid entry without a separate
+  // round-trip. Optional so older servers stay compatible.
+  heroes?: {
+    owned: Partial<Record<Types.HeroKind, true>>;
+    equipped: Types.HeroKind[];
+    chestClaimed: boolean;
+  };
 }
 
 export interface DailyQuestState {

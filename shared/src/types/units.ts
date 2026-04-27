@@ -98,6 +98,26 @@ export interface Unit {
   // by `forceLayerSwap`. Optional so pre-existing replays without
   // the field deserialise unchanged.
   layerCrossedThisTick?: boolean;
+  // Hero identity, when this unit was deployed via an equipped
+  // hero card (PR D). When set, the sim looks up HERO_STATS_FIXED
+  // instead of UNIT_STATS for combat numbers, the renderer uses
+  // the hero sprite key, and the unit emits an aura that buffs
+  // allied units in a radius. `kind` is still set (to a sentinel
+  // SoldierAnt) so existing UnitKind-keyed tables don't have to
+  // grow a Hero entry. Absence = ordinary swarm unit.
+  heroKind?: import('./heroes.js').HeroKind;
+  // Aura buff flags re-derived each tick by the auras system.
+  // Combat reads these to scale attack cooldown / damage. Heal
+  // is applied directly as +HP (capped at hpMax) at the same time.
+  // All integers; absence = no buff.
+  auraAttackSpeedPct?: number;       // 0..100 integer
+  auraBuildingDamagePct?: number;    // 0..100 integer
+  // hpBonus aura is one-shot: the first tick a unit comes within
+  // a HerculesBeetle's radius, hpMax + hp are bumped by
+  // aura.pct. We persist the highest applied bonus on the unit
+  // so the buff doesn't re-apply each tick. The bonus also
+  // outlives the hero — leaving the radius doesn't shrink HP.
+  auraHpBonusApplied?: number;
 }
 
 export interface UnitStats {

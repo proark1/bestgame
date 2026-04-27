@@ -4,6 +4,7 @@ import { pheromoneFollowSystem } from './systems/pheromone_follow.js';
 import { combatSystem } from './systems/combat.js';
 import { outcomeSystem } from './systems/outcome.js';
 import { aiRulesSystem } from './ai_rules.js';
+import { applyAuras } from './systems/auras.js';
 import type { SimConfig, SimState } from './state.js';
 import type { SimInput } from '../types/pheromone.js';
 
@@ -51,6 +52,12 @@ export function step(
     // tick's rules to observe.
     aiRulesSystem(state);
     state.buildingsDestroyedThisTick = 0;
+    // 2c. Hero auras. Applied BEFORE combat so the same-tick attack
+    // resolves with any speed/damage buffs and the heal aura tops
+    // up units before they take hits. Heroes-free raids see this
+    // run as a near-no-op (early-out on the heroKind check) so the
+    // determinism gate stays bit-exact for replays from PR C.
+    applyAuras(state);
     // 3. Combat resolution (unit<->building). Level multipliers are
     // threaded in so attacker damage scales with upgrades.
     combatSystem(state, cfg.attackerUnitLevels);

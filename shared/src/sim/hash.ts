@@ -58,6 +58,10 @@ export function hashSimState(s: SimState): number {
     h = mixU32(h, u.attackCooldown);
     h = mixU32(h, u.targetBuildingId);
     h = mixStr(h, u.kind);
+    // Hero identity (PR D). Empty string for non-hero units mixes
+    // through mixStr's loop as a no-op, so existing replays from
+    // before heroes shipped hash bit-identically.
+    h = mixStr(h, u.heroKind ?? '');
   }
   for (let i = 0; i < s.buildings.length; i++) {
     const b = s.buildings[i]!;
