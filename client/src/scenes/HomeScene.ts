@@ -1422,6 +1422,156 @@ export class HomeScene extends Phaser.Scene {
     // Affordances paint after the buildings exist so isTileOccupied
     // sees the live layout.
     this.drawEmptyTileHints();
+    this.drawHarvestIndicators();
+  }
+
+  // Per-building floating coin chip rendered on top of any producer
+  // whose pendingHarvest bucket has at least one pending unit.
+  // Tapping the chip (or the building sprite below it) calls
+  // /player/harvest, which claims every producer at once and updates
+  // the wallet. Chips are recreated whenever the base snapshot
+  // changes — drawBuildings is the canonical re-render hook.
+  private harvestChips: Phaser.GameObjects.Container[] = [];
+
+  private drawHarvestIndicators(): void {
+    for (const c of this.harvestChips) c.destroy();
+    this.harvestChips = [];
+    if (!this.serverBase) return;
+    for (const b of this.serverBase.buildings) {
+      if (!this.buildingHasPendingHarvest(b)) continue;
+      // Skip buildings that aren't on the current layer (the chip
+      // only makes sense over the visible sprite). Spans-both
+      // buildings render on every layer so still pass.
+      const spansBoth = (b.spans?.length ?? 0) > 1;
+      const onThisLayer = spansBoth || b.anchor.layer === this.layer;
+      if (!onThisLayer) continue;
+      const cx = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
+      const cy = b.anchor.y * TILE - 10;
+      const chip = this.add.container(cx, cy).setDepth(DEPTHS.boardOverlay);
+      const bg = this.add.graphics();
+      bg.fillStyle(COLOR.brass, 0.95);
+      bg.fillCircle(0, 0, 14);
+      bg.lineStyle(2, COLOR.brassDeep, 1);
+      bg.strokeCircle(0, 0, 14);
+      const label = crispText(this, 0, 1, '✨', displayTextStyle(13, COLOR.textDark, 1)).setOrigin(0.5, 0.5);
+      const hit = this.add.zone(0, 0, 36, 36).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+        e?.stopPropagation?.();
+        void this.runHarvest();
+      });
+      chip.add([bg, label, hit]);
+      // Gentle bobbing tween so the chip reads as "ready to claim"
+      // — same affordance CoC uses on its mortar / collector ready
+      // state. Cheap, single tween per chip.
+      this.tweens.add({
+        targets: chip,
+        y: cy - 4,
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      this.boardContainer.add(chip);
+      this.harvestChips.push(chip);
+    }
+    // Toggle the global "Collect All" CTA based on whether any
+    // producer is ready. Defined later in this file.
+    this.refreshCollectAllVisibility();
+  }
+
+  private buildingHasPendingHarvest(b: Types.Building): boolean {
+    const p = b.pendingHarvest;
+    if (!p) return false;
+    return (p.sugar | 0) > 0 || (p.leafBits | 0) > 0 || (p.aphidMilk | 0) > 0;
+  }
+
+  private async runHarvest(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const res = await runtime.api.harvestAll();
+      // Patch runtime so a subsequent scene enter sees the new
+      // wallet + base. Keep storage caps in sync via /me on next
+      // load — they don't change on harvest.
+      if (runtime.player) {
+        runtime.player.base = res.base;
+        runtime.player.player.sugar = res.player.sugar;
+        runtime.player.player.leafBits = res.player.leafBits;
+        runtime.player.player.aphidMilk = res.player.aphidMilk;
+      }
+      this.serverBase = res.base;
+      this.resources = {
+        sugar: res.player.sugar,
+        leafBits: res.player.leafBits,
+        aphidMilk: res.player.aphidMilk,
+      };
+      this.refreshResourcePills();
+      // Re-render so the cleared pendingHarvest fields stop chips.
+      this.boardContainer.removeAll(true);
+      this.drawBoard();
+      this.drawBuildings();
+      const parts: string[] = [];
+      if (res.harvested.sugar > 0) parts.push(`+${res.harvested.sugar} sugar`);
+      if (res.harvested.leafBits > 0) parts.push(`+${res.harvested.leafBits} leaf`);
+      if (res.harvested.aphidMilk > 0) parts.push(`+${res.harvested.aphidMilk} milk`);
+      if (parts.length > 0) {
+        this.flashToast(`Harvested ${parts.join(', ')}`);
+      }
+      const overflow = res.overflow.sugar + res.overflow.leafBits;
+      if (overflow > 0) {
+        // Surface storage-cap overflow so the player understands they
+        // need a vault upgrade; without this the harvest would silently
+        // discard the over-cap portion and the math wouldn't add up.
+        this.time.delayedCall(800, () => {
+          this.flashToast(`Storage full — ${overflow} lost. Upgrade your vault to keep more.`);
+        });
+      }
+    } catch (err) {
+      this.flashToast(`Harvest failed: ${(err as Error).message}`);
+    }
+  }
+
+  private collectAllButton: HiveButton | null = null;
+
+  private refreshCollectAllVisibility(): void {
+    const anyPending = (this.serverBase?.buildings ?? []).some((b) =>
+      this.buildingHasPendingHarvest(b),
+    );
+    if (anyPending) {
+      this.drawCollectAllButton();
+    } else if (this.collectAllButton) {
+      this.collectAllButton.destroy();
+      this.collectAllButton = null;
+    }
+  }
+
+  private drawCollectAllButton(): void {
+    if (this.collectAllButton) return;
+    // Anchor between the resource stack and the bottom-right corner
+    // stack so it lands in the player's natural scan path. Positioned
+    // by handleResize on viewport changes.
+    const x = this.scale.width - 100;
+    const y = HUD_H + 200;
+    const btn = makeHiveButton(this, {
+      x,
+      y,
+      width: 168,
+      height: 38,
+      label: 'Collect All ✨',
+      variant: 'primary',
+      fontSize: 13,
+      onPress: () => { void this.runHarvest(); },
+    });
+    btn.container.setDepth(DEPTHS.hud);
+    this.tweens.add({
+      targets: btn.container,
+      scale: { from: 1, to: 1.03 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    this.collectAllButton = btn;
   }
 
   // Create, size, tween, and wire one building sprite. Returns the

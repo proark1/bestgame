@@ -304,6 +304,23 @@ export class Api {
     return (await res.json()) as BuildingCatalog;
   }
 
+  // Claim every producer building's pendingHarvest bucket at once.
+  // Server clamps to storage cap; the response carries what credited
+  // and what overflowed so the client can flash a "storage full"
+  // toast without re-deriving.
+  async harvestAll(): Promise<HarvestResponse> {
+    const res = await this.authedFetch('/player/harvest', { method: 'POST' });
+    if (!res.ok) {
+      let msg = `harvest ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    return (await res.json()) as HarvestResponse;
+  }
+
   async placeBuilding(args: {
     kind: Types.BuildingKind;
     anchor: { x: number; y: number; layer: Types.Layer };
@@ -1357,6 +1374,18 @@ export interface PlaceBuildingResponse {
   building: Types.Building;
   base: Types.Base;
   player: { trophies: number; sugar: number; leafBits: number; aphidMilk: number };
+}
+
+// /player/harvest response. CoC-style "Collect All": claims every
+// producer's pendingHarvest bucket at once. `harvested` is what
+// actually credited (clamped by storage cap); `overflow` is what
+// the cap rejected so the client can surface a "storage full" toast
+// if the player needs to drop a vault upgrade in.
+export interface HarvestResponse {
+  player: { sugar: number; leafBits: number; aphidMilk: number };
+  base: Types.Base;
+  harvested: { sugar: number; leafBits: number; aphidMilk: number };
+  overflow: { sugar: number; leafBits: number; aphidMilk: number };
 }
 
 export interface DeleteBuildingResponse {
