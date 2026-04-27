@@ -229,7 +229,12 @@ export class HeroesScene extends Phaser.Scene {
         top + 60,
         Types.describeAura(def.aura),
         bodyTextStyle(12, COLOR.textPrimary),
-      ).setWordWrapWidth(maxW - (textX - originX) - 124, true),
+        // Right edge clearance accounts for the action button at
+        // `actionX = originX + maxW - 80` with a max width of 150
+        // (Buy CTA), plus a small visual gap. Earlier value of 124
+        // left the aura text overlapping the button on the larger
+        // hero descriptions.
+      ).setWordWrapWidth(maxW - (textX - originX) - 165, true),
     );
     this.body.container.add(
       crispText(
@@ -341,6 +346,25 @@ export class HeroesScene extends Phaser.Scene {
       .setInteractive();
     dim.on('pointerdown', () => container.destroy(true));
     container.add(dim);
+
+    // Swallow taps on the panel itself so clicks on the title /
+    // description / empty cells don't bubble to `dim` and close the
+    // modal. Without this any click inside the panel area
+    // accidentally dismisses the picker — the user-facing review
+    // flagged this as the modal "closing on any internal click".
+    const panelHit = this.add.zone(ox + w / 2, oy + h / 2, w, h)
+      .setOrigin(0.5, 0.5)
+      .setInteractive();
+    panelHit.on('pointerdown', (
+      _p: Phaser.Input.Pointer,
+      _lx: number,
+      _ly: number,
+      e: Phaser.Types.Input.EventData,
+    ) => {
+      e?.stopPropagation?.();
+    });
+
+    container.add(panelHit);
 
     const bg = this.add.graphics();
     drawPanel(bg, ox, oy, w, h, {
