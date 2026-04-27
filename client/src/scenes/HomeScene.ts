@@ -1629,15 +1629,19 @@ export class HomeScene extends Phaser.Scene {
     container.add(backdrop);
 
     const bg = this.add.graphics();
+    // Use the default light cream panel (same as buildingInfoModal +
+    // every modern modal in the game). Earlier this overrode topColor
+    // to a dark mossy 0x2a3f2d while the body text stayed in navy
+    // textPrimary — a dark-on-dark combo the user flagged as
+    // unreadable. Light panel + dark text matches every other modal
+    // and removes the contrast issue at the source.
     drawPanel(bg, left, top, W, bodyH, {
-      topColor: 0x2a3f2d,
-      botColor: COLOR.bgPanelLo,
       stroke: COLOR.brassDeep,
       strokeWidth: 2,
       highlight: COLOR.brass,
-      highlightAlpha: 0.14,
+      highlightAlpha: 0.18,
       radius: 10,
-      shadowOffset: 3,
+      shadowOffset: 4,
       shadowAlpha: 0.28,
     });
     container.add(bg);
@@ -1870,12 +1874,12 @@ export class HomeScene extends Phaser.Scene {
     const banner = this.add.container(0, 0).setDepth(DEPTHS.drawer);
     const bg = this.add.graphics();
     drawPanel(bg, bannerX, bannerY, bannerW, bannerH, {
-      topColor: 0x2a3f2d,
-      botColor: COLOR.bgPanelLo,
+      // Light cream panel for readable navy body text — was dark
+      // mossy 0x2a3f2d which made the body unreadable.
       stroke: COLOR.brassDeep,
       strokeWidth: 2,
       highlight: COLOR.brass,
-      highlightAlpha: 0.16,
+      highlightAlpha: 0.18,
       radius: 10,
       shadowOffset: 3,
       shadowAlpha: 0.28,
@@ -2276,9 +2280,11 @@ export class HomeScene extends Phaser.Scene {
     const h = 58;
     const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     drawPanel(bg, x, topY, maxW, h, {
-      topColor: 0x2a3f2d, botColor: 0x09100a,
+      // Light cream panel for readable body text. Was dark mossy
+      // 0x2a3f2d/0x09100a which made the navy textPrimary body
+      // unreadable.
       stroke: COLOR.brassDeep, strokeWidth: 2,
-      highlight: COLOR.brass, highlightAlpha: 0.14,
+      highlight: COLOR.brass, highlightAlpha: 0.18,
       radius: 10, shadowOffset: 3, shadowAlpha: 0.22,
     });
     crispText(this, x + 14, topY + 8,
@@ -2416,9 +2422,11 @@ export class HomeScene extends Phaser.Scene {
     const h = 58;
     const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     drawPanel(bg, x, topY, maxW, h, {
-      topColor: 0x2a3f2d, botColor: 0x09100a,
+      // Light cream panel for readable body text. Was dark mossy
+      // 0x2a3f2d/0x09100a which made the navy textPrimary body
+      // unreadable.
       stroke: COLOR.brassDeep, strokeWidth: 2,
-      highlight: COLOR.brass, highlightAlpha: 0.14,
+      highlight: COLOR.brass, highlightAlpha: 0.18,
       radius: 10, shadowOffset: 3, shadowAlpha: 0.22,
     });
     crispText(this, x + 14, topY + 8,

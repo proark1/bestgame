@@ -767,6 +767,42 @@ button {
   padding: 12px 16px;
   margin-bottom: 16px;
 }
+
+/* Menu UI overrides panel — wrapped in <details> so it folds away
+   like .admin-guide. Body padding lives on the outer details so the
+   summary row has the same hit target whether expanded or not. */
+.admin-ui-overrides > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font);
+  color: var(--accent);
+  font-size: 13px;
+  user-select: none;
+}
+.admin-ui-overrides > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-ui-overrides > summary::before {
+  content: '▸';
+  color: var(--text-dim);
+  margin-right: 8px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+.admin-ui-overrides[open] > summary::before {
+  transform: rotate(90deg);
+}
+.admin-ui-overrides > summary small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.admin-ui-overrides-body {
+  margin-top: 10px;
+}
 .admin-animation header h2 {
   margin: 0 0 4px;
   font-family: var(--font);
@@ -1571,4 +1607,37 @@ button {
   .card-actions .btn {
     flex: 1 1 100%;
   }
+}
+
+/* Fullscreen image lightbox — opens when an admin clicks a
+   sprite thumbnail. Backdrop click or Esc dismisses. */
+.admin-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(8, 12, 8, 0.94);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  padding: 24px;
+}
+.admin-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  /* Checkerboard so transparent sprites still show alpha. */
+  background-image:
+    linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
+    linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+  background-color: #1d1d1d;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  image-rendering: auto;
 }

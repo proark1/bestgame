@@ -95,12 +95,13 @@ export class BuilderQueueScene extends Phaser.Scene {
       const h = 96;
       const bg = this.add.graphics();
       drawPanel(bg, originX, y, maxW, h, {
-        topColor: 0x2a3f2d,
-        botColor: COLOR.bgPanelLo,
+        // Light cream panel — was dark mossy 0x2a3f2d which made the
+        // navy textPrimary body unreadable (user-flagged on the
+        // resource popover; same pattern repeated here).
         stroke: COLOR.brassDeep,
         strokeWidth: 3,
         highlight: COLOR.brass,
-        highlightAlpha: 0.14,
+        highlightAlpha: 0.18,
         radius: 14,
         shadowOffset: 4,
         shadowAlpha: 0.22,

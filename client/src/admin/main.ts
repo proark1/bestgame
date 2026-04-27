@@ -1125,13 +1125,36 @@ function renderStripPreview(kind: string, files: SpriteFile[]): HTMLElement {
 // the admin whether the corresponding image is actually present on
 // disk. Flipping a toggle ON while the image is missing still saves
 // the flag, but the in-game Graphics fallback keeps rendering.
+// Persistence key for the collapse state of the menu-UI overrides
+// panel. Mirrors GUIDE_OPEN_KEY so both top-level admin sections
+// remember whether the user wants them folded out of the way.
+const UI_OVERRIDES_OPEN_KEY = 'admin:ui-overrides-open';
+
 function renderUiOverridesPanel(): HTMLElement {
-  const card = document.createElement('section');
-  card.className = 'admin-animation'; // reuse the animation panel styles
+  // Outer <details> so the panel can be collapsed like the "How to
+  // get sprites into the game" box above. Persists open/closed via
+  // localStorage so reloading doesn't unfold it every time.
+  const details = document.createElement('details');
+  details.className = 'admin-animation admin-ui-overrides';
+  const stored = localStorage.getItem(UI_OVERRIDES_OPEN_KEY);
+  details.open = stored === null ? true : stored === '1';
+  details.addEventListener('toggle', () => {
+    localStorage.setItem(UI_OVERRIDES_OPEN_KEY, details.open ? '1' : '0');
+  });
+
+  const summary = document.createElement('summary');
+  summary.innerHTML = '<span>Menu UI overrides</span><small>flip switches to replace in-game Graphics fallbacks</small>';
+  details.append(summary);
+
+  // Inner card holds the rest of the panel content; renamed from the
+  // previous outer <section> so the existing layout/styles still
+  // apply unchanged. The original <header>/<small>/bulk-controls/
+  // checklist tree below is appended into `card`.
+  const card = document.createElement('div');
+  card.className = 'admin-ui-overrides-body';
   const header = document.createElement('header');
   const headerText = document.createElement('div');
   headerText.innerHTML = `
-    <h2>Menu UI overrides</h2>
     <small>Generate a Menu UI asset above, then flip its switch here to replace the in-game Graphics fallback with the image. Toggle off to revert. Use Enable all / Disable all to flip every slot at once.</small>
   `;
   header.append(headerText);
@@ -1254,7 +1277,8 @@ function renderUiOverridesPanel(): HTMLElement {
     list.append(row);
   }
   card.append(list);
-  return card;
+  details.append(card);
+  return details;
 }
 
 const GUIDE_OPEN_KEY = 'hivewars.admin.guide.open';

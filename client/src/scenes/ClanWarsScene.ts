@@ -144,8 +144,9 @@ export class ClanWarsScene extends Phaser.Scene {
       const h = 148;
       const bg = this.add.graphics();
       drawPanel(bg, originX, y, maxW, h, {
-        topColor: 0x2a3f2d,
-        botColor: 0x09100a,
+        // Light cream panel for readable navy body text — was dark
+        // mossy 0x2a3f2d, same dark-on-dark issue the resource
+        // popover hit.
         stroke: COLOR.brassDeep,
         strokeWidth: 3,
         highlight: COLOR.brass,
