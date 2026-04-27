@@ -549,52 +549,35 @@ export class HomeScene extends Phaser.Scene {
           : 'phone';
     const cy = HUD_H / 2;
 
-    // Title — hidden on phone so nothing collides with pills. When
-    // the admin has generated + toggled the `ui-logo` override on we
-    // render the brass wordmark image at the top-left instead of the
-    // plain text title. Everything else on the HUD stays put; the
-    // logo reserves the same horizontal slot the text occupied.
-    if (tier !== 'phone') {
-      const useLogoImage = isUiOverrideActive(this, 'ui-logo');
-      if (useLogoImage) {
-        const logo = this.add.image(tier === 'wide' ? 24 : 16, cy, 'ui-logo')
-          .setOrigin(0, 0.5)
-          .setDepth(DEPTHS.hud);
-        const source = logo.texture.getSourceImage();
-        const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
-        const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
-        // Height targets the HUD minus a little breathing room; width
-        // follows the source aspect ratio so the image never stretches.
-        const targetH = HUD_H - 16;
-        const scale = targetH / Math.max(1, srcH);
-        logo.setDisplaySize(srcW * scale, targetH);
-        // Make the logo clickable → opens the tutorial, a common
-        // pattern for "tap the logo to get back to hints". Cheap
-        // hit-area adjust, no separate zone.
-        logo.setInteractive({ useHandCursor: true });
-        logo.on('pointerdown', () => openTutorial({ force: true }));
-      } else {
-        crispText(
-          this,
-          tier === 'wide' ? 24 : 16,
-          cy,
-          'HIVE WARS',
-          displayTextStyle(tier === 'wide' ? 20 : 16, '#ffe7b0', 4),
-        ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
-      }
+    // Optional admin-flipped wordmark image — kept for branded skins.
+    // The default top-left slot is now owned by the player profile
+    // card (drawAccountChip), Clash-of-Clans-style.
+    if (tier !== 'phone' && isUiOverrideActive(this, 'ui-logo')) {
+      const logo = this.add.image(tier === 'wide' ? 24 : 16, cy, 'ui-logo')
+        .setOrigin(0, 0.5)
+        .setDepth(DEPTHS.hud);
+      const source = logo.texture.getSourceImage();
+      const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
+      const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
+      const targetH = HUD_H - 16;
+      const scale = targetH / Math.max(1, srcH);
+      logo.setDisplaySize(srcW * scale, targetH);
+      logo.setInteractive({ useHandCursor: true });
+      logo.on('pointerdown', () => openTutorial({ force: true }));
     }
 
-    // Account chip — in wide it's a full pill; on phone it's a
-    // compact brass-bordered disc in the top-left corner.
+    // Player profile card — Clash-of-Clans-style level + name combo
+    // pinned to the top-left. Replaces the previous "HIVE WARS"
+    // wordmark + bare username chip with one card that reads as
+    // "your colony at a glance".
     this.drawAccountChip(tier);
 
     // Resource readouts — gold sugar, green leaf, silver milk.
-    // All three are always visible (per GDD §6.9 UI surface map): even
-    // on phone, the milk pill stays in the strip so the player sees the
-    // slot exists. The pill values render as `current/cap` for sugar +
-    // leaf when the server sent storage caps, raw value for milk
-    // (uncapped) and as a fallback when no caps are available.
-    const pillFont = tier === 'phone' ? 15 : 17;
+    // CoC-style vertical stack pinned to the top-right corner. Each
+    // pill shows icon + value; the per-second rate floats just below
+    // the value (still inside the pill) so the player sees production
+    // at a glance without crowding the corner with subtitles.
+    const pillFont = tier === 'phone' ? 14 : 16;
     const pillTextStroke = 3;
     this.sugarText = crispText(
       this,
@@ -624,35 +607,31 @@ export class HomeScene extends Phaser.Scene {
       { icon: 'ui-resource-milk', text: this.milkText },
     ];
 
-    const PILL_H = tier === 'phone' ? 32 : 36;
-    const PILL_PAD_X = tier === 'phone' ? 8 : 12;
-    const PILL_ICON_GAP = 4;
-    const PILL_GAP = tier === 'phone' ? SPACING.xs : SPACING.sm;
-    const ICON_SIZE = tier === 'phone' ? 20 : 26;
-    let x = this.scale.width - (tier === 'phone' ? SPACING.sm : SPACING.md);
+    const PILL_H = tier === 'phone' ? 30 : 34;
+    const PILL_W = tier === 'phone' ? 110 : 140;
+    const PILL_PAD_X = tier === 'phone' ? 8 : 10;
+    const PILL_GAP = tier === 'phone' ? 6 : SPACING.sm;
+    const ICON_SIZE = tier === 'phone' ? 20 : 24;
+    const rightEdge = this.scale.width - (tier === 'phone' ? SPACING.sm : SPACING.md);
+    const pillX = rightEdge - PILL_W;
+    // Stack vertically. Top pill anchors at SPACING.sm from the top so
+    // it doesn't collide with the profile card on the left.
+    let pillY = SPACING.sm;
     const kinds: Array<'sugar' | 'leaf' | 'milk'> = ['sugar', 'leaf', 'milk'];
-    for (let i = badges.length - 1; i >= 0; i--) {
+    for (let i = 0; i < badges.length; i++) {
       const b = badges[i]!;
-      const textW = Math.max(b.text.width, 24);
-      const pillW = PILL_PAD_X * 2 + ICON_SIZE + PILL_ICON_GAP + textW;
-      const pillX = x - pillW;
-      const pillY = cy - PILL_H / 2;
+      const pcy = pillY + PILL_H / 2;
       const pill = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(pill, pillX, pillY, pillW, PILL_H, { brass: false });
+      drawPill(pill, pillX, pillY, PILL_W, PILL_H, { brass: false });
       const icon = this.add
-        .image(pillX + PILL_PAD_X + ICON_SIZE / 2, cy, b.icon)
+        .image(pillX + PILL_PAD_X + ICON_SIZE / 2, pcy, b.icon)
         .setDisplaySize(ICON_SIZE, ICON_SIZE)
         .setDepth(DEPTHS.hud);
-      b.text.setPosition(pillX + pillW - PILL_PAD_X, cy);
+      b.text.setPosition(pillX + PILL_W - PILL_PAD_X, pcy);
       b.text.setDepth(DEPTHS.hud);
-      // Tap-to-explain: an interactive zone covering the full pill
-      // opens a small popover detailing per-second income and when
-      // the next upgrade tier becomes affordable. The numbers alone
-      // are abstract ("480 sugar") — the popover turns them into a
-      // decision ("3 more minutes til you can upgrade your turret").
       const kind = kinds[i]!;
       const hit = this.add
-        .zone(pillX + pillW / 2, cy, pillW, PILL_H)
+        .zone(pillX + PILL_W / 2, pcy, PILL_W, PILL_H)
         .setOrigin(0.5, 0.5)
         .setInteractive({ useHandCursor: true })
         .setDepth(DEPTHS.hud);
@@ -663,22 +642,22 @@ export class HomeScene extends Phaser.Scene {
         e: Phaser.Types.Input.EventData,
       ) => {
         e?.stopPropagation?.();
-        this.openResourcePopover(kind, pillX + pillW / 2, cy + PILL_H / 2 + 6);
+        this.openResourcePopover(kind, pillX + PILL_W / 2, pcy + PILL_H / 2 + 6);
       });
 
-      // Per-pill rate subtitle: "+8/sec" floats just below the pill, so
-      // the player sees their production at a glance without tapping.
-      // Hidden on phone tier (no vertical room) and for resources with
-      // zero income (e.g. AphidMilk in MVP).
+      // Inline rate badge: "+8/s" sits centered between the icon and
+      // the value, dim cream so it reads as a subtitle. Skipped for
+      // resources with no producers or on the phone tier where the
+      // pill is too tight to hold extra text.
       const rateValue = this.computeRate(kind);
       if (tier !== 'phone' && rateValue > 0) {
         const rateText = crispText(
           this,
-          pillX + pillW - PILL_PAD_X,
-          cy + PILL_H / 2 + 8,
-          `+${formatRate(rateValue)}/sec`,
-          labelTextStyle(10, COLOR.textDim),
-        ).setOrigin(1, 0).setDepth(DEPTHS.hud);
+          pillX + PILL_PAD_X + ICON_SIZE + 6,
+          pcy,
+          `+${formatRate(rateValue)}/s`,
+          labelTextStyle(9, COLOR.textDim),
+        ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
         if (kind === 'sugar') this.sugarRateText = rateText;
         else if (kind === 'leaf') this.leafRateText = rateText;
         else this.milkRateText = rateText;
@@ -686,15 +665,12 @@ export class HomeScene extends Phaser.Scene {
 
       void pill;
       void icon;
-      x = pillX - PILL_GAP;
+      pillY += PILL_H + PILL_GAP;
     }
 
-    // Codex chip — a compact 📖 disc to the left of the resource
-    // pills. Opens the character-card reference screen. Kept as a
-    // separate dedicated entry point (not a footer button) because
-    // the codex is lookup / lore, not in-loop gameplay, and the
-    // footer is already saturated at 7 buttons.
-    this.drawCodexChip(x, cy, tier);
+    // Codex chip — small disc tucked under the resource stack. Kept
+    // here (not in the corner stack) because it's lookup, not action.
+    this.drawCodexChip(rightEdge, pillY + PILL_H / 2 + 4, tier);
 
     // Mobile burger. Replaces the full-width footer with a slide-in
     // drawer so phone viewports hand back the ~140 px the 2-row
@@ -1011,77 +987,124 @@ export class HomeScene extends Phaser.Scene {
     void glyph;
   }
 
-  // Tier-aware account chip. On wide viewports it's a named pill
-  // ("@myname ▾"). On narrow it shrinks to an icon-only pill so it
-  // doesn't crowd the title. On phone it becomes a compact corner
-  // disc with a down-chevron — tap target is still ≥ 36 px.
+  // Clash-of-Clans-style profile card. Far-left disc holds the
+  // colony level (Queen Chamber tier); to its right a pill shows
+  // the player's name + trophy count. Tapping anywhere on the card
+  // opens the account menu. On phone the card collapses to just the
+  // level disc + a small trophy badge so it doesn't crowd the
+  // burger button.
   private drawAccountChip(tier: 'wide' | 'narrow' | 'phone'): void {
     const cy = HUD_H / 2;
-    if (tier === 'wide') {
-      const chipX = 168;
-      const pillW = 136;
-      const pillH = 38;
-      const pill = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(pill, chipX, cy - pillH / 2, pillW, pillH, { brass: false });
-      const badge = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(badge, chipX + 8, cy - 15, 52, 14, { brass: true });
-      crispText(
-        this,
-        chipX + 34,
-        cy - 8,
-        'COLONY',
-        labelTextStyle(9, COLOR.textGold),
-      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
-      this.accountChip = crispText(
-        this,
-        chipX + pillW / 2,
-        cy + 8,
-        'GUEST',
-        displayTextStyle(13, COLOR.textDim, 2),
-      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const trophies = runtime?.player?.player.trophies ?? 0;
+    const level = this.currentQueenLevel();
+    const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
+
+    // Level disc — bright brass with the level number, mirrors CoC's
+    // experience badge in the corner.
+    const discSize = tier === 'phone' ? 36 : 44;
+    const discX = burgerSlot + SPACING.sm + discSize / 2;
+    const discBg = this.add.graphics().setDepth(DEPTHS.hud);
+    drawPill(discBg, discX - discSize / 2, cy - discSize / 2, discSize, discSize, {
+      brass: true,
+    });
+    crispText(
+      this,
+      discX,
+      cy,
+      String(level),
+      displayTextStyle(tier === 'phone' ? 16 : 20, '#3a2a08', 2),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+
+    if (tier === 'phone') {
+      // Phone layout: just the level disc — full name pill would
+      // overlap the right-side resource stack on a 375 px viewport.
+      // accountChip stays defined as an off-screen text so the
+      // fetchMe() callback below has somewhere to write.
+      this.accountChip = crispText(this, -9999, -9999, '', labelTextStyle(10));
       this.add
-        .zone(chipX + pillW / 2, cy, pillW, pillH)
+        .zone(discX, cy, discSize, discSize)
         .setOrigin(0.5, 0.5)
         .setInteractive({ useHandCursor: true })
         .setDepth(DEPTHS.hud)
         .on('pointerdown', () => this.openAccountMenu());
-      void badge;
-    } else {
-      // Icon-only disc. On narrow, it slots in where the title sat;
-      // on phone it pins to the top-left, shifted right past the
-      // burger button (which owns the very first slot when the
-      // mobile layout is active).
-      const size = tier === 'phone' ? 36 : 40;
-      const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
-      const chipX =
-        tier === 'narrow' ? 120 : burgerSlot + size / 2 + SPACING.sm;
-      const pill = this.add.graphics().setDepth(DEPTHS.hud);
-      drawPill(pill, chipX - size / 2, cy - size / 2, size, size, {
+      // Trophy chip below the disc — keeps the trophy count visible
+      // even when the name pill is hidden.
+      const trophyW = 56;
+      const trophyH = 18;
+      const trophyY = cy + discSize / 2 + 4;
+      const trophyBg = this.add.graphics().setDepth(DEPTHS.hud);
+      drawPill(trophyBg, discX - trophyW / 2, trophyY, trophyW, trophyH, {
         brass: false,
       });
-      this.accountChip = crispText(
+      crispText(
         this,
-        chipX,
-        cy,
-        '@',
-        displayTextStyle(tier === 'phone' ? 15 : 16, COLOR.textDim, 2),
+        discX,
+        trophyY + trophyH / 2,
+        `▲ ${trophies}`,
+        labelTextStyle(10, COLOR.textGold),
       ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
-      this.add
-        .zone(chipX, cy, size, size)
-        .setOrigin(0.5, 0.5)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(DEPTHS.hud)
-        .on('pointerdown', () => this.openAccountMenu());
+      void trophyBg;
+      return;
     }
+
+    // Wide / narrow: full name pill with trophy badge inset.
+    const pillX = discX + discSize / 2 - 10; // overlap so disc reads as anchored
+    const pillW = tier === 'wide' ? 168 : 132;
+    const pillH = tier === 'wide' ? 36 : 32;
+    const pill = this.add.graphics().setDepth(DEPTHS.hud);
+    drawPill(pill, pillX, cy - pillH / 2, pillW, pillH, { brass: false });
+    // Trophy badge along the bottom edge of the pill — small brass
+    // strip with "▲ trophies" so the player sees their league rank
+    // without leaving the home screen.
+    const trophyBadgeW = 64;
+    const trophyBadgeH = 16;
+    const trophyBadgeX = pillX + pillW - trophyBadgeW - 6;
+    const trophyBadgeY = cy + pillH / 2 - trophyBadgeH / 2 - 4;
+    const trophyBadge = this.add.graphics().setDepth(DEPTHS.hud);
+    drawPill(
+      trophyBadge,
+      trophyBadgeX,
+      trophyBadgeY,
+      trophyBadgeW,
+      trophyBadgeH,
+      { brass: true },
+    );
+    crispText(
+      this,
+      trophyBadgeX + trophyBadgeW / 2,
+      trophyBadgeY + trophyBadgeH / 2,
+      `▲ ${trophies}`,
+      labelTextStyle(10, COLOR.textDark),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+
+    this.accountChip = crispText(
+      this,
+      pillX + 14,
+      cy - 4,
+      'GUEST',
+      displayTextStyle(tier === 'wide' ? 14 : 12, COLOR.textPrimary, 2),
+    ).setOrigin(0, 0.5).setDepth(DEPTHS.hud);
+    this.add
+      .zone(discX + (pillW + discSize) / 2 - discSize / 2, cy, pillW + discSize, pillH)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(DEPTHS.hud)
+      .on('pointerdown', () => this.openAccountMenu());
+    void pill;
+    void trophyBadge;
     const rt = this.registry.get('runtime') as HiveRuntime | undefined;
     if (rt) {
       void rt.auth.fetchMe().then((me) => {
         if (!me || !this.accountChip?.active) return;
-        if (tier === 'wide') {
-          this.accountChip.setText(
-            me.isGuest || !me.username ? 'GUEST' : `@${me.username}`,
-          );
-        }
+        const name = me.isGuest || !me.username ? 'GUEST' : `@${me.username}`;
+        // Truncate long usernames so the trophy badge stays inside
+        // the name pill (narrow tier has ~10 chars of room before
+        // the badge eats the tail).
+        const limit = tier === 'wide' ? 14 : 10;
+        this.accountChip.setText(
+          name.length > limit ? `${name.slice(0, limit - 1)}…` : name,
+        );
         this.accountChip.setColor(me.isGuest ? COLOR.textDim : COLOR.textGold);
       });
     }
@@ -2449,9 +2472,84 @@ export class HomeScene extends Phaser.Scene {
     return topY + h + 8;
   }
 
+  // Tracks the icon buttons in the bottom corners so handleResize
+  // can repaint them at the right edge / bottom edge after the
+  // viewport changes. Each entry is just the button container so we
+  // can dispose them on scene restart without touching the rest of
+  // the HUD.
+  private cornerActionButtons: HiveButton[] = [];
+
+  private drawCornerActionStacks(): void {
+    for (const btn of this.cornerActionButtons) btn.destroy();
+    this.cornerActionButtons = [];
+
+    // Compact icon-only buttons — 44 px square, big enough for a
+    // thumb tap, small enough that two columns of three buttons fit
+    // comfortably above the corner CTAs without crowding the
+    // playfield. Each label is a single emoji glyph that reads as
+    // an icon at this size; the button factory handles the rest.
+    const iconBtnSize = 44;
+    const stackGap = 8;
+    const bottomCtaH = HomeScene.FOOTER_BTN_H;
+    const bottomPad = 18;
+    const ctaTop = this.scale.height - bottomPad - bottomCtaH;
+    // Stack columns rise from just above the corner CTAs so the
+    // icon column never drifts into the resource pills at the top.
+    const stackTopBudget = Math.max(80, ctaTop - SPACING.lg);
+
+    type Entry = { label: string; onPress: () => void };
+    const leftStack: Entry[] = [
+      { label: '🗓', onPress: () => fadeToScene(this, 'QuestsScene') },
+      { label: '📜', onPress: () => fadeToScene(this, 'RaidHistoryScene') },
+      { label: '❓', onPress: () => openTutorial({ force: true }) },
+    ];
+    const rightStack: Entry[] = [
+      { label: '⚙', onPress: () => openSettings() },
+      { label: '⚒', onPress: () => fadeToScene(this, 'UpgradeScene') },
+      { label: '👥', onPress: () => fadeToScene(this, 'ClanScene') },
+      { label: '🏆', onPress: () => fadeToScene(this, 'LeaderboardScene') },
+    ];
+
+    const placeColumn = (entries: Entry[], anchorX: number, side: 'left' | 'right'): void => {
+      // Stack rises bottom-up from above the corner CTA. Each entry
+      // sits one (size + gap) higher than the previous so the topmost
+      // icon is the most-distant from the CTA.
+      const startY = ctaTop - SPACING.sm - iconBtnSize / 2;
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]!;
+        const y = startY - i * (iconBtnSize + stackGap);
+        if (y < stackTopBudget) break; // Don't paint into the HUD pills.
+        const x = side === 'left'
+          ? anchorX + iconBtnSize / 2
+          : anchorX - iconBtnSize / 2;
+        const btn = makeHiveButton(this, {
+          x,
+          y,
+          width: iconBtnSize,
+          height: iconBtnSize,
+          label: e.label,
+          variant: 'secondary',
+          fontSize: 18,
+          onPress: e.onPress,
+        });
+        btn.container.setDepth(DEPTHS.hud);
+        this.cornerActionButtons.push(btn);
+      }
+    };
+
+    // Left column sits above-and-just-right-of the bottom-left CTA.
+    // Right column sits above-and-just-left-of the bottom-right CTA.
+    const leftAnchorX = HomeScene.FOOTER_MARGIN_X;
+    const rightAnchorX = this.scale.width - HomeScene.FOOTER_MARGIN_X;
+    placeColumn(leftStack, leftAnchorX, 'left');
+    placeColumn(rightStack, rightAnchorX, 'right');
+  }
+
   private drawFooter(): void {
     this.footerChrome?.destroy();
     this.footerChrome = null;
+    for (const btn of this.cornerActionButtons) btn.destroy();
+    this.cornerActionButtons = [];
     // Mobile: the burger drawer owns every nav action, so skip the
     // desktop footer entirely. We still keep a single pinned CTA
     // at bottom-right — the primary "Raid" action — so players don't
@@ -2469,16 +2567,24 @@ export class HomeScene extends Phaser.Scene {
       return;
     }
 
-    // Labels come in two flavors. `full` is the desktop reading;
-    // `short` is a compact mobile variant that still fits in ~70 px
-    // without truncating. layoutFooter picks between them based on
-    // scale.width so a phone doesn't get a button that reads
-    // "Undergro" because "Flip → Underground" ran out of room.
+    // Clash-of-Clans-style corner action stacks. Two big CTAs anchor
+    // the bottom corners (Attack, Shop) and a column of small icon
+    // buttons sits on the inside of each — Help/Recent/Layer-flip on
+    // the left, Settings/Clan/Campaign on the right. The previous
+    // 8-button horizontal row ate ~120 px of board height; corners
+    // cost zero board height because the playfield can scroll under
+    // them.
     const flipFull = (): string =>
       this.layer === 0 ? 'Flip → Underground' : 'Flip → Surface';
     const flipShort = (): string =>
       this.layer === 0 ? '↓ Underground' : '↑ Surface';
 
+    // We still keep `buttons` around because layoutFooter +
+    // footerLabelForIndex + advanceCoachmark expect this.footerButtons
+    // populated. Index 0 is the layer-flip button (referenced by the
+    // burger flow + this footer's flip handler). The "raid" coachmark
+    // halos the LAST footer button — we put the primary Attack CTA
+    // there to keep that target right.
     const buttons: Array<{
       full: () => string;
       short: () => string;
@@ -2490,10 +2596,6 @@ export class HomeScene extends Phaser.Scene {
         short: flipShort,
         variant: 'secondary',
         onPress: () => {
-          // Same reasoning as the burger-drawer flip handler: the
-          // move-mode overlay is attached to boardContainer and would
-          // be destroyed by the removeAll below, so bail out of move
-          // mode first and let the banner/source sprite reset.
           this.exitMoveMode();
           this.layer = this.layer === 0 ? 1 : 0;
           const btn = this.footerButtons[0];
@@ -2504,61 +2606,13 @@ export class HomeScene extends Phaser.Scene {
         },
       },
       {
-        full: () => '🏆 Ranks',
-        short: () => 'Ranks',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'LeaderboardScene'),
-      },
-      {
-        full: () => '📜 Recent',
-        short: () => 'Recent',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'RaidHistoryScene'),
-      },
-      {
-        full: () => '⚙ Upgrades',
-        short: () => 'Upgrade',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'UpgradeScene'),
-      },
-      {
-        full: () => '👥 Clan',
-        short: () => 'Clan',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'ClanScene'),
-      },
-      {
-        full: () => '📖 Campaign',
-        short: () => 'Story',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'CampaignScene'),
-      },
-      {
-        full: () => '⚔ Arena',
-        short: () => 'Arena',
-        variant: 'secondary',
-        onPress: () => fadeToScene(this, 'ArenaScene'),
-      },
-      {
-        // Help re-opens the onboarding tutorial. Matches the secondary
-        // variant so it reads as "just another nav button" rather than
-        // an emergency CTA; new players who bounce past the first-visit
-        // flow can still find guidance without digging through menus.
-        full: () => '❓ Help',
-        short: () => 'Help',
-        variant: 'secondary',
-        onPress: () => {
-          openTutorial({ force: true });
-        },
-      },
-      {
-        // Primary CTA — brass colour + extra width in layoutFooter()
-        // so it reads as the main action. Arrow glyph + rightmost
-        // position reinforce the "go forward" cue.
-        full: () => 'Raid a base →',
+        full: () => 'Raid →',
         short: () => 'Raid →',
         variant: 'primary',
-        onPress: () => fadeToScene(this, 'RaidScene'),
+        onPress: () => {
+          this.advanceCoachmark('raid');
+          fadeToScene(this, 'RaidScene');
+        },
       },
     ];
 
@@ -2566,18 +2620,11 @@ export class HomeScene extends Phaser.Scene {
     this.footerButtons = buttons.map((b) =>
       this.makeButton(0, 0, b.full(), b.variant, b.onPress),
     );
-    this.footerChrome = this.add.graphics().setDepth(DEPTHS.hudChrome);
-    // Footer buttons have default depth 0; the chrome panel sits at
-    // DEPTHS.hudChrome (1), which would otherwise render ON TOP of the
-    // buttons and swallow their visuals + pointer hits. Pushing each
-    // button container one slot above the chrome keeps them visible
-    // and interactive. The DEPTHS.hud slot (8) is safely above chrome
-    // and below any modal backdrops, and this is also where the
-    // mobile Raid CTA already sits — keeps both paths consistent.
     for (const btn of this.footerButtons) {
       btn.container.setDepth(DEPTHS.hud);
     }
     this.layoutFooter();
+    this.drawCornerActionStacks();
     // layerLabel is legacy — keep the field populated with a noop
     // text so other code paths that touch .setText don't null-deref.
     if (!this.layerLabel) {
@@ -2646,13 +2693,15 @@ export class HomeScene extends Phaser.Scene {
       });
     } else if (this.coachmarkStep === 'raid') {
       // Halo whichever Raid CTA is live for the current layout —
-      // mobileRaidCta on phones, the first footer button on desktop.
+      // mobileRaidCta on phones, footerButtons[1] (the Raid CTA) on
+      // desktop. footerButtons[0] is the layer-flip button; halo'ing
+      // that would point the player at the wrong action.
       let target = { x: 16, y: 16, w: 120, h: 48 };
       if (this.mobileRaidCta) {
         const r = this.mobileRaidCta.container.getBounds();
         target = { x: r.x, y: r.y, w: r.width, h: r.height };
-      } else if (this.footerButtons[0]) {
-        const r = this.footerButtons[0].container.getBounds();
+      } else if (this.footerButtons[1]) {
+        const r = this.footerButtons[1].container.getBounds();
         target = { x: r.x, y: r.y, w: r.width, h: r.height };
       }
       this.activeCoachmark = showCoachmark({
@@ -2809,103 +2858,35 @@ export class HomeScene extends Phaser.Scene {
   private layoutFooter(): void {
     const count = this.footerButtons.length;
     if (count === 0) return;
-    const marginX = HomeScene.FOOTER_MARGIN_X;
-    const gap = HomeScene.FOOTER_GAP;
     const btnH = HomeScene.FOOTER_BTN_H;
+    const marginX = HomeScene.FOOTER_MARGIN_X;
+    const bottomPad = 18;
 
-    // Responsive footer. Wide viewports stay in one row; below that we
-    // stack into two rows. The breakpoint is computed from the button
-    // count + a comfortable per-button minimum so the longest full
-    // label ("Flip → Underground") fits without truncating. Before,
-    // the breakpoint was a hard-coded 900 px which packed 7-8 buttons
-    // onto a 900 px row — giving the Flip button ~115 px to fit a
-    // ~150 px label.
-    //
-    // The primary CTA gets +28% width below, so the wide threshold
-    // reserves enough room that the primary doesn't push its neighbors
-    // into truncation territory once it scales up. Computed via
-    // footerMinWideRow() so footerReservedHeight() can mirror it
-    // exactly — a mismatch here would let the board lay out under a
-    // 2-row footer the layout predicted as 1 row.
-    const wide = this.scale.width >= this.footerMinWideRow();
-
-    // Pick the short or full label per current viewport.
     for (let i = 0; i < count; i++) {
       this.footerButtons[i]!.setLabel(this.footerLabelForIndex(i));
     }
 
-    // Solve button width from the *widest* row's weighted capacity.
-    // A primary button occupies 1.28 slots instead of 1, so treating
-    // every button as equal-weight (floor(availW / count)) let the
-    // expanded primary shove the row off the viewport on widths where
-    // btnW stayed below the 220 px clamp (e.g. 1366 px with 8 buttons
-    // overflowed by ~45 px). In narrow mode each row is solved
-    // independently because the primary only sits in one of them.
-    const perRow = wide ? count : Math.ceil(count / 2);
-    const availW = this.scale.width - marginX * 2 - gap * (perRow - 1);
-    const half = Math.ceil(count / 2);
-    const rowWeight = (from: number, to: number): number => {
-      let w = 0;
-      for (let i = from; i < to; i++) {
-        w += this.footerButtonDefs[i]?.variant === 'primary' ? 1.28 : 1;
-      }
-      return w;
-    };
-    const maxWeight = wide
-      ? rowWeight(0, count)
-      : Math.max(rowWeight(0, half), rowWeight(half, count));
-    const btnW = Math.max(110, Math.min(220, Math.floor(availW / maxWeight)));
-    // Emphasize the primary CTA: +28% width over a secondary button so
-    // the gold Raid button reads as the primary action rather than
-    // "one of eight". Clamped so we never exceed the hard 220 px cap
-    // that keeps ultra-wide footers looking proportional.
-    const primaryBtnW = Math.min(260, Math.round(btnW * 1.28));
-    const bottomPad = 16;
-    // Footer is now a transparent overlay (Clash-of-Clans style):
-    // individual button pills float over the playfield instead of
-    // sitting on a dark panel that ate ~120 px of board height. The
-    // legacy footerChrome graphic is cleared each layout pass — kept
-    // around as a noop so callers that destroy it don't crash.
-    this.footerChrome?.clear();
-
-    // Per-button width so the primary CTA can be wider than its
-    // secondary siblings. Everything reads off footerButtonDefs[i]
-    // instead of assuming uniform widths.
-    const widthFor = (globalIdx: number): number =>
-      this.footerButtonDefs[globalIdx]?.variant === 'primary' ? primaryBtnW : btnW;
-    const placeRow = (arr: HiveButton[], y: number, rowStartGlobalIdx: number): void => {
-      let rowTotalW = 0;
-      for (let i = 0; i < arr.length; i++) {
-        rowTotalW += widthFor(rowStartGlobalIdx + i);
-      }
-      rowTotalW += gap * Math.max(0, arr.length - 1);
-      let cursor = (this.scale.width - rowTotalW) / 2;
-      for (let i = 0; i < arr.length; i++) {
-        const w = widthFor(rowStartGlobalIdx + i);
-        arr[i]!.setSize(w, btnH);
-        // Button origin is center; add w/2 so left edge === cursor.
-        arr[i]!.setPosition(cursor + w / 2, y);
-        cursor += w + gap;
-      }
-    };
-
-    // Pin both rows to the bottom of the viewport with a comfortable
-    // margin. The home-indicator / safe-area inset is already applied
-    // to the #game div, so bottomPad is purely aesthetic — bigger
-    // pushes the whole footer (and by consequence the board above it)
-    // up the screen. 36 px keeps the green board from hugging the
-    // first row of buttons on laptop viewports.
-    if (wide) {
-      const y = this.scale.height - bottomPad - btnH / 2;
-      placeRow(this.footerButtons, y, 0);
-    } else {
-      const row1 = this.footerButtons.slice(0, half);
-      const row2 = this.footerButtons.slice(half);
-      const y2 = this.scale.height - bottomPad - btnH / 2;
-      const y1 = y2 - btnH - 12;
-      placeRow(row1, y1, 0);
-      placeRow(row2, y2, half);
+    // Two-button corner layout (CoC-style):
+    //   index 0: Flip layer  → bottom-left, secondary
+    //   index 1: Raid → primary CTA bottom-right
+    // Index ordering matters because footerButtonDefs[0] is the
+    // layer-flip button referenced by the burger drawer's onPress
+    // and by isMoveMode toggle paths. footerButtons[1] holds the
+    // Raid CTA — the 'raid' coachmark target.
+    const layerW = 168;
+    const raidW = 200;
+    const y = this.scale.height - bottomPad - btnH / 2;
+    const flipBtn = this.footerButtons[0];
+    const raidBtn = this.footerButtons[1];
+    if (flipBtn) {
+      flipBtn.setSize(layerW, btnH);
+      flipBtn.setPosition(marginX + layerW / 2, y);
     }
+    if (raidBtn) {
+      raidBtn.setSize(raidW, btnH);
+      raidBtn.setPosition(this.scale.width - marginX - raidW / 2, y);
+    }
+    this.footerChrome?.clear();
   }
 
   // Thin adapter over the shared makeHiveButton so footer code stays
