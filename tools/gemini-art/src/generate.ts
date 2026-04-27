@@ -32,6 +32,10 @@ interface PromptsFile {
   factions: Record<string, string>;
   units: Record<string, string>;
   buildings: Record<string, string>;
+  // Heroes share the unit canvas (128x128) but live in their own bucket
+  // so the admin Heroes tab and the CLI generator can both surface them
+  // distinctly from the regular roster.
+  heroes?: Record<string, string>;
 }
 
 interface Options {
@@ -46,7 +50,7 @@ interface Options {
 interface Job {
   name: string;
   prompt: string;
-  kind: 'unit' | 'building';
+  kind: 'unit' | 'building' | 'hero';
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -183,8 +187,12 @@ async function compress(
     .toBuffer();
 }
 
-function compose(styleLock: string, desc: string, kind: 'unit' | 'building'): string {
-  const size = kind === 'unit' ? '128x128' : '192x192';
+function compose(
+  styleLock: string,
+  desc: string,
+  kind: 'unit' | 'building' | 'hero',
+): string {
+  const size = kind === 'building' ? '192x192' : '128x128';
   return [
     `Subject: ${desc}.`,
     `Style: ${styleLock}`,
@@ -307,6 +315,13 @@ async function main(): Promise<void> {
       name: `building-${name}`,
       prompt: compose(prompts.styleLock, desc, 'building'),
       kind: 'building',
+    });
+  }
+  for (const [name, desc] of Object.entries(prompts.heroes ?? {})) {
+    jobs.push({
+      name: `hero-${name}`,
+      prompt: compose(prompts.styleLock, desc, 'hero'),
+      kind: 'hero',
     });
   }
   const filtered = opts.only ? jobs.filter((j) => j.name === opts.only) : jobs;

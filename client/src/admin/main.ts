@@ -497,7 +497,10 @@ function composePrompt(
       `Delivery: transparent PNG. No text, no icons, no logos, no border, no watermark. The asset must work as-is when composited over any in-game background.`,
     ].join(' ');
   }
-  const size = kind === 'unit' ? '128x128' : '192x192';
+  // Heroes share the 128x128 sprite canvas with units (HERO_SPRITE_KEYS
+  // ships hero-<Kind>.png at the same dimensions as unit-<Kind>.png).
+  // Buildings are the only category that wants the larger 192x192 canvas.
+  const size = kind === 'building' ? '192x192' : '128x128';
   return [
     `Subject: ${description}.`,
     `Style: ${style}`,
