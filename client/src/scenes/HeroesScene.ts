@@ -436,14 +436,13 @@ export class HeroesScene extends Phaser.Scene {
       // Fire the server claim and the reveal fanfare in parallel —
       // the network round-trip is normally <100 ms but the
       // animation runs ~2 seconds, so a slow network just delays
-      // the final refresh, not the celebration.
+      // the final refresh, not the celebration. The fanfare's
+      // promise resolves either when the animation finishes or
+      // when the player skips it (review-flagged: a fixed
+      // delayedCall ignored the skip and felt unresponsive).
       const claim = runtime.api.claimHeroChest(kind);
-      this.playChestFanfare(kind);
-      await claim;
-      // Hold the celebration on screen for the full animation
-      // before the underlying scene re-renders, so the player
-      // doesn't see the cards swap mid-fanfare.
-      await new Promise<void>((res) => this.time.delayedCall(2400, () => res()));
+      const fanfare = this.playChestFanfare(kind);
+      await Promise.all([claim, fanfare]);
       await this.refresh();
     } catch (err) {
       this.flashErr((err as Error).message);
@@ -452,12 +451,12 @@ export class HeroesScene extends Phaser.Scene {
 
   // Full-screen reveal ceremony — chest shakes, glows, opens, the
   // hero portrait rises out with a spotlight + name + role. Pure
-  // visual: no server interaction. Auto-dismisses after ~2.4s; tap
-  // anywhere skips. Calling claimChest while this is running is
-  // safe — the server claim has already been kicked off in
-  // parallel.
-  private playChestFanfare(kind: Types.HeroKind): void {
-    if (!this.state) return;
+  // visual: no server interaction. Returns a Promise that resolves
+  // either when the animation finishes (~2.4 s) OR when the player
+  // taps to skip — caller awaits this to know when it's safe to
+  // re-render the underlying scene.
+  private playChestFanfare(kind: Types.HeroKind): Promise<void> {
+    if (!this.state) return Promise.resolve();
     const def = this.state.catalog[kind];
     const W = this.scale.width;
     const H = this.scale.height;
@@ -468,13 +467,24 @@ export class HeroesScene extends Phaser.Scene {
     overlay.add(dim);
     this.tweens.add({ targets: dim, fillAlpha: 0.78, duration: 250, ease: 'Sine.easeOut' });
 
-    // Tap to skip — destroys the overlay immediately.
-    const skip = (): void => {
+    // Track every deferred timer + scheduled tween so a skip can
+    // tear them all down. Without this, a skipped fanfare would
+    // leave the stage 2/3 callbacks queued and fire them against a
+    // destroyed overlay (review-flagged: high-priority crash).
+    const pendingTimers: Phaser.Time.TimerEvent[] = [];
+    let resolveDone: () => void = () => undefined;
+    const done = new Promise<void>((res) => { resolveDone = res; });
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return;
+      finished = true;
+      for (const t of pendingTimers) t.remove(false);
       this.tweens.killTweensOf(overlay);
       this.tweens.killTweensOf(dim);
-      overlay.destroy(true);
+      if (overlay.active) overlay.destroy(true);
+      resolveDone();
     };
-    dim.on('pointerdown', skip);
+    dim.on('pointerdown', finish);
 
     // Stage 1: chest sits center-screen, shakes, then opens.
     const chestSize = Math.min(180, Math.min(W, H) * 0.32);
@@ -514,7 +524,8 @@ export class HeroesScene extends Phaser.Scene {
     ring.fillStyle(0xfff2b8, 0);
     overlay.add(ring);
     const glowRadius = { r: 0, alpha: 0.5 };
-    this.time.delayedCall(1100, () => {
+    pendingTimers.push(this.time.delayedCall(1100, () => {
+      if (finished) return;
       this.tweens.add({
         targets: glowRadius,
         r: chestSize * 1.6,
@@ -522,11 +533,12 @@ export class HeroesScene extends Phaser.Scene {
         duration: 700,
         ease: 'Cubic.easeOut',
         onUpdate: () => {
+          if (!ring.active) return;
           ring.clear();
           ring.fillStyle(0xfff2b8, glowRadius.alpha);
           ring.fillCircle(W / 2, chestY, glowRadius.r);
         },
-        onComplete: () => ring.destroy(),
+        onComplete: () => { if (ring.active) ring.destroy(); },
       });
       this.tweens.add({
         targets: chest,
@@ -534,12 +546,13 @@ export class HeroesScene extends Phaser.Scene {
         alpha: 0,
         duration: 400,
         ease: 'Sine.easeIn',
-        onComplete: () => chest.destroy(),
+        onComplete: () => { if (chest.active) chest.destroy(); },
       });
-    });
+    }));
 
     // Stage 3: hero portrait + name + role panel.
-    this.time.delayedCall(1450, () => {
+    pendingTimers.push(this.time.delayedCall(1450, () => {
+      if (finished) return;
       const heroSize = Math.floor(chestSize * 1.05);
       const heroY = chestY - 8;
       let portrait: Phaser.GameObjects.GameObject;
@@ -578,7 +591,14 @@ export class HeroesScene extends Phaser.Scene {
       name.setAlpha(0); role.setAlpha(0);
       overlay.add(name); overlay.add(role);
       this.tweens.add({ targets: [name, role], alpha: 1, duration: 360, delay: 200, ease: 'Sine.easeOut' });
-    });
+    }));
+
+    // Auto-finish after the full ceremony — same delay claimChest
+    // used to await directly. With the timer captured here, a skip
+    // tears it down too.
+    pendingTimers.push(this.time.delayedCall(2400, finish));
+
+    return done;
   }
 
   private flashErr(msg: string): void {

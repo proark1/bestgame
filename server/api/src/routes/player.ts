@@ -254,8 +254,12 @@ export function registerPlayer(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // FOR UPDATE — both /me and /harvest are RMW on the player
+      // row (wallet, streak, milk residual, queen skins). Without
+      // the lock, a concurrent /me call would overwrite a /harvest
+      // credit with the stale wallet it read earlier in its own TX.
       const pRes = await client.query<PlayerRow>(
-        'SELECT * FROM players WHERE id = $1',
+        'SELECT * FROM players WHERE id = $1 FOR UPDATE',
         [playerId],
       );
       if (pRes.rows.length === 0) {
@@ -599,8 +603,12 @@ export function registerPlayer(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // FOR UPDATE — both /me and /harvest are RMW on the player
+      // row (wallet, streak, milk residual, queen skins). Without
+      // the lock, a concurrent /me call would overwrite a /harvest
+      // credit with the stale wallet it read earlier in its own TX.
       const pRes = await client.query<PlayerRow>(
-        'SELECT * FROM players WHERE id = $1',
+        'SELECT * FROM players WHERE id = $1 FOR UPDATE',
         [playerId],
       );
       if (pRes.rows.length === 0) {
