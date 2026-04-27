@@ -254,8 +254,19 @@ export function registerPlayer(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Lock ORDER: bases first, players second. Matches the
+      // ordering used by /player/building, /player/upgrade-building,
+      // and /player/move-building so two concurrent requests from
+      // the same player can't deadlock by acquiring the locks in
+      // opposite orders. Both rows are FOR UPDATE because /me does
+      // a read-modify-write on each (snapshot finalize + wallet /
+      // streak / milk residual updates).
+      const bRes = await client.query<BaseRow>(
+        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
+        [playerId],
+      );
       const pRes = await client.query<PlayerRow>(
-        'SELECT * FROM players WHERE id = $1',
+        'SELECT * FROM players WHERE id = $1 FOR UPDATE',
         [playerId],
       );
       if (pRes.rows.length === 0) {
@@ -263,16 +274,6 @@ export function registerPlayer(app: FastifyInstance): void {
         reply.code(404);
         return { error: 'player not found' };
       }
-      // FOR UPDATE on the base row — /me does a read-modify-write on
-      // bases.snapshot when a pending upgrade has elapsed (lazy
-      // finalize below). Without the lock, a concurrent /me or
-      // /upgrade-building from the same player could overwrite our
-      // changes (or vice versa). The TX commits at the end of the
-      // handler so the lock duration is bounded.
-      const bRes = await client.query<BaseRow>(
-        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
-        [playerId],
-      );
       if (bRes.rows.length === 0) {
         await client.query('ROLLBACK');
         reply.code(500);
@@ -599,8 +600,19 @@ export function registerPlayer(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Lock ORDER: bases first, players second. Matches /me +
+      // /player/building + /player/upgrade-building so two
+      // concurrent requests from the same player can't deadlock
+      // by grabbing the two locks in opposite orders. Both rows
+      // are FOR UPDATE because /harvest does a read-modify-write
+      // on each (drain pending buckets on the base; credit wallet
+      // on the player).
+      const bRes = await client.query<BaseRow>(
+        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
+        [playerId],
+      );
       const pRes = await client.query<PlayerRow>(
-        'SELECT * FROM players WHERE id = $1',
+        'SELECT * FROM players WHERE id = $1 FOR UPDATE',
         [playerId],
       );
       if (pRes.rows.length === 0) {
@@ -608,10 +620,6 @@ export function registerPlayer(app: FastifyInstance): void {
         reply.code(404);
         return { error: 'player not found' };
       }
-      const bRes = await client.query<BaseRow>(
-        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
-        [playerId],
-      );
       if (bRes.rows.length === 0) {
         await client.query('ROLLBACK');
         reply.code(404);
