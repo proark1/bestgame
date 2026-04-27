@@ -197,7 +197,7 @@ interface SaveBody {
 }
 
 interface UpdatePromptBody {
-  category: 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes' | 'styleLock';
+  category: 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes' | 'stories' | 'styleLock';
   key?: string;
   value: string;
 }
@@ -208,8 +208,8 @@ const ALLOWED_KEY_RE = /^[a-z0-9][a-z0-9-_]{1,63}$/i;
 // prototype-pollution via surprise categories like __proto__/constructor
 // and also stops ad-hoc keys from growing prompts.json unbounded.
 const ALLOWED_BUCKET_CATEGORIES = new Set<
-  'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes'
->(['units', 'buildings', 'factions', 'walkCycles', 'menuUi', 'heroes']);
+  'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes' | 'stories'
+>(['units', 'buildings', 'factions', 'walkCycles', 'menuUi', 'heroes', 'stories']);
 // JavaScript's special inherited-property names. Even with a bucket
 // allowlist we reject these as sub-keys — the prompts.json bucket object
 // is iterated elsewhere, so polluting it is still a bad idea.
@@ -333,7 +333,7 @@ export function registerAdmin(app: FastifyInstance): void {
       });
     } else if (
       ALLOWED_BUCKET_CATEGORIES.has(
-        body.category as 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes',
+        body.category as 'units' | 'buildings' | 'factions' | 'walkCycles' | 'menuUi' | 'heroes' | 'stories',
       )
     ) {
       const safeKey = body.key ? sanitizeKey(body.key) : null;

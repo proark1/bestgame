@@ -44,6 +44,11 @@ export interface PromptsFile {
   // and equips per raid. Parallel to `units` — same 128x128 single-
   // sprite output, just routed through the heroes admin tab.
   heroes?: Record<string, string>;
+  // Comic-strip panel prompts. Each key matches the sprite key the
+  // landing-page swiper looks up (e.g. `story-springs-1`). Output is
+  // a wide 1024x576 cinematic painterly illustration, opaque PNG ok.
+  // Story → panel grouping lives in tools/gemini-art/stories.json.
+  stories?: Record<string, string>;
 }
 
 export interface GeminiImage {
@@ -102,8 +107,29 @@ export async function fetchPrompts(): Promise<PromptsFile> {
   return req<PromptsFile>('/admin/api/prompts');
 }
 
+// Comic-strip metadata. Public endpoint (no auth) so the landing
+// page and the admin both consume the same shape. Each panel's
+// `key` is the sprite key the manifest uses; the actual prompt
+// lives in prompts.json under the `stories` bucket.
+export interface StoryPanel {
+  key: string;
+  caption: string;
+}
+export interface Story {
+  id: string;
+  title: string;
+  subtitle: string;
+  panels: StoryPanel[];
+}
+export interface StoriesFile {
+  stories: Story[];
+}
+export async function fetchStories(): Promise<StoriesFile> {
+  return req<StoriesFile>('/api/stories');
+}
+
 export async function updatePrompt(args: {
-  category: 'units' | 'buildings' | 'walkCycles' | 'menuUi' | 'styleLock' | 'heroes';
+  category: 'units' | 'buildings' | 'walkCycles' | 'menuUi' | 'styleLock' | 'heroes' | 'stories';
   key?: string;
   value: string;
 }): Promise<void> {

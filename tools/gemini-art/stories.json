@@ -1,0 +1,31 @@
+{
+  "_doc": "Comic-strip metadata for the landing-page story rail. Each panel's actual prompt lives in tools/gemini-art/prompts.json under the `stories` bucket, keyed by `key` here. Sprite output: cinematic 1024x576 painterly illustration, opaque PNG fine. Saved to assets/sprites/<key>.{webp,png} via the same admin save path as units/heroes.",
+  "stories": [
+    {
+      "id": "three-springs-ago",
+      "title": "Three Springs Ago",
+      "subtitle": "How the kingdom broke. Six panels, frost to first raid.",
+      "panels": [
+        { "key": "story-springs-1", "caption": "The Last Warm Morning" },
+        { "key": "story-springs-2", "caption": "The Cold" },
+        { "key": "story-springs-3", "caption": "The Throne Splits" },
+        { "key": "story-springs-4", "caption": "The Wasp at the Gate" },
+        { "key": "story-springs-5", "caption": "The Pact" },
+        { "key": "story-springs-6", "caption": "The First Raid" }
+      ]
+    },
+    {
+      "id": "four-crowns",
+      "title": "The Tale of the Four Crowns",
+      "subtitle": "Four heroes. Four crowns. One war.",
+      "panels": [
+        { "key": "story-crowns-1", "caption": "Cold Open — The Last Forager" },
+        { "key": "story-crowns-2", "caption": "The Bladewidow Comes Home" },
+        { "key": "story-crowns-3", "caption": "The Bulwark Holds the Breach" },
+        { "key": "story-crowns-4", "caption": "The Honey Sovereign Defects" },
+        { "key": "story-crowns-5", "caption": "The Wallbreaker at the Gate" },
+        { "key": "story-crowns-6", "caption": "The Marching Season" }
+      ]
+    }
+  ]
+}

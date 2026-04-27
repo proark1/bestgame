@@ -323,6 +323,113 @@
         color: var(--text-muted);
       }
 
+      /* ---------- Story rail (comic strip) ----------
+         Horizontal scroll-snap rail per story: native swipe on touch
+         devices and click-drag (with .grabbing cursor) on mouse. Each
+         panel is a 16:9 card sized to about 80% of the viewport width
+         so the user always sees a sliver of the next panel — a strong
+         affordance that there's more to swipe to. */
+      .story-section {
+        background: #ede0c4;
+        padding: 56px 18px;
+        border-top: 4px solid rgba(0, 0, 0, 0.06);
+      }
+      .story-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .story-title {
+        text-align: center;
+        margin: 0 0 6px;
+      }
+      .story-intro {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 15px;
+        margin: 0 0 28px;
+      }
+      .story-list {
+        display: flex;
+        flex-direction: column;
+        gap: 36px;
+      }
+      .story-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .story-group-head {
+        padding: 0 4px;
+      }
+      .story-group-head h3 {
+        font-family: "Arial Black", "Helvetica Neue", Impact, sans-serif;
+        margin: 0;
+        font-size: 22px;
+        color: var(--wood-deep);
+      }
+      .story-group-head p {
+        margin: 4px 0 0;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+      .story-rail {
+        display: flex;
+        gap: 14px;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
+        padding: 6px 4px 12px;
+        scrollbar-width: thin;
+      }
+      .story-rail.grabbing { cursor: grabbing; }
+      .story-panel {
+        flex: 0 0 80%;
+        max-width: 560px;
+        scroll-snap-align: center;
+        background: #ffffff;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow:
+          0 6px 0 rgba(0, 0, 0, 0.12),
+          0 12px 28px rgba(0, 0, 0, 0.14);
+        cursor: grab;
+        user-select: none;
+      }
+      @media (min-width: 720px) {
+        .story-panel { flex-basis: 60%; }
+      }
+      @media (min-width: 1000px) {
+        .story-panel { flex-basis: 45%; }
+      }
+      .story-panel img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        background:
+          linear-gradient(135deg, #c8b388 0%, #a98c5b 100%);
+      }
+      .story-panel-meta {
+        padding: 10px 14px 14px;
+      }
+      .story-panel-num {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--wood-light);
+        margin: 0 0 4px;
+        text-transform: uppercase;
+      }
+      .story-panel-caption {
+        font-family: "Arial Black", "Helvetica Neue", Impact, sans-serif;
+        font-size: 16px;
+        line-height: 1.25;
+        color: var(--text);
+        margin: 0;
+      }
+
       /* ---------- Economy section (the loop + 3 resources) ---------- */
       .economy-section {
         background: #f4ead0;
@@ -851,6 +958,21 @@
       </div>
     </section>
 
+    <!-- Comic-strip story rail. Populated on load from /api/stories.
+         Each story renders as a title + a horizontal scroll-snap row of
+         panels; CSS scroll-snap gives native swipe on touch and
+         click-drag on mouse without a JS carousel library. The panel
+         images use data-sprite-key so the same manifest-swap script
+         further down upgrades the SVG placeholder to the real
+         Gemini-generated art when it lands. -->
+    <section class="story-section" id="story-section" hidden>
+      <div class="story-inner">
+        <h2 class="display display-md story-title">The Tale, in Strips</h2>
+        <p class="story-intro">Swipe through the story of how the kingdom split, and the four heroes who took its place.</p>
+        <div class="story-list" id="story-list"></div>
+      </div>
+    </section>
+
     <section class="economy-section">
       <div class="economy-inner">
         <h2 class="display display-md economy-title">The economy, simply</h2>
@@ -1062,6 +1184,114 @@
         }
       } catch (e) { /* ignore storage errors */ }
 
+      // Story rail. Fetch /api/stories and build a horizontal swipe
+      // strip per story. Each panel is an <img data-sprite-key="…">
+      // so the manifest-swap script below upgrades the SVG placeholder
+      // to the real Gemini-generated panel art whenever it lands —
+      // same lazy-upgrade pattern as the unit thumbnails. The whole
+      // section stays `hidden` until at least one story has loaded so
+      // a network failure doesn't leave an empty banner on the page.
+      (() => {
+        const section = document.getElementById('story-section');
+        const list = document.getElementById('story-list');
+        if (!section || !list) return;
+        // Click-drag fallback for desktop browsers (mobile gets native
+        // touch swipe + scroll-snap for free). Tracks pointer down/move
+        // to translate into scrollLeft, then re-centers on the closest
+        // snap point on release. Pointer events unify mouse + touch.
+        const installDragSwipe = (rail) => {
+          let down = false;
+          let startX = 0;
+          let startLeft = 0;
+          rail.addEventListener('pointerdown', (e) => {
+            if (e.pointerType !== 'mouse') return;
+            down = true;
+            startX = e.clientX;
+            startLeft = rail.scrollLeft;
+            rail.classList.add('grabbing');
+            rail.setPointerCapture(e.pointerId);
+          });
+          rail.addEventListener('pointermove', (e) => {
+            if (!down) return;
+            rail.scrollLeft = startLeft - (e.clientX - startX);
+          });
+          const finish = (e) => {
+            if (!down) return;
+            down = false;
+            rail.classList.remove('grabbing');
+            try { rail.releasePointerCapture(e.pointerId); } catch {}
+          };
+          rail.addEventListener('pointerup', finish);
+          rail.addEventListener('pointercancel', finish);
+        };
+        fetch('/api/stories', { credentials: 'omit' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (!data || !Array.isArray(data.stories) || data.stories.length === 0) return;
+            for (const story of data.stories) {
+              const group = document.createElement('div');
+              group.className = 'story-group';
+              const head = document.createElement('div');
+              head.className = 'story-group-head';
+              const h3 = document.createElement('h3');
+              h3.textContent = story.title;
+              const sub = document.createElement('p');
+              sub.textContent = story.subtitle || '';
+              head.append(h3, sub);
+              group.append(head);
+              const rail = document.createElement('div');
+              rail.className = 'story-rail';
+              const total = story.panels.length;
+              story.panels.forEach((panel, idx) => {
+                const card = document.createElement('div');
+                card.className = 'story-panel';
+                const img = document.createElement('img');
+                img.dataset.spriteKey = panel.key;
+                // Placeholder SVG — the manifest swap below upgrades to
+                // /assets/sprites/<key>.<ext> once the admin generates it.
+                img.src = '/units/placeholder.svg';
+                img.alt = panel.caption;
+                img.loading = idx === 0 ? 'eager' : 'lazy';
+                img.decoding = 'async';
+                const meta = document.createElement('div');
+                meta.className = 'story-panel-meta';
+                const num = document.createElement('div');
+                num.className = 'story-panel-num';
+                num.textContent = `Panel ${idx + 1} of ${total}`;
+                const caption = document.createElement('p');
+                caption.className = 'story-panel-caption';
+                caption.textContent = panel.caption;
+                meta.append(num, caption);
+                card.append(img, meta);
+                rail.append(card);
+              });
+              installDragSwipe(rail);
+              group.append(rail);
+              list.append(group);
+            }
+            section.hidden = false;
+            // Late-mount: the manifest swap IIFE further down ran
+            // before these panels existed, so re-apply it on the new
+            // imgs. If the swap hasn't been defined yet (script order
+            // edge case), fall back to a one-shot listener.
+            const apply = window.__hiveApplySpriteManifest;
+            const newImgs = list.querySelectorAll('img[data-sprite-key]');
+            if (typeof apply === 'function') {
+              apply(newImgs);
+            } else {
+              window.addEventListener(
+                'load',
+                () => {
+                  const fn = window.__hiveApplySpriteManifest;
+                  if (typeof fn === 'function') fn(newImgs);
+                },
+                { once: true },
+              );
+            }
+          })
+          .catch(() => { /* leave the section hidden on failure */ });
+      })();
+
       // Upgrade unit thumbnails to the same Gemini-generated / admin-
       // uploaded sprites the in-game BootScene uses, when the deployed
       // server has them. Page paints with the SVG fallbacks first; if
@@ -1075,37 +1305,41 @@
       //   2. /units/placeholder.svg if that 404s (onerror)
       //   3. /assets/sprites/<key>.<ext> if the manifest lists it
       //      (replaces the SVG once the probe succeeds)
+      // Manifest cache + apply helper. Exposed on window so the story-
+      // rail block can re-apply the swap once its dynamically-built
+      // panels are in the DOM (the IIFE below only sees imgs that
+      // existed at boot, not ones inserted later via fetch).
       (() => {
-        const imgs = document.querySelectorAll('img[data-sprite-key]');
-        if (!imgs.length) return;
-        // Step 1: install a one-shot onerror so a missing kind-specific
-        // SVG falls back to the generic placeholder rather than a
-        // broken-image icon. Cleared after first fire so an
-        // accidentally-broken placeholder.svg doesn't loop.
-        imgs.forEach((img) => {
-          img.addEventListener('error', function once() {
-            img.removeEventListener('error', once);
-            img.src = '/units/placeholder.svg';
-          });
-        });
-        // Step 2: probe the manifest for a real generated sprite. If
-        // the deployed server has one, swap the SVG out for the real
-        // PNG/WEBP at the same key. Manifest stores keys with their
-        // category prefix (`unit-WorkerAnt`, `building-QueenChamber`,
-        // `ui-logo`); the data-sprite-key attributes mostly omit the
-        // prefix (just `WorkerAnt`), so we try the literal key first
-        // and then prefix-prepended variants. Without this the page
-        // never matched a real sprite for any unit/building image and
-        // the SVG placeholders stayed visible even when art existed.
         const candidates = (raw) => {
           const list = [raw];
           if (!raw.startsWith('unit-')) list.push(`unit-${raw}`);
           if (!raw.startsWith('building-')) list.push(`building-${raw}`);
           return list;
         };
-        fetch('/api/sprites/manifest', { credentials: 'omit' })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((manifest) => {
+        // Lazy singleton: first caller kicks off the manifest fetch,
+        // every subsequent caller awaits the same promise. Avoids
+        // double-fetching just because the story rail loads later.
+        let manifestPromise = null;
+        const getManifest = () => {
+          if (!manifestPromise) {
+            manifestPromise = fetch('/api/sprites/manifest', { credentials: 'omit' })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null);
+          }
+          return manifestPromise;
+        };
+        const apply = (imgs) => {
+          if (!imgs || !imgs.length) return;
+          imgs.forEach((img) => {
+            // One-shot onerror so a missing kind-specific SVG falls
+            // back to the generic placeholder instead of a broken-
+            // image icon. Cleared after first fire to avoid loops.
+            img.addEventListener('error', function once() {
+              img.removeEventListener('error', once);
+              img.src = '/units/placeholder.svg';
+            });
+          });
+          getManifest().then((manifest) => {
             if (!manifest) return;
             const byKey = Object.create(null);
             const allEntries = [...(manifest.images || []), ...(manifest.sheets || [])];
@@ -1124,8 +1358,12 @@
               probe.onload = () => { img.src = url; };
               probe.src = url;
             });
-          })
-          .catch(() => { /* keep SVG fallbacks */ });
+          });
+        };
+        // Apply once for everything in the DOM at boot.
+        apply(document.querySelectorAll('img[data-sprite-key]'));
+        // Expose for late callers (story rail).
+        window.__hiveApplySpriteManifest = apply;
       })();
     </script>
   </body>

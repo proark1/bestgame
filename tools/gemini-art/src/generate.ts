@@ -36,6 +36,25 @@ interface PromptsFile {
   // so the admin Heroes tab and the CLI generator can both surface them
   // distinctly from the regular roster.
   heroes?: Record<string, string>;
+  // Comic-strip story panels. Each key is the full sprite key (e.g.
+  // `story-springs-1`) and the value is the per-panel prompt. Output
+  // is a wide 1024x576 cinematic painterly illustration (opaque PNG
+  // ok), so the unit-style sprite-atlas constraints don't apply.
+  stories?: Record<string, string>;
+}
+
+interface StoryPanel {
+  key: string;
+  caption: string;
+}
+interface StoryGroup {
+  id: string;
+  title: string;
+  subtitle: string;
+  panels: StoryPanel[];
+}
+interface StoriesFile {
+  stories: StoryGroup[];
 }
 
 interface Options {
@@ -50,12 +69,16 @@ interface Options {
 interface Job {
   name: string;
   prompt: string;
-  kind: 'unit' | 'building' | 'hero';
+  kind: 'unit' | 'building' | 'hero' | 'story';
+  // Per-job pixel cap. Story panels need ~1024 to look good; the
+  // default --max-dim=256 would shrink them into thumbnails.
+  maxDimOverride?: number;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const PROMPTS_PATH = join(__dirname, '..', 'prompts.json');
+const STORIES_PATH = join(__dirname, '..', 'stories.json');
 const OUTPUT_DIR = join(REPO_ROOT, 'client', 'public', 'assets', 'sprites');
 
 const MODEL = process.env.GEMINI_IMAGE_MODEL ?? 'gemini-2.5-flash-image';
@@ -202,6 +225,20 @@ function compose(
   ].join(' ');
 }
 
+// Story panels are cinematic comic-strip illustrations (1024x576),
+// not sprite-atlas characters — strip the sprite-only constraints
+// off the styleLock so the painter is free to use scenery, depth,
+// and multi-character storytelling.
+function composeStory(styleLock: string, desc: string): string {
+  const visualStyle = (styleLock.split('128x128')[0] ?? styleLock).trim();
+  return [
+    `Subject: ${desc}`,
+    `Style: ${visualStyle}`,
+    `Camera: cinematic painterly comic-panel illustration. Wide 16:9 landscape framing with clear foreground / midground / background depth, dramatic directional lighting, atmospheric perspective. Multi-character scenes and storytelling are encouraged.`,
+    `Delivery: 1024x576 PNG, opaque background fine. No text, no UI overlays, no logos, no captions, no watermarks, no borders, no signature.`,
+  ].join(' ');
+}
+
 async function runBatch(
   apiKey: string,
   jobs: Job[],
@@ -248,7 +285,11 @@ async function runBatch(
       const job = work[next++]!;
       try {
         const raw = await generateOne(apiKey, job.prompt);
-        const out = await compress(raw, opts);
+        const jobOpts =
+          job.maxDimOverride !== undefined
+            ? { ...opts, maxDim: job.maxDimOverride }
+            : opts;
+        const out = await compress(raw, jobOpts);
         const outPath = join(OUTPUT_DIR, `${job.name}.${opts.format}`);
         const sigPath = join(OUTPUT_DIR, `${job.name}.sha1`);
         await writeFile(outPath, out);
@@ -323,6 +364,39 @@ async function main(): Promise<void> {
       prompt: compose(prompts.styleLock, desc, 'hero'),
       kind: 'hero',
     });
+  }
+  // Story panels — keys are already prefixed with `story-` in the
+  // bucket, so they're used as-is for the sprite filename. Override
+  // the per-job size cap to 1024 so the cinematic 16:9 panels keep
+  // their resolution even when the main pipeline runs at the default
+  // 256 px sprite-atlas budget.
+  for (const [key, desc] of Object.entries(prompts.stories ?? {})) {
+    jobs.push({
+      name: key,
+      prompt: composeStory(prompts.styleLock, desc),
+      kind: 'story',
+      maxDimOverride: 1024,
+    });
+  }
+  // stories.json is metadata — read it just to validate keys here so
+  // a panel listed in stories.json without a matching prompt is loud.
+  // Best-effort: the file is optional for backwards compatibility.
+  try {
+    const stories = JSON.parse(
+      await readFile(STORIES_PATH, 'utf8'),
+    ) as StoriesFile;
+    const promptKeys = new Set(Object.keys(prompts.stories ?? {}));
+    for (const story of stories.stories) {
+      for (const panel of story.panels) {
+        if (!promptKeys.has(panel.key)) {
+          console.warn(
+            `  ! stories.json lists "${panel.key}" but prompts.json has no entry`,
+          );
+        }
+      }
+    }
+  } catch {
+    // stories.json missing — that's OK, prompts.stories is the truth.
   }
   const filtered = opts.only ? jobs.filter((j) => j.name === opts.only) : jobs;
   if (filtered.length === 0) {
