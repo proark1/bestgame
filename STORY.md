@@ -207,7 +207,7 @@ The deck is the war:
 - A **Jumper** vaults the inner **Thorn Hedge**, lands on a
   **Mushroom Turret** roof, and is already at the chamber mouth
   before the turret has decided what to track.
-- The **FireAnt** column sets the **Aphid Farm** alight; the rival
+- The **Fire Ant** column sets the **Aphid Farm** alight; the rival
   loses its milk in the first minute of the raid.
 - The **Wasp** snipers — the regular mercenaries, not the queen — cut
   a corridor in the air for a flight of **Dragonflies** the colony
@@ -215,8 +215,8 @@ The deck is the war:
   the rival's **Hidden Stingers** before they can spring.
 - A **Scarab** the rival queen had been saving for emergencies enters
   the field and is killed in seven seconds; from her shell crawls a
-  litter of **MiniScarabs**, who scatter in every direction and whom
-  the colony's **NestSpiders** — defending the home tunnels back at
+  litter of **Mini Scarabs**, who scatter in every direction and whom
+  the colony's **Nest Spiders** — defending the home tunnels back at
   base — never get a chance to taste, because they're not the ones
   on this front.
 - The **Honey Sovereign** stays high, follows the swarm, drips honey
@@ -226,7 +226,7 @@ The deck is the war:
   fuse.
 - The **Wallbreaker** comes last, walks past the burning **Aphid
   Farm**, past the toppled **Spore Tower**, past the cracked
-  **Pebble Bunker**, past the slumped **HoneyTank** corpse, and he
+  **Pebble Bunker**, past the slumped **Honey Tank** corpse, and he
   reaches the rival **Queen Chamber** at exactly the moment his
   +20% building-damage aura overlaps with a column of the colony's
   **Termites**.
