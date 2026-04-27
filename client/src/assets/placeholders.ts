@@ -720,6 +720,57 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.fillRoundedRect(cx - 30, s - 38, 60, 12, 4);
     g.strokeRoundedRect(cx - 30, s - 38, 60, 12, 4);
   },
+  'building-LeafSilo': (g, s) => {
+    // Stacked clay-ring silo with a heap of green leaf-bits spilling
+    // over the top. Leafy green is the dominant tone so the player
+    // links it to the leaf-resource pill.
+    const cx = s / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    // Three stacked clay rings = the silo body.
+    g.fillStyle(0xc9885b, 1);
+    g.fillRoundedRect(cx - 38, s - 100, 76, 80, 8);
+    g.strokeRoundedRect(cx - 38, s - 100, 76, 80, 8);
+    g.lineStyle(2, OUTLINE, 1);
+    g.lineBetween(cx - 38, s - 76, cx + 38, s - 76);
+    g.lineBetween(cx - 38, s - 52, cx + 38, s - 52);
+    // Heap of leaves spilling over the top.
+    g.fillStyle(0x5ba445, 1);
+    g.fillEllipse(cx, s - 100, 80, 22);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.strokeEllipse(cx, s - 100, 80, 22);
+    // A few leaf tips poking up.
+    g.fillStyle(0x6cd47e, 1);
+    for (const dx of [-26, -10, 8, 24]) {
+      g.fillTriangle(cx + dx, s - 110, cx + dx - 6, s - 102, cx + dx + 6, s - 102);
+      g.strokeTriangle(cx + dx, s - 110, cx + dx - 6, s - 102, cx + dx + 6, s - 102);
+    }
+  },
+  'building-MilkPot': (g, s) => {
+    // Tall fat-bellied glazed clay pot sealed with a wax lid; pearl
+    // glow visible through a small viewing window. Pearl + amber
+    // palette signals the AphidMilk currency at a glance.
+    const cx = s / 2;
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    // Pot belly (wider than tall).
+    g.fillStyle(0xe7c794, 1);
+    g.fillEllipse(cx, s - 60, 78, 70);
+    g.strokeEllipse(cx, s - 60, 78, 70);
+    // Pot neck.
+    g.fillStyle(0xe7c794, 1);
+    g.fillRoundedRect(cx - 22, s - 110, 44, 28, 6);
+    g.strokeRoundedRect(cx - 22, s - 110, 44, 28, 6);
+    // Wax-sealed lid.
+    g.fillStyle(0xb87333, 1);
+    g.fillRoundedRect(cx - 28, s - 116, 56, 12, 4);
+    g.strokeRoundedRect(cx - 28, s - 116, 56, 12, 4);
+    // Pearl glow viewing window.
+    g.fillStyle(0xfff5d0, 1);
+    g.fillCircle(cx, s - 60, 18);
+    g.strokeCircle(cx, s - 60, 18);
+    // Faint highlight on the glow.
+    g.fillStyle(0xffffff, 0.7);
+    g.fillEllipse(cx - 5, s - 65, 8, 6);
+  },
   default: (g, s) => {
     const cx = s / 2;
     g.fillStyle(PALETTE.neutral.body, 1);

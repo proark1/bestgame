@@ -48,6 +48,11 @@ export const ALLOWED_LAYERS: Record<Types.BuildingKind, readonly Types.Layer[]> 
   ThornHedge: [0],
   // Premium producer hides underground next to vault + nursery.
   AphidFarm: [1],
+  // Dedicated underground storage. LeafSilo + MilkPot live next to
+  // the existing underground producers so the "economy zone" of
+  // the base stays in one place.
+  LeafSilo: [1],
+  MilkPot: [1],
 };
 
 // Maximum count per kind at queen level N (1..MAX_QUEEN_LEVEL).
@@ -79,6 +84,13 @@ export const QUOTA_BY_TIER: Record<Types.BuildingKind, readonly number[]> = {
   // slot, Q5 a second. Single farm at first so the milk economy
   // ramps slowly even after the player can build one.
   AphidFarm:      [0, 0, 0, 1, 2],
+  // LeafSilo unlocks at Q2 alongside the early defensive roster so
+  // a player whose nurseries cap at L1 can still keep accumulating
+  // raid loot. MilkPot unlocks at Q4 with AphidFarm — milk only
+  // exists once you can produce it, so the storage doesn't matter
+  // before then.
+  LeafSilo:       [0, 1, 2, 3, 4],
+  MilkPot:        [0, 0, 0, 1, 2],
 };
 
 // Cost to upgrade the Queen from level N to N+1. Index = fromLevel-1,

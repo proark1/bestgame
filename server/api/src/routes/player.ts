@@ -527,6 +527,10 @@ export function registerPlayer(app: FastifyInstance): void {
           storage: {
             sugarCap: caps.sugar,
             leafCap: caps.leafBits,
+            // Opt-in milk cap: null until the player has at least
+            // one alive MilkPot. The HUD renders "1.2k / 8k" when
+            // a number lands here and a raw "1.2k" otherwise.
+            milkCap: caps.aphidMilk,
           },
           // Per-second production from active producer buildings, so
           // the HUD can render "+X/sec" pills without needing to walk
@@ -633,19 +637,26 @@ export function registerPlayer(app: FastifyInstance): void {
         touched += 1;
       }
 
-      // Storage cap clamp on sugar + leaf. Milk is uncapped in MVP
-      // (parity with the previous trickle behaviour). Loot bypass is
-      // unrelated to harvest so we don't touch raid loot here.
+      // Storage cap clamp on every harvested resource. Sugar + leaf
+      // always have caps; milk's cap is opt-in via MilkPot and stays
+      // null when the base has no pots (existing behaviour). Loot
+      // bypass is unrelated to harvest so we don't touch raid loot.
       const caps = storageCaps(base.snapshot);
       const sugarCapBig = BigInt(caps.sugar);
       const leafCapBig = BigInt(caps.leafBits);
       const existingSugar = BigInt(player.sugar);
       const existingLeaf = BigInt(player.leaf_bits);
+      const existingMilk = BigInt(player.aphid_milk);
       const sugarRoom = sugarCapBig > existingSugar ? sugarCapBig - existingSugar : 0n;
       const leafRoom = leafCapBig > existingLeaf ? leafCapBig - existingLeaf : 0n;
       const sugarCredit = BigInt(sumSugar) > sugarRoom ? sugarRoom : BigInt(sumSugar);
       const leafCredit = BigInt(sumLeaf) > leafRoom ? leafRoom : BigInt(sumLeaf);
-      const milkCredit = BigInt(sumMilk);
+      let milkCredit = BigInt(sumMilk);
+      if (caps.aphidMilk !== null) {
+        const milkCapBig = BigInt(caps.aphidMilk);
+        const milkRoom = milkCapBig > existingMilk ? milkCapBig - existingMilk : 0n;
+        if (milkCredit > milkRoom) milkCredit = milkRoom;
+      }
 
       const newSugar = existingSugar + sugarCredit;
       const newLeaf = existingLeaf + leafCredit;
@@ -691,7 +702,7 @@ export function registerPlayer(app: FastifyInstance): void {
         overflow: {
           sugar: sumSugar - Number(sugarCredit),
           leafBits: sumLeaf - Number(leafCredit),
-          aphidMilk: 0,
+          aphidMilk: sumMilk - Number(milkCredit),
         },
       };
     } catch (err) {

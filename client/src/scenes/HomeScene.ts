@@ -154,9 +154,10 @@ export class HomeScene extends Phaser.Scene {
   private milkRateText: Phaser.GameObjects.Text | null = null;
   // Storage cap headroom from the server (§6.8). Falls back to no-cap
   // when the server payload predates the storage feature.
-  private storageCaps: { sugar: number | null; leaf: number | null } = {
+  private storageCaps: { sugar: number | null; leaf: number | null; milk: number | null } = {
     sugar: null,
     leaf: null,
+    milk: null,
   };
   private incomeAccumulator = 0;
   // If the server handed back a real base snapshot, render that — it
@@ -200,7 +201,14 @@ export class HomeScene extends Phaser.Scene {
       };
       const storage = runtime.player.player.storage;
       if (storage) {
-        this.storageCaps = { sugar: storage.sugarCap, leaf: storage.leafCap };
+        this.storageCaps = {
+          sugar: storage.sugarCap,
+          leaf: storage.leafCap,
+          // milkCap is opt-in (null until the player builds a
+          // MilkPot). undefined on older servers — treat as null
+          // so milk renders raw.
+          milk: storage.milkCap ?? null,
+        };
       }
     }
 
@@ -399,14 +407,19 @@ export class HomeScene extends Phaser.Scene {
     // they'll keep rather than ones that snap back is the right call.
     const sugarCap = this.storageCaps.sugar;
     const leafCap = this.storageCaps.leaf;
+    const milkCap = this.storageCaps.milk;
     this.resources.sugar = sugarCap !== null
       ? Math.min(sugarCap, this.resources.sugar + sugar)
       : this.resources.sugar + sugar;
     this.resources.leafBits = leafCap !== null
       ? Math.min(leafCap, this.resources.leafBits + leaf)
       : this.resources.leafBits + leaf;
-    // AphidMilk has no storage cap in MVP — same model as the server.
-    this.resources.aphidMilk += milk;
+    // Milk cap is opt-in via MilkPot (null = uncapped, matches the
+    // pre-MilkPot behaviour). Apply the same min/cap dance as the
+    // other resources when it's set.
+    this.resources.aphidMilk = milkCap !== null
+      ? Math.min(milkCap, this.resources.aphidMilk + milk)
+      : this.resources.aphidMilk + milk;
     this.refreshResourcePills();
     this.flashResourceGain();
   }
@@ -440,9 +453,14 @@ export class HomeScene extends Phaser.Scene {
     };
     // aphidMilk accumulates fractional locally (see update() trickle); we
     // floor for display so the HUD pill stays integer-clean and matches
-    // what the server has banked at the last /me roundtrip. Milk is
-    // also uncapped in MVP so there's no cap to render.
-    if (kind === 'milk') return fmt(this.resources.aphidMilk);
+    // what the server has banked at the last /me roundtrip. Milk now
+    // honors a cap when MilkPot is built; null (uncapped) renders raw.
+    if (kind === 'milk') {
+      const cap = this.storageCaps.milk;
+      const showCap = cap !== null && !this.isMobileLayout();
+      const val = this.resources.aphidMilk;
+      return showCap ? `${fmt(val)} / ${fmt(cap)}` : fmt(val);
+    }
 
     const val = kind === 'sugar' ? this.resources.sugar : this.resources.leafBits;
     const cap = kind === 'sugar' ? this.storageCaps.sugar : this.storageCaps.leaf;
@@ -496,7 +514,9 @@ export class HomeScene extends Phaser.Scene {
       const cap = this.storageCaps.leaf;
       return cap !== null && this.resources.leafBits >= cap;
     }
-    return false; // milk is uncapped in MVP
+    // Milk: uncapped until the player builds a MilkPot (cap = null).
+    const milkCap = this.storageCaps.milk;
+    return milkCap !== null && this.resources.aphidMilk >= milkCap;
   }
 
   // Single point of truth for refreshing the HUD pills after any
@@ -2309,7 +2329,11 @@ export class HomeScene extends Phaser.Scene {
     this.resources.aphidMilk = runtime.player.player.aphidMilk;
     const storage = runtime.player.player.storage;
     if (storage) {
-      this.storageCaps = { sugar: storage.sugarCap, leaf: storage.leafCap };
+      this.storageCaps = {
+        sugar: storage.sugarCap,
+        leaf: storage.leafCap,
+        milk: storage.milkCap ?? null,
+      };
     }
     this.refreshResourcePills();
   }

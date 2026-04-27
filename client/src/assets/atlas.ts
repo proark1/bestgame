@@ -58,6 +58,10 @@ export const BUILDING_SPRITE_KEYS = [
   'building-ThornHedgeV',
   // Premium producer (AphidMilk source).
   'building-AphidFarm',
+  // Dedicated underground storage — leaf silo (caps leafBits) and
+  // milk pot (introduces a milk cap on first build).
+  'building-LeafSilo',
+  'building-MilkPot',
 ] as const;
 
 export const UI_SPRITE_KEYS = [

@@ -414,6 +414,27 @@ export const BUILDING_STATS: Record<BuildingKind, BuildingStats> = {
     dropsSugarOnDestroy: 0,
     dropsLeafBitsOnDestroy: 25,
   },
+  // Storage buildings — purely defensive, fat HP, drop a chunk of
+  // their stored resource on destruction so raiders are rewarded
+  // for prioritising them over plain walls.
+  LeafSilo: {
+    hpMax: 600,
+    canAttack: false,
+    attackRange: 0,
+    attackDamage: 0,
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 80,
+  },
+  MilkPot: {
+    hpMax: 700,
+    canAttack: false,
+    attackRange: 0,
+    attackDamage: 0,
+    attackCooldownTicks: 0,
+    dropsSugarOnDestroy: 0,
+    dropsLeafBitsOnDestroy: 0,
+  },
 };
 
 // Extended per-building behavior. Same pattern as UNIT_BEHAVIOR:

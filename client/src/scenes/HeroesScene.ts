@@ -433,11 +433,152 @@ export class HeroesScene extends Phaser.Scene {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
     try {
-      await runtime.api.claimHeroChest(kind);
+      // Fire the server claim and the reveal fanfare in parallel —
+      // the network round-trip is normally <100 ms but the
+      // animation runs ~2 seconds, so a slow network just delays
+      // the final refresh, not the celebration.
+      const claim = runtime.api.claimHeroChest(kind);
+      this.playChestFanfare(kind);
+      await claim;
+      // Hold the celebration on screen for the full animation
+      // before the underlying scene re-renders, so the player
+      // doesn't see the cards swap mid-fanfare.
+      await new Promise<void>((res) => this.time.delayedCall(2400, () => res()));
       await this.refresh();
     } catch (err) {
       this.flashErr((err as Error).message);
     }
+  }
+
+  // Full-screen reveal ceremony — chest shakes, glows, opens, the
+  // hero portrait rises out with a spotlight + name + role. Pure
+  // visual: no server interaction. Auto-dismisses after ~2.4s; tap
+  // anywhere skips. Calling claimChest while this is running is
+  // safe — the server claim has already been kicked off in
+  // parallel.
+  private playChestFanfare(kind: Types.HeroKind): void {
+    if (!this.state) return;
+    const def = this.state.catalog[kind];
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const overlay = this.add.container(0, 0).setDepth(DEPTHS.resultBackdrop);
+
+    // Solid black backdrop fades in so the playfield drops away.
+    const dim = this.add.rectangle(0, 0, W, H, 0x000000, 0.0).setOrigin(0, 0).setInteractive();
+    overlay.add(dim);
+    this.tweens.add({ targets: dim, fillAlpha: 0.78, duration: 250, ease: 'Sine.easeOut' });
+
+    // Tap to skip — destroys the overlay immediately.
+    const skip = (): void => {
+      this.tweens.killTweensOf(overlay);
+      this.tweens.killTweensOf(dim);
+      overlay.destroy(true);
+    };
+    dim.on('pointerdown', skip);
+
+    // Stage 1: chest sits center-screen, shakes, then opens.
+    const chestSize = Math.min(180, Math.min(W, H) * 0.32);
+    const chestY = H * 0.42;
+    const chestBg = this.add.graphics();
+    chestBg.fillStyle(COLOR.brassDeep, 1);
+    chestBg.fillRoundedRect(-chestSize / 2, -chestSize / 2, chestSize, chestSize * 0.78, 14);
+    chestBg.lineStyle(4, 0xffe7b0, 1);
+    chestBg.strokeRoundedRect(-chestSize / 2, -chestSize / 2, chestSize, chestSize * 0.78, 14);
+    chestBg.fillStyle(COLOR.brass, 1);
+    chestBg.fillRoundedRect(-chestSize / 2 + 8, -chestSize / 2 + 8, chestSize - 16, chestSize * 0.16, 6);
+    // Lock + glyph.
+    const glyph = crispText(this, 0, 0, '🎁', displayTextStyle(Math.floor(chestSize * 0.4), '#3a2a08', 2)).setOrigin(0.5, 0.5);
+    const chest = this.add.container(W / 2, chestY, [chestBg, glyph]);
+    chest.setScale(0.4);
+    overlay.add(chest);
+
+    // Pop + shake. Pop scales it up; shake oscillates rotation.
+    this.tweens.add({
+      targets: chest,
+      scale: 1,
+      duration: 360,
+      ease: 'Back.easeOut',
+    });
+    this.tweens.add({
+      targets: chest,
+      angle: { from: -6, to: 6 },
+      duration: 80,
+      yoyo: true,
+      repeat: 8,
+      delay: 360,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Stage 2: glow radiates outward, chest fades; hero rises.
+    const ring = this.add.graphics();
+    ring.fillStyle(0xfff2b8, 0);
+    overlay.add(ring);
+    const glowRadius = { r: 0, alpha: 0.5 };
+    this.time.delayedCall(1100, () => {
+      this.tweens.add({
+        targets: glowRadius,
+        r: chestSize * 1.6,
+        alpha: 0,
+        duration: 700,
+        ease: 'Cubic.easeOut',
+        onUpdate: () => {
+          ring.clear();
+          ring.fillStyle(0xfff2b8, glowRadius.alpha);
+          ring.fillCircle(W / 2, chestY, glowRadius.r);
+        },
+        onComplete: () => ring.destroy(),
+      });
+      this.tweens.add({
+        targets: chest,
+        scale: 0.6,
+        alpha: 0,
+        duration: 400,
+        ease: 'Sine.easeIn',
+        onComplete: () => chest.destroy(),
+      });
+    });
+
+    // Stage 3: hero portrait + name + role panel.
+    this.time.delayedCall(1450, () => {
+      const heroSize = Math.floor(chestSize * 1.05);
+      const heroY = chestY - 8;
+      let portrait: Phaser.GameObjects.GameObject;
+      if (this.textures.exists(def.spriteKey)) {
+        const img = this.add.image(W / 2, heroY, def.spriteKey).setDisplaySize(heroSize, heroSize);
+        portrait = img;
+      } else {
+        // Fallback brass disc + first letter, matching the card portrait.
+        const fb = this.add.container(W / 2, heroY);
+        const disc = this.add.graphics();
+        disc.fillStyle(COLOR.brass, 1);
+        disc.fillCircle(0, 0, heroSize / 2);
+        disc.lineStyle(4, COLOR.brassDeep, 1);
+        disc.strokeCircle(0, 0, heroSize / 2);
+        const letter = crispText(this, 0, 0, def.name.charAt(0), displayTextStyle(Math.floor(heroSize * 0.45), COLOR.textDark, 2)).setOrigin(0.5, 0.5);
+        fb.add([disc, letter]);
+        portrait = fb;
+      }
+      // Phaser GameObject doesn't expose alpha/scale on the base type;
+      // we know our portrait variants both support the standard mixin.
+      const p = portrait as unknown as Phaser.GameObjects.Image;
+      p.setAlpha(0);
+      p.setScale(0.7);
+      overlay.add(portrait);
+      this.tweens.add({
+        targets: portrait,
+        alpha: 1,
+        scale: 1,
+        duration: 480,
+        ease: 'Back.easeOut',
+      });
+      // Name + role labels.
+      const nameY = heroY + heroSize / 2 + 24;
+      const name = crispText(this, W / 2, nameY, def.name, displayTextStyle(28, COLOR.textGold, 4)).setOrigin(0.5, 0.5);
+      const role = crispText(this, W / 2, nameY + 32, def.role, labelTextStyle(14, COLOR.textOnDark)).setOrigin(0.5, 0.5);
+      name.setAlpha(0); role.setAlpha(0);
+      overlay.add(name); overlay.add(role);
+      this.tweens.add({ targets: [name, role], alpha: 1, duration: 360, delay: 200, ease: 'Sine.easeOut' });
+    });
   }
 
   private flashErr(msg: string): void {
