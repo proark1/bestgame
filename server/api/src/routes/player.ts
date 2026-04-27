@@ -149,14 +149,53 @@ function incomePerSecond(base: Types.Base): { sugar: number; leafBits: number; a
   let sugar = 0, leafBits = 0, aphidMilk = 0;
   for (const b of base.buildings) {
     if (b.hp <= 0) continue;
-    const inc = INCOME_PER_SECOND[b.kind];
-    if (!inc) continue;
-    const mult = Math.max(1, b.level); // level scales income linearly for MVP
-    sugar += inc.sugar * mult;
-    leafBits += inc.leafBits * mult;
-    aphidMilk += inc.aphidMilk * mult;
+    const rate = incomePerSecondForBuilding(b);
+    sugar += rate.sugar;
+    leafBits += rate.leafBits;
+    aphidMilk += rate.aphidMilk;
   }
   return { sugar, leafBits, aphidMilk };
+}
+
+// Per-building production rate. Used by both the aggregate
+// incomePerSecond (HUD "+X/sec" hint) and the per-building
+// pendingHarvest accumulator (CoC-style tap-to-harvest).
+function incomePerSecondForBuilding(
+  b: Types.Building,
+): { sugar: number; leafBits: number; aphidMilk: number } {
+  if (b.hp <= 0) return { sugar: 0, leafBits: 0, aphidMilk: 0 };
+  const inc = INCOME_PER_SECOND[b.kind];
+  if (!inc) return { sugar: 0, leafBits: 0, aphidMilk: 0 };
+  const mult = Math.max(1, b.level | 0);
+  return {
+    sugar: inc.sugar * mult,
+    leafBits: inc.leafBits * mult,
+    aphidMilk: inc.aphidMilk * mult,
+  };
+}
+
+// Accumulate a producer's offline harvest from `lastMs` (its
+// lastHarvestAt or the player's last_seen_at fallback) to `nowMs`.
+// Capped at MAX_OFFLINE_SECONDS so a tab left open for weeks can't
+// flood the bucket. Returns integer values — the harvest endpoint
+// floors when committing to the wallet, and the timestamp itself is
+// the authoritative residual (no separate fractional column).
+function computeBuildingPending(
+  b: Types.Building,
+  lastMs: number,
+  nowMs: number,
+): { sugar: number; leafBits: number; aphidMilk: number } {
+  const elapsedSec = Math.max(
+    0,
+    Math.min(MAX_OFFLINE_SECONDS, Math.floor((nowMs - lastMs) / 1000)),
+  );
+  if (elapsedSec === 0) return { sugar: 0, leafBits: 0, aphidMilk: 0 };
+  const rate = incomePerSecondForBuilding(b);
+  return {
+    sugar: Math.floor(rate.sugar * elapsedSec),
+    leafBits: Math.floor(rate.leafBits * elapsedSec),
+    aphidMilk: Math.floor(rate.aphidMilk * elapsedSec),
+  };
 }
 
 // Promote a single building's pending upgrade in place. Mutates the
@@ -272,52 +311,100 @@ export function registerPlayer(app: FastifyInstance): void {
         );
       }
 
-      // Offline trickle. Compute from last_seen_at → now, cap, add.
+      // CoC-style tap-to-harvest: instead of auto-crediting offline
+      // production into the wallet, we accumulate it per-producer
+      // building. The player taps the producer (or "Collect All") to
+      // claim — the harvest endpoint applies the storage cap there.
+      // Each producer has its own `lastHarvestAt`; pre-existing
+      // buildings without one fall back to the player's last_seen_at
+      // so a player who upgrades through this PR sees ONE pending
+      // bucket reflecting their last absence (not zero).
       const lastSeenMs = player.last_seen_at.getTime();
       const elapsedSec = Math.max(
         0,
         Math.min(
           MAX_OFFLINE_SECONDS,
-          Math.floor((Date.now() - lastSeenMs) / 1000),
+          Math.floor((nowMs - lastSeenMs) / 1000),
         ),
       );
+      let pendingHarvestMutated = false;
+      for (const b of base.snapshot.buildings) {
+        const rate = incomePerSecondForBuilding(b);
+        if (rate.sugar === 0 && rate.leafBits === 0 && rate.aphidMilk === 0) {
+          // Non-producer (turret, wall, etc.) or destroyed — clear any
+          // stale pendingHarvest so a sniped DewCollector stops showing
+          // a coin chip after the player rebuilds it.
+          if (b.pendingHarvest || b.lastHarvestAt) {
+            delete b.pendingHarvest;
+            delete b.lastHarvestAt;
+            pendingHarvestMutated = true;
+          }
+          continue;
+        }
+        const lastMs = b.lastHarvestAt
+          ? Date.parse(b.lastHarvestAt)
+          : lastSeenMs;
+        // Defensive: a malformed timestamp ⇒ treat as "now" so we
+        // don't credit a giant retroactive bucket.
+        const safeLastMs = Number.isFinite(lastMs) ? lastMs : nowMs;
+        const pending = computeBuildingPending(b, safeLastMs, nowMs);
+        // Always set lastHarvestAt to its known timestamp (or now() on
+        // first visit) so subsequent /me calls compute against a stable
+        // anchor. Snapshot mutation is gated below to avoid a no-op
+        // version bump every single /me roundtrip.
+        const desiredLast = b.lastHarvestAt
+          ? b.lastHarvestAt
+          : new Date(nowMs).toISOString();
+        const desiredPending =
+          pending.sugar + pending.leafBits + pending.aphidMilk > 0
+            ? pending
+            : undefined;
+        const before = JSON.stringify({
+          a: b.lastHarvestAt,
+          b: b.pendingHarvest,
+        });
+        b.lastHarvestAt = desiredLast;
+        if (desiredPending) {
+          b.pendingHarvest = desiredPending;
+        } else if (b.pendingHarvest) {
+          delete b.pendingHarvest;
+        }
+        const after = JSON.stringify({
+          a: b.lastHarvestAt,
+          b: b.pendingHarvest,
+        });
+        if (before !== after) pendingHarvestMutated = true;
+      }
+      if (pendingHarvestMutated) {
+        // The earlier snapshot-persist block (~line 302) ran BEFORE
+        // we computed harvest, so flip that flag for the response
+        // payload and persist the harvest tracking on its own write.
+        snapshotMutated = true;
+        base.snapshot = {
+          ...base.snapshot,
+          version: (base.snapshot.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases SET snapshot = $2::jsonb, version = version + 1, updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(base.snapshot)],
+        );
+      }
+
+      // Wallet doesn't change here anymore — production-style credit
+      // moved to POST /player/harvest. We keep these constants at zero
+      // so the response shape (offlineTrickle echo) stays stable for
+      // older clients that read it; new clients ignore the echo and
+      // compute pending from base.buildings[i].pendingHarvest instead.
+      const gainedSugar = 0;
+      const gainedLeaf = 0;
+      const gainedMilk = 0;
+      const newMilkResidual = player.aphid_milk_residual ?? 0;
+      const newSugar = BigInt(player.sugar);
+      const newLeaf = BigInt(player.leaf_bits);
+      const newMilk = BigInt(player.aphid_milk);
       const tick = incomePerSecond(base.snapshot);
-      // Sugar + leaf are integer rates × integer elapsedSec, so they
-      // bank cleanly with no flooring needed. Milk is fractional
-      // (AphidFarm at 0.2 × level / sec), so we add the previously-
-      // unbanked residual, floor for the integer credit, and write the
-      // new residual back. This means polling cadence does not affect
-      // total milk earned over time — every fraction eventually rolls
-      // over into a whole credit on a future /me.
-      const rawGainedSugar = tick.sugar * elapsedSec;
-      const rawGainedLeaf = tick.leafBits * elapsedSec;
-      const milkProduced = tick.aphidMilk * elapsedSec + (player.aphid_milk_residual ?? 0);
-      const gainedMilk = Math.floor(milkProduced);
-      const newMilkResidual = milkProduced - gainedMilk;
-
-      // Storage cap clamp. Production-style trickle stops at cap; loot
-      // (raid credit) bypasses this. See docs/GAME_DESIGN.md §6.8.
       const caps = storageCaps(base.snapshot);
-      const sugarCapBig = BigInt(caps.sugar);
-      const leafCapBig = BigInt(caps.leafBits);
-      const existingSugar = BigInt(player.sugar);
-      const existingLeaf = BigInt(player.leaf_bits);
-      // Negative room (existing already past cap, e.g. from raids before
-      // a vault was destroyed) means the trickle is fully suppressed.
-      const sugarRoom = sugarCapBig > existingSugar ? sugarCapBig - existingSugar : 0n;
-      const leafRoom = leafCapBig > existingLeaf ? leafCapBig - existingLeaf : 0n;
-      const sugarTrickle = BigInt(rawGainedSugar) > sugarRoom ? sugarRoom : BigInt(rawGainedSugar);
-      const leafTrickle = BigInt(rawGainedLeaf) > leafRoom ? leafRoom : BigInt(rawGainedLeaf);
-
-      const newSugar = existingSugar + sugarTrickle;
-      const newLeaf = existingLeaf + leafTrickle;
-      const newMilk = BigInt(player.aphid_milk) + BigInt(gainedMilk);
-
-      // Surface the actual credited amounts (not raw rate × time) so
-      // the HomeScene welcome toast doesn't lie about a 1.4M trickle
-      // when only the first 6k actually banked.
-      const gainedSugar = Number(sugarTrickle);
-      const gainedLeaf = Number(leafTrickle);
 
       // Login streak resolution. Runs on the /me path so every client
       // session goes through it once on boot. `resolveStreak` is pure:
@@ -469,6 +556,133 @@ export function registerPlayer(app: FastifyInstance): void {
       app.log.error({ err }, 'player/me failed');
       reply.code(500);
       return { error: 'lookup failed' };
+    } finally {
+      client.release();
+    }
+  });
+
+  // POST /player/harvest — claim every producer's pending bucket at
+  // once. CoC-style "Collect All" tap. The wallet credit is clamped
+  // to the storage cap (sugar + leaf), milk is uncapped, and each
+  // claimed producer's `lastHarvestAt` resets to NOW so its bucket
+  // restarts from zero. Returns the new wallet + base snapshot so
+  // the client can swap state without a follow-up /me.
+  app.post('/player/harvest', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured — set DATABASE_URL (see GET /health/db for the exact setup)' };
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const pRes = await client.query<PlayerRow>(
+        'SELECT * FROM players WHERE id = $1',
+        [playerId],
+      );
+      if (pRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const bRes = await client.query<BaseRow>(
+        'SELECT * FROM bases WHERE player_id = $1 FOR UPDATE',
+        [playerId],
+      );
+      if (bRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'base not found' };
+      }
+      const player = pRes.rows[0]!;
+      const base = bRes.rows[0]!;
+
+      // Walk producers, sum buckets, drain them.
+      let sumSugar = 0;
+      let sumLeaf = 0;
+      let sumMilk = 0;
+      const nowIso = new Date().toISOString();
+      let touched = 0;
+      for (const b of base.snapshot.buildings) {
+        const pending = b.pendingHarvest;
+        if (!pending) continue;
+        sumSugar += pending.sugar;
+        sumLeaf += pending.leafBits;
+        sumMilk += pending.aphidMilk;
+        delete b.pendingHarvest;
+        b.lastHarvestAt = nowIso;
+        touched += 1;
+      }
+
+      // Storage cap clamp on sugar + leaf. Milk is uncapped in MVP
+      // (parity with the previous trickle behaviour). Loot bypass is
+      // unrelated to harvest so we don't touch raid loot here.
+      const caps = storageCaps(base.snapshot);
+      const sugarCapBig = BigInt(caps.sugar);
+      const leafCapBig = BigInt(caps.leafBits);
+      const existingSugar = BigInt(player.sugar);
+      const existingLeaf = BigInt(player.leaf_bits);
+      const sugarRoom = sugarCapBig > existingSugar ? sugarCapBig - existingSugar : 0n;
+      const leafRoom = leafCapBig > existingLeaf ? leafCapBig - existingLeaf : 0n;
+      const sugarCredit = BigInt(sumSugar) > sugarRoom ? sugarRoom : BigInt(sumSugar);
+      const leafCredit = BigInt(sumLeaf) > leafRoom ? leafRoom : BigInt(sumLeaf);
+      const milkCredit = BigInt(sumMilk);
+
+      const newSugar = existingSugar + sugarCredit;
+      const newLeaf = existingLeaf + leafCredit;
+      const newMilk = BigInt(player.aphid_milk) + milkCredit;
+
+      // Persist wallet + base snapshot. Empty harvests still bump the
+      // snapshot's lastHarvestAt anchors so a player who keeps tapping
+      // "Collect All" with nothing pending doesn't desync the bucket
+      // math — but we skip the UPDATE entirely if nothing actually
+      // changed to avoid version bumps on no-op taps.
+      if (touched > 0) {
+        base.snapshot = {
+          ...base.snapshot,
+          version: (base.snapshot.version ?? 0) + 1,
+        };
+        await client.query(
+          `UPDATE bases SET snapshot = $2::jsonb, version = version + 1, updated_at = NOW()
+            WHERE player_id = $1`,
+          [playerId, JSON.stringify(base.snapshot)],
+        );
+        await client.query(
+          `UPDATE players SET sugar = $2, leaf_bits = $3, aphid_milk = $4 WHERE id = $1`,
+          [playerId, newSugar.toString(), newLeaf.toString(), newMilk.toString()],
+        );
+      }
+      await client.query('COMMIT');
+
+      return {
+        player: {
+          sugar: safeBigintToNumber(newSugar.toString(), 'sugar', app.log),
+          leafBits: safeBigintToNumber(newLeaf.toString(), 'leaf_bits', app.log),
+          aphidMilk: safeBigintToNumber(newMilk.toString(), 'aphid_milk', app.log),
+        },
+        base: base.snapshot,
+        harvested: {
+          sugar: Number(sugarCredit),
+          leafBits: Number(leafCredit),
+          aphidMilk: Number(milkCredit),
+        },
+        // The DELTA between what was banked and what was clamped —
+        // lets the client surface a "storage full" toast without
+        // re-deriving the math.
+        overflow: {
+          sugar: sumSugar - Number(sugarCredit),
+          leafBits: sumLeaf - Number(leafCredit),
+          aphidMilk: 0,
+        },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/harvest failed');
+      reply.code(500);
+      return { error: 'harvest failed' };
     } finally {
       client.release();
     }

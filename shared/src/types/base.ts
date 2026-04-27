@@ -75,6 +75,17 @@ export interface Building {
   // deterministic; the server is authoritative on timing.
   pendingCompletesAt?: string;
   pendingToLevel?: number;
+  // Per-building offline production accumulator (CoC-style harvest
+  // mechanic). The server populates `pendingHarvest` every /player/me
+  // by replaying the time delta since `lastHarvestAt` against the
+  // building's per-second income; the wallet is NOT auto-credited.
+  // The player taps the producer (or the global "Collect All" CTA)
+  // to commit the bucket to their wallet, which is when storage
+  // caps clamp. Both fields absent means "no offline production
+  // tracked yet" — equivalent to lastHarvestAt = now() and an empty
+  // bucket. ISO-8601 timestamp keeps JSON round-trip deterministic.
+  lastHarvestAt?: string;
+  pendingHarvest?: { sugar: number; leafBits: number; aphidMilk: number };
 }
 
 // Rule trigger / effect enums are intentionally small (v1): 6 triggers
