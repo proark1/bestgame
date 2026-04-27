@@ -409,7 +409,7 @@ export class CodexScene extends Phaser.Scene {
     // a wide empty band between lore and mechanics on short stories.
     const storyMaxH = Math.max(40, Math.floor(h * 0.22));
     const storyText = crispText(this, left + padX, cursorY, entry.story, {
-      ...bodyTextStyle(12, COLOR.textPrimary),
+      ...bodyTextStyle(12, COLOR.textOnDark),
       wordWrap: { width: w - padX * 2, useAdvancedWrap: true },
       lineSpacing: 2,
     }).setOrigin(0, 0);
@@ -430,7 +430,7 @@ export class CodexScene extends Phaser.Scene {
     // paint the background. Stays within the remaining card space.
     const remaining = top + h - 12 - cursorY;
     const powerTextProbe = crispText(this, 0, 0, entry.power, {
-      ...bodyTextStyle(12, COLOR.textPrimary),
+      ...bodyTextStyle(12, COLOR.textOnDark),
       wordWrap: { width: powerInnerW, useAdvancedWrap: true },
       lineSpacing: 2,
     }).setVisible(false);
@@ -470,7 +470,7 @@ export class CodexScene extends Phaser.Scene {
       powerStripY + powerPadY + powerLabelH + 2,
       entry.power,
       {
-        ...bodyTextStyle(12, COLOR.textPrimary),
+        ...bodyTextStyle(12, COLOR.textOnDark),
         wordWrap: { width: powerInnerW, useAdvancedWrap: true },
         lineSpacing: 2,
       },
@@ -550,7 +550,7 @@ export class CodexScene extends Phaser.Scene {
         px + pillW / 2,
         y + 17,
         value,
-        bodyTextStyle(12, COLOR.textPrimary),
+        bodyTextStyle(12, COLOR.textOnDark),
       ).setOrigin(0.5, 0);
       container.add([labelText, valueText]);
     }

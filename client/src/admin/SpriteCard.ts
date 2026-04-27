@@ -402,6 +402,11 @@ export class SpriteCard {
       const img = document.createElement('img');
       // cache-bust so re-saves are visible immediately
       img.src = `/assets/sprites/${this.key}.${m.ext}?t=${m.size}`;
+      // Click to enlarge — admin needs to inspect alpha edges and
+      // composition at real resolution before locking in a save.
+      img.title = 'Click to enlarge';
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', () => openImageLightbox(img.src, this.key));
       this.thumbEl.append(img);
     } else {
       this.thumbEl.classList.add('empty');
@@ -896,11 +901,19 @@ export class SpriteCard {
       const badge = el('span', 'badge');
       badge.textContent = String(i + 1);
       wrap.append(badge);
+      // Single-click selects (existing behaviour); double-click opens
+      // the lightbox so an admin can inspect the candidate at full
+      // resolution before deciding which one to save.
       wrap.addEventListener('click', () => {
         this.selectedIdx = i;
         this.renderCandidates();
         void this.prepareCompressed();
       });
+      wrap.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        openImageLightbox(img.src, `${this.key} candidate ${i + 1}`);
+      });
+      wrap.title = 'Click to select · Double-click to enlarge';
       this.candidatesEl.append(wrap);
     });
     this.saveBtn.disabled = this.selectedIdx < 0;
@@ -1124,6 +1137,37 @@ function el<K extends keyof HTMLElementTagNameMap>(
   const n = document.createElement(tag);
   if (className) n.className = className;
   return n;
+}
+
+// Open the given image source in a fullscreen lightbox. Click the
+// backdrop or press Esc to dismiss. Used by sprite thumbnails so an
+// admin can verify how the image actually looks at full resolution
+// before saving — the small grid thumbs are too tight to spot
+// anti-aliasing or alpha-edge issues.
+export function openImageLightbox(src: string, alt = ''): void {
+  // Reuse a single overlay across consecutive opens so we don't
+  // leak DOM nodes if an admin clicks several thumbs in quick
+  // succession.
+  const existing = document.querySelector('.admin-lightbox');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-lightbox';
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt;
+  overlay.append(img);
+
+  const close = (): void => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') close();
+  };
+  overlay.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+  document.body.append(overlay);
 }
 function button(label: string, className: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
