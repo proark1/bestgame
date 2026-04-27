@@ -7,11 +7,22 @@ import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { openSettings } from '../ui/settingsModal.js';
 import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
+import { BUILDING_CODEX } from '../codex/codexData.js';
 
 // First-visit drill flag. Bumped whenever the steps change shape
 // (e.g., adding a third step). Until the player completes the
 // drill, we re-show on every entry — bailing early stays armed.
-const HOME_COACHMARK_DONE_KEY = 'hive:coachmarks:home:v1';
+//
+// v2: added the post-raid "level up your colony" step so a player
+// who returns from a successful first raid is shown how to spend
+// the loot (tap the Queen Chamber). Returning users see the
+// expanded drill once.
+const HOME_COACHMARK_DONE_KEY = 'hive:coachmarks:home:v2';
+// Companion flag: set the moment the player taps Raid in the
+// 'raid' step, cleared when 'colony' step is satisfied. Lets the
+// post-raid scene re-entry pick up the drill at the colony step
+// even though scene state is rebuilt from scratch on RaidScene exit.
+const HOME_COACHMARK_COLONY_ARMED_KEY = 'hive:coachmarks:home:colony-armed';
 function shouldShowHomeCoachmarks(): boolean {
   try {
     return localStorage.getItem(HOME_COACHMARK_DONE_KEY) !== '1';
@@ -240,8 +251,20 @@ export class HomeScene extends Phaser.Scene {
     // gated on the gameplay events that teach the loop. localStorage
     // flag bumped if drill steps ever change shape.
     if (shouldShowHomeCoachmarks() && !this.replayContextActive()) {
-      this.coachmarkStep = 'tile';
-      this.time.delayedCall(700, () => this.runCoachmarkStep());
+      // If the player just returned from their first raid (the
+      // raid step set the colony-armed flag), pick up the drill
+      // at the colony step instead of restarting from 'tile'.
+      let armed = false;
+      try {
+        armed = localStorage.getItem(HOME_COACHMARK_COLONY_ARMED_KEY) === '1';
+      } catch {
+        // ignore
+      }
+      this.coachmarkStep = armed ? 'colony' : 'tile';
+      // Delay matched to 1.2s for the colony step so the player
+      // sees their loot reward toast first; tile step fires faster
+      // so the drill kicks in promptly on a brand-new account.
+      this.time.delayedCall(armed ? 1200 : 700, () => this.runCoachmarkStep());
     }
   }
 
@@ -889,7 +912,7 @@ export class HomeScene extends Phaser.Scene {
       { label: '🌐  Hive war',  onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
       { label: '🎬  Top raids', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
       { label: '👑  Queen',    onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
-      { label: '🌳  Queen path', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
+      { label: '🌳  Colony path', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
       { label: '⏳  Builders', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
       { label: '🗓  Quests', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
       { label: '🧠  Defender AI', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
@@ -1507,7 +1530,7 @@ export class HomeScene extends Phaser.Scene {
       : Math.floor(this.resources.aphidMilk);
     const title =
       kind === 'sugar' ? 'Sugar' :
-      kind === 'leaf' ? 'Leaf bits' : 'Aphid milk';
+      kind === 'leaf' ? 'Leaf' : 'Aphid milk';
     const lines: string[] = [];
     // Show cap fraction in the popover (moved out of the pill text
     // so the HUD glance stays clean). Milk is uncapped.
@@ -1590,6 +1613,13 @@ export class HomeScene extends Phaser.Scene {
   private openBuildingInfo(b: Types.Building): void {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
+    // First-tap on the QueenChamber after returning from the first
+    // raid satisfies the colony coachmark step. Calling
+    // advanceCoachmark unconditionally is safe — it's a no-op when
+    // the current step doesn't match.
+    if (b.kind === 'QueenChamber') {
+      this.advanceCoachmark('colony');
+    }
     openBuildingInfoModal({
       scene: this,
       runtime,
@@ -2589,10 +2619,13 @@ export class HomeScene extends Phaser.Scene {
   // First-visit coachmark drill state. Each step gates on the
   // gameplay event it teaches; the tracker advances when the
   // matching handler fires advanceCoachmark(stepName). Steps:
-  //   - 'tile'  → tap an empty tile to open the building picker
-  //   - 'raid'  → hit ⚔ Raid to start the first match
-  //   - 'done'  → drill complete; flag written, never re-shown
-  private coachmarkStep: 'tile' | 'raid' | 'done' = 'done';
+  //   - 'tile'   → tap an empty tile to open the building picker
+  //   - 'raid'   → hit ⚔ Raid to start the first match
+  //   - 'colony' → after returning from the first raid, tap the
+  //                Queen Chamber and level the colony so the loot
+  //                turns into a tier-up
+  //   - 'done'   → drill complete; flag written, never re-shown
+  private coachmarkStep: 'tile' | 'raid' | 'colony' | 'done' = 'done';
   private activeCoachmark: CoachmarkHandle | null = null;
 
   private runCoachmarkStep(): void {
@@ -2634,10 +2667,68 @@ export class HomeScene extends Phaser.Scene {
         title: 'Try a raid',
         body: 'Tap to attack another colony. Drag a pheromone path on the battlefield to deploy your swarm.',
       });
+    } else if (this.coachmarkStep === 'colony') {
+      // Halo the Queen Chamber so the player learns where the
+      // colony-level upgrade lives. Bot-base raids reliably loot
+      // sugar; the previous step has the player completing one,
+      // so by now they should have enough to consider an upgrade.
+      const qSpr = this.findQueenChamberSprite();
+      if (!qSpr) {
+        // Defensive: if the Queen sprite isn't on this layer (rare —
+        // QueenChamber spans both), skip this step so the drill
+        // doesn't dead-end. Player can discover the upgrade flow on
+        // their own when they tap the chamber later.
+        this.completeColonyCoachmark();
+        return;
+      }
+      const b = qSpr.getBounds();
+      this.activeCoachmark = showCoachmark({
+        scene: this,
+        target: { x: b.x, y: b.y, w: b.width, h: b.height },
+        prefer: 'below',
+        title: 'Level up your colony',
+        body: 'Tap your Queen Chamber to spend the loot you just earned. Each colony tier unlocks new buildings and units.',
+      });
     }
   }
 
-  private advanceCoachmark(satisfied: 'tile' | 'raid'): void {
+  // Helper: find the rendered QueenChamber sprite for the colony
+  // coachmark halo. Server-base path keeps a sprite map indexed by
+  // building id; the starter-base fallback path doesn't, but both
+  // share boardContainer iteration semantics. Returns null if the
+  // chamber isn't on the current layer (the player can flip layers
+  // and the coachmark will re-fire on next runCoachmarkStep).
+  private findQueenChamberSprite(): Phaser.GameObjects.Image | null {
+    if (this.serverBase) {
+      const queen = this.serverBase.buildings.find(
+        (b) => b.kind === 'QueenChamber',
+      );
+      if (queen) {
+        const spr = this.homeBuildingSprites.get(queen.id);
+        if (spr && spr.active) return spr;
+      }
+    }
+    return null;
+  }
+
+  // Latch the drill to 'done' from 'colony' (or skip past it from
+  // 'raid' when arming isn't possible). Centralised so the helper
+  // and the normal advance path share teardown.
+  private completeColonyCoachmark(): void {
+    this.coachmarkStep = 'done';
+    if (this.activeCoachmark) {
+      this.activeCoachmark.complete();
+      this.activeCoachmark = null;
+    }
+    try {
+      localStorage.removeItem(HOME_COACHMARK_COLONY_ARMED_KEY);
+    } catch {
+      // ignore
+    }
+    markHomeCoachmarksDone();
+  }
+
+  private advanceCoachmark(satisfied: 'tile' | 'raid' | 'colony'): void {
     if (this.coachmarkStep !== satisfied) return;
     if (this.activeCoachmark) {
       this.activeCoachmark.acknowledge();
@@ -2645,9 +2736,24 @@ export class HomeScene extends Phaser.Scene {
     }
     if (satisfied === 'tile') {
       this.coachmarkStep = 'raid';
-    } else {
+    } else if (satisfied === 'raid') {
+      // Player tapped Raid — arm the colony step so when they
+      // return to HomeScene after the first match, the drill
+      // picks up at "tap your Queen". The localStorage flag
+      // bridges across the scene transition (HomeScene state
+      // is rebuilt on re-entry).
+      try {
+        localStorage.setItem(HOME_COACHMARK_COLONY_ARMED_KEY, '1');
+      } catch {
+        // private mode — drill just stops here, harmless
+      }
+      // No more in-scene step; the colony halo fires on the NEXT
+      // create() once the raid is over.
       this.coachmarkStep = 'done';
-      markHomeCoachmarksDone();
+      return;
+    } else {
+      // 'colony' satisfied — drill complete.
+      this.completeColonyCoachmark();
       return;
     }
     this.time.delayedCall(380, () => this.runCoachmarkStep());
@@ -3226,7 +3332,12 @@ export class HomeScene extends Phaser.Scene {
     // follows the row count so adding new building kinds never spills
     // off the bottom.
     const cols = 4;
-    const slotH = 122;
+    // Slot height grew slightly so each tile fits a one-line role
+    // description ("Splash mortar", "Anti-air", etc.) on top of the
+    // existing icon + name + cap + cost rows. Without this hint the
+    // player has to memorize what every kind does before opening the
+    // build menu.
+    const slotH = 144;
     const rows = Math.ceil(kinds.length / cols);
     const W = Math.min(640, this.scale.width - 32);
     const naturalH = 86 + rows * (slotH + 12) + 32;
@@ -3356,7 +3467,7 @@ export class HomeScene extends Phaser.Scene {
       // one wins so the toast after a tap tells the player exactly
       // what to do next.
       const denyReason: string | null = !capOk
-        ? `${kind} cap ${current}/${cap} — upgrade the Queen to unlock more`
+        ? `${kind} cap ${current}/${cap} — level up the colony to unlock more`
         : !layerOk
           ? `${kind} belongs on the ${kindRules!.allowedLayers[0] === 0 ? 'surface' : 'underground'} layer — flip layers and try again`
           : !canAfford
@@ -3388,7 +3499,7 @@ export class HomeScene extends Phaser.Scene {
       const nameText = crispText(
         this,
         cx,
-        cy + 8,
+        cy + 4,
         kind.replace(/([A-Z])/g, ' $1').trim(),
         bodyTextStyle(11, placeable ? COLOR.textPrimary : '#d7aaaa'),
       )
@@ -3396,12 +3507,31 @@ export class HomeScene extends Phaser.Scene {
         .setDepth(204);
       container.add(nameText);
 
+      // Role description — one-line hint pulled from BUILDING_CODEX
+      // ("Splash mortar", "Anti-air turret", etc.) so the player can
+      // tell what a kind does without dropping into the codex first.
+      // Fallback empty string if the kind isn't in the codex (forward-
+      // compat with new kinds).
+      const role = BUILDING_CODEX[kind]?.role ?? '';
+      if (role) {
+        const roleText = crispText(
+          this,
+          cx,
+          cy + 24,
+          role,
+          labelTextStyle(9, placeable ? '#9fc79a' : '#a8807a'),
+        )
+          .setOrigin(0.5)
+          .setDepth(204);
+        container.add(roleText);
+      }
+
       // Count/cap badge shows right next to the name so the player can
       // see the "2/3 turrets" state at a glance.
       const capText = crispText(
         this,
         cx,
-        cy + 32,
+        cy + 44,
         `Slots ${current}/${cap}`,
         labelTextStyle(10, capOk ? '#c3e8b0' : '#d98080'),
       )
@@ -3412,7 +3542,7 @@ export class HomeScene extends Phaser.Scene {
       const costText = crispText(
         this,
         cx,
-        cy + 48,
+        cy + 60,
         `S ${cost.sugar}  L ${cost.leafBits}`,
         labelTextStyle(10, canAfford ? '#c3e8b0' : '#d98080'),
       )

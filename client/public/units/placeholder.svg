@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" aria-hidden="true">
+  <!-- Generic placeholder used by the landing page when a kind's hand-drawn SVG
+       isn't on disk yet. The script that probes /api/sprites/manifest swaps
+       this for the real generated sprite at first paint when one exists. -->
+  <defs>
+    <radialGradient id="g" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#3d7a2c"/>
+      <stop offset="65%" stop-color="#2c4724"/>
+      <stop offset="100%" stop-color="#1d3a1a"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="64" cy="100" rx="34" ry="6" fill="rgba(0,0,0,0.28)"/>
+  <circle cx="64" cy="62" r="42" fill="url(#g)" stroke="#3a2512" stroke-width="3"/>
+  <circle cx="50" cy="52" r="5" fill="#ffd98a"/>
+  <circle cx="78" cy="52" r="5" fill="#ffd98a"/>
+  <path d="M48 78 Q64 88 80 78" stroke="#ffd98a" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>

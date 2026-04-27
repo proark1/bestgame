@@ -324,7 +324,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         addStat('Sugar stored', String(stats.dropsSugarOnDestroy));
       }
       if (stats.dropsLeafBitsOnDestroy > 0) {
-        addStat('Leaf bits stored', String(stats.dropsLeafBitsOnDestroy));
+        addStat('Leaf stored', String(stats.dropsLeafBitsOnDestroy));
       }
     }
     const incomeMap = catalog?.incomePerSecond ?? INCOME_FALLBACK;
@@ -425,7 +425,7 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       }
       bodyContainer.add(
         crispText(scene, 22, actionsStartY - actionBtnH / 2 - 46,
-          'Queen upgrades unlock new building slots and tiers.',
+          'Colony upgrades unlock new building slots and tiers.',
           bodyTextStyle(11, COLOR.textDim),
         ).setWordWrapWidth(MODAL_W - 44, true),
       );
@@ -465,8 +465,8 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         : !queenCost
           ? 'Loading…'
           : queenAffordable
-            ? 'Upgrade Queen'
-            : 'Upgrade Queen (need more)';
+            ? 'Level up colony'
+            : 'Level up colony (need more)';
       const btn = makeHiveButton(scene, {
         x: MODAL_W / 2,
         y: actionsStartY,
@@ -478,9 +478,9 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
         enabled: queenEnabled,
         onPress: () => {
           if (!queenEnabled) {
-            if (queenAtMax) flashToast(scene, 'The Queen is already at her highest tier.');
+            if (queenAtMax) flashToast(scene, 'Your colony is already at the highest tier.');
             else if (!queenCost) flashToast(scene, 'Still loading upgrade costs…');
-            else flashToast(scene, 'Not enough resources for the next Queen tier.');
+            else flashToast(scene, 'Not enough resources for the next colony tier.');
             return;
           }
           void doQueenUpgrade(scene, runtime, b, (base) => {
