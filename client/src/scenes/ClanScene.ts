@@ -3,7 +3,7 @@ import type { Types } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
-import { openAlert, openConfirm } from '../ui/confirmModal.js';
+import { openAlert, openConfirm, openSlideConfirm } from '../ui/confirmModal.js';
 import type { HiveRuntime } from '../main.js';
 import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
@@ -717,12 +717,14 @@ export class ClanScene extends Phaser.Scene {
   }
 
   private async confirmLeave(): Promise<void> {
-    const ok = await openConfirm({
+    // Slide-to-confirm — leaving a clan drops chat history + active
+    // tunnel-link buffs and there's no rejoin grace, so a tap-then-
+    // tap is too easy to mis-fire.
+    const ok = await openSlideConfirm({
       title: 'Leave this clan?',
       body: "You'll lose your place on the chat and the clan perks. You can join another at any time.",
-      confirmLabel: 'Leave clan',
+      slideLabel: '→ slide to leave',
       cancelLabel: 'Stay',
-      danger: true,
     });
     if (!ok) return;
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;

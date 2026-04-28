@@ -11,7 +11,7 @@ import {
 import { crispText } from './text.js';
 import { drawPanel, drawPill } from './panel.js';
 import { makeHiveButton, type HiveButton } from './button.js';
-import { openConfirm } from './confirmModal.js';
+import { openConfirm, openSlideConfirm } from './confirmModal.js';
 import {
   COLOR,
   DEPTHS,
@@ -696,11 +696,15 @@ export function openBuildingInfoModal(opts: OpenBuildingInfoOpts): () => void {
       variant: 'danger',
       fontSize: 14,
       onPress: () => {
-        void openConfirm({
+        // Slide-to-confirm — demolish is unrecoverable + costs the
+        // full placement cost, so a tap-then-tap dialog is too easy
+        // to mis-fire on. Slider forces deliberate intent (~280 ms
+        // drag) without nagging legitimate demolishes.
+        void openSlideConfirm({
           title: 'Demolish this building?',
           body: 'You will not get the resources back. This action cannot be undone.',
-          confirmLabel: 'Demolish',
-          danger: true,
+          slideLabel: '→ slide to demolish',
+          cancelLabel: 'Keep it',
         }).then((confirmed) => {
           if (!confirmed) return;
           void doDemolish(scene, runtime, b, (base) => {
