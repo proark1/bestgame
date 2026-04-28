@@ -1280,9 +1280,16 @@ export class RaidScene extends Phaser.Scene {
       // "yep, deployed" before it dissolves.
       const activeCard = this.deckContainers[this.selectedDeckIdx];
       if (activeCard) {
+        // Pulse RELATIVE to the dynamic base scale — deckCardScale
+        // drops to ~0.62 on phone-narrow viewports, so a hardcoded
+        // absolute target would yank the card to ~2× its rest size.
+        // Kill any in-flight tween + reset to base first so a rapid
+        // double-deploy doesn't snap the card mid-yoyo.
+        this.tweens.killTweensOf(activeCard);
+        activeCard.setScale(this.deckCardScale);
         this.tweens.add({
           targets: activeCard,
-          scale: 1.12,
+          scale: this.deckCardScale * 1.12,
           duration: 110,
           ease: 'Cubic.easeOut',
           yoyo: true,
