@@ -360,6 +360,105 @@ export async function deleteUser(id: string): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------
+// Audio (ElevenLabs) — admin generates SFX + background music tracks.
+// Mirrors the sprite-generation flow: edit prompt → Generate (preview)
+// → Save (writes file + manifest entry). Saved files land in
+// client/public/audio/ and the runtime loader picks them up on the
+// next page load via /audio/manifest.json.
+// ---------------------------------------------------------------------
+export type AudioKind = 'sfx' | 'music';
+
+export interface AudioPromptEntry {
+  prompt: string;
+  kind: AudioKind;
+  durationSeconds?: number;
+  durationMs?: number;
+  promptInfluence?: number;
+  gain?: number;
+  label?: string;
+}
+
+export interface AudioFileMeta {
+  key: string;
+  filename: string;
+  size: number;
+  mtime: number;
+}
+
+export interface AudioManifestEntry {
+  key: string;
+  src: string;
+  gain?: number;
+}
+
+export interface AudioStatus {
+  elevenLabsConfigured: boolean;
+  audioDir: string;
+  prompts: Record<string, AudioPromptEntry>;
+  files: AudioFileMeta[];
+  manifest: AudioManifestEntry[];
+}
+
+export async function fetchAudioStatus(): Promise<AudioStatus> {
+  return req<AudioStatus>('/admin/api/audio/status');
+}
+
+export async function putAudioPrompt(
+  key: string,
+  entry: AudioPromptEntry,
+): Promise<{ ok: true; key: string; entry: AudioPromptEntry }> {
+  return req<{ ok: true; key: string; entry: AudioPromptEntry }>(
+    '/admin/api/audio/prompts',
+    { method: 'PUT', json: { key, entry } },
+  );
+}
+
+export async function deleteAudioPrompt(
+  key: string,
+): Promise<{ ok: true; removed: boolean }> {
+  return req<{ ok: true; removed: boolean }>(
+    `/admin/api/audio/prompts/${encodeURIComponent(key)}`,
+    { method: 'DELETE' },
+  );
+}
+
+export interface GeneratedAudio {
+  data: string; // base64 mp3
+  mimeType: 'audio/mpeg';
+  size: number;
+}
+export async function generateAudio(args: {
+  key: string;
+  prompt?: string;
+  kind?: AudioKind;
+  durationSeconds?: number;
+  durationMs?: number;
+  promptInfluence?: number;
+}): Promise<{ audio: GeneratedAudio; kind: AudioKind; key: string }> {
+  return req<{ audio: GeneratedAudio; kind: AudioKind; key: string }>(
+    '/admin/api/audio/generate',
+    { method: 'POST', json: args },
+  );
+}
+
+export async function saveAudio(args: {
+  key: string;
+  data: string;
+  gain?: number;
+}): Promise<{ ok: true; path: string; size: number; manifestEntry: AudioManifestEntry }> {
+  return req<{ ok: true; path: string; size: number; manifestEntry: AudioManifestEntry }>(
+    '/admin/api/audio/save',
+    { method: 'POST', json: args },
+  );
+}
+
+export async function deleteAudio(key: string): Promise<void> {
+  await req<{ ok: true }>(`/admin/api/audio/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+  });
+}
+
 // Trigger a browser download of the whole sprites folder as a zip. The
 // endpoint sets content-disposition: attachment, so assigning the auth'd
 // URL to an anchor and clicking it would drop the token into history —

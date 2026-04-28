@@ -11,6 +11,7 @@ import { registerRaid } from './routes/raid.js';
 import { registerMatchmaking } from './routes/matchmaking.js';
 import { registerAdmin } from './routes/admin.js';
 import { registerAdminUsers } from './routes/adminUsers.js';
+import { registerAdminAudio } from './routes/audio.js';
 import { registerAdminHook } from './auth/adminAuth.js';
 import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
@@ -48,9 +49,10 @@ async function start(): Promise<void> {
 
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
-    // 3.5 MB — comfortably fits a 256 px WebP sprite (base64-encoded) plus
-    // envelope. /admin/api/save is the only route that needs this much.
-    bodyLimit: 3_500_000,
+    // 22 MB — sized so /admin/api/audio/save can take a base64-encoded
+    // 5-minute mp3 (~6 MB binary → ~8 MB base64) with headroom. The
+    // sprite save route only needs ~3.5 MB; both share the global limit.
+    bodyLimit: 22_000_000,
     // Trust the platform's proxy so rate-limit + logs see the real
     // client IP (Railway, Fly, Render all set X-Forwarded-For).
     trustProxy: true,
@@ -155,6 +157,7 @@ async function start(): Promise<void> {
   registerAdminHook(app);
   registerAdmin(app);
   registerAdminUsers(app);
+  registerAdminAudio(app);
 
   // Game JSON API lives under /api/*.
   await app.register(

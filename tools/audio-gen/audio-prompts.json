@@ -1,0 +1,157 @@
+{
+  "click": {
+    "prompt": "short crisp UI button click, soft wooden tap, single percussive snap, dry, no reverb, mobile-game friendly",
+    "kind": "sfx",
+    "durationSeconds": 0.4,
+    "promptInfluence": 0.7,
+    "gain": 0.55,
+    "label": "UI button click"
+  },
+  "hover": {
+    "prompt": "very short bright UI hover blip, glassy chime, soft single high tone, no reverb, subtle, friendly, mobile-game friendly",
+    "kind": "sfx",
+    "durationSeconds": 0.3,
+    "promptInfluence": 0.7,
+    "gain": 0.35,
+    "label": "UI hover blip"
+  },
+  "earn": {
+    "prompt": "short coin pickup chime, two warm bell tones rising in pitch, satisfying reward feedback, no reverb tail, mobile-game friendly",
+    "kind": "sfx",
+    "durationSeconds": 0.6,
+    "promptInfluence": 0.7,
+    "gain": 0.6,
+    "label": "Resource earned"
+  },
+  "upgrade": {
+    "prompt": "magical building upgrade chime, ascending warm sparkle, soft bells with a gentle shimmer rising, fantasy strategy game",
+    "kind": "sfx",
+    "durationSeconds": 1.0,
+    "promptInfluence": 0.65,
+    "gain": 0.65,
+    "label": "Building upgrade complete"
+  },
+  "victory": {
+    "prompt": "triumphant short victory fanfare, three rising horn notes, warm orchestral brass, heroic, joyful, ends cleanly, no long tail",
+    "kind": "sfx",
+    "durationSeconds": 1.5,
+    "promptInfluence": 0.65,
+    "gain": 0.6,
+    "label": "Victory stinger"
+  },
+  "defeat": {
+    "prompt": "soft sad descending defeat motif, low cello with a gentle muted brass, melancholy but not harsh, ends cleanly",
+    "kind": "sfx",
+    "durationSeconds": 1.5,
+    "promptInfluence": 0.65,
+    "gain": 0.5,
+    "label": "Defeat stinger"
+  },
+  "deploy": {
+    "prompt": "insect swarm deploying from a tunnel, brief whoosh with a subtle chitinous flutter, organic and energetic, no reverb",
+    "kind": "sfx",
+    "durationSeconds": 0.5,
+    "promptInfluence": 0.7,
+    "gain": 0.55,
+    "label": "Unit deploy"
+  },
+  "dig": {
+    "prompt": "ant digging into earth, short dirt scrape with crumbling soil, organic, gritty, low frequency emphasis, no reverb",
+    "kind": "sfx",
+    "durationSeconds": 0.6,
+    "promptInfluence": 0.7,
+    "gain": 0.7,
+    "label": "Tunnel dig"
+  },
+  "ambush": {
+    "prompt": "tense ambush sting, low ominous swell with a sudden whisper of insect chitter, brief, mysterious, mobile-game friendly",
+    "kind": "sfx",
+    "durationSeconds": 0.7,
+    "promptInfluence": 0.65,
+    "gain": 0.45,
+    "label": "Ambush trigger"
+  },
+  "split": {
+    "prompt": "swarm splitting into two paths, two-note pheromone chime, light and airy, suggestive of branching, no reverb",
+    "kind": "sfx",
+    "durationSeconds": 0.5,
+    "promptInfluence": 0.7,
+    "gain": 0.45,
+    "label": "Path split"
+  },
+  "modifierTick": {
+    "prompt": "tiny UI tick blip, dry single soft click, very short, neutral pitch, no reverb",
+    "kind": "sfx",
+    "durationSeconds": 0.2,
+    "promptInfluence": 0.75,
+    "gain": 0.3,
+    "label": "Modifier tick"
+  },
+  "buildingHit": {
+    "prompt": "wooden building takes a hit, short impact thud with a small crack, dry, organic, no metallic ring",
+    "kind": "sfx",
+    "durationSeconds": 0.4,
+    "promptInfluence": 0.7,
+    "gain": 0.5,
+    "label": "Building hit"
+  },
+  "buildingDestroyed": {
+    "prompt": "small wooden bug-hive structure collapsing, splintering crack followed by a brief earthy crumble, satisfying mid-frequency punch, no long reverb",
+    "kind": "sfx",
+    "durationSeconds": 0.9,
+    "promptInfluence": 0.7,
+    "gain": 0.6,
+    "label": "Building destroyed"
+  },
+  "queenDestroyed": {
+    "prompt": "epic boss-defeat moment, deep sustained earth tremor with a regal horn fall and crystalline shatter, dramatic and final, fades cleanly",
+    "kind": "sfx",
+    "durationSeconds": 2.0,
+    "promptInfluence": 0.6,
+    "gain": 0.7,
+    "label": "Queen destroyed"
+  },
+  "unitDeath": {
+    "prompt": "small insect unit defeated, short squelchy chitin pop with a tiny descending whimper, organic, not gory",
+    "kind": "sfx",
+    "durationSeconds": 0.4,
+    "promptInfluence": 0.7,
+    "gain": 0.4,
+    "label": "Unit death"
+  },
+  "music-home": {
+    "prompt": "warm cozy mobile-strategy home base ambient loop, gentle marimba and soft pads with a slow bouncy bass, friendly Supercell-style cartoon hive theme, mid-tempo, no harsh percussion, suitable for seamless looping under UI",
+    "kind": "music",
+    "durationMs": 45000,
+    "gain": 0.25,
+    "label": "Home base music"
+  },
+  "music-raid": {
+    "prompt": "tense fast-paced strategy raid combat loop, driving low strings, light tribal percussion, urgent but not aggressive, perfect for an attacking-the-enemy-base scene, mobile-game friendly, suitable for seamless looping",
+    "kind": "music",
+    "durationMs": 45000,
+    "gain": 0.3,
+    "label": "Raid combat music"
+  },
+  "music-arena": {
+    "prompt": "energetic spectator arena loop, bouncy synth bass with playful brass stabs and tribal drums, suspenseful but fun crowd energy, mobile-game friendly, suitable for seamless looping",
+    "kind": "music",
+    "durationMs": 45000,
+    "gain": 0.3,
+    "label": "Arena spectate music"
+  },
+  "music-clan": {
+    "prompt": "social clan-hall lounge ambient loop, warm acoustic guitar and soft pads with gentle hand percussion, conversational, friendly, low energy, mobile-game friendly, suitable for seamless looping",
+    "kind": "music",
+    "durationMs": 45000,
+    "gain": 0.22,
+    "label": "Clan hall music"
+  },
+  "music-landing": {
+    "prompt": "epic cinematic mobile-game main menu theme loop, sweeping orchestra with hand-painted fantasy fanfare, warm horns, hopeful adventurous mood, hero-game vibes, suitable for seamless looping under marketing video",
+    "kind": "music",
+    "durationMs": 45000,
+    "gain": 0.28,
+    "label": "Landing page music"
+  }
+}

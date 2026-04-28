@@ -31,6 +31,7 @@ import { removeBackground, removeNearWhite } from './removeBackground.js';
 import { SpriteCard } from './SpriteCard.js';
 import { compressBase64Image, humanBytes } from './compress.js';
 import { renderPreviewPanel } from './PreviewPanel.js';
+import { renderAudioPanel } from './AudioPanel.js';
 import {
   BUILDING_SPRITE_KEYS,
   HERO_SPRITE_KEYS,
@@ -182,11 +183,11 @@ async function bootstrap(): Promise<void> {
 // (not the URL hash) because the admin is a single-page tool and we
 // don't have routing; localStorage matches the existing token-stash
 // pattern on this page.
-type AdminTab = 'sprites' | 'users' | 'preview';
+type AdminTab = 'sprites' | 'users' | 'preview' | 'audio';
 const TAB_STORAGE_KEY = 'hive.adminTab';
 function readActiveTab(): AdminTab {
   const v = localStorage.getItem(TAB_STORAGE_KEY);
-  if (v === 'users' || v === 'preview' || v === 'sprites') return v;
+  if (v === 'users' || v === 'preview' || v === 'sprites' || v === 'audio') return v;
   return 'sprites';
 }
 function writeActiveTab(tab: AdminTab): void {
@@ -270,6 +271,7 @@ function render(): void {
   tabBar.className = 'admin-tabs';
   const tabDefs: ReadonlyArray<{ id: AdminTab; label: string }> = [
     { id: 'sprites', label: 'Sprites' },
+    { id: 'audio',   label: 'Audio' },
     { id: 'users',   label: 'Users' },
     { id: 'preview', label: 'Preview' },
   ];
@@ -300,6 +302,10 @@ function render(): void {
   // Render just the active tab's content.
   if (activeTab === 'users') {
     root.append(renderUsersPanel());
+    return;
+  }
+  if (activeTab === 'audio') {
+    root.append(renderAudioPanel({ showStatus: statusToast }));
     return;
   }
   if (activeTab === 'preview') {
