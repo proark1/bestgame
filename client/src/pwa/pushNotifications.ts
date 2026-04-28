@@ -59,7 +59,23 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return out;
 }
 
-function getVapidPublicKey(): string | null {
+async function getVapidPublicKey(
+  authedFetch: SubscribeOptions['authedFetch'],
+): Promise<string | null> {
+  // Prefer a server fetch — pulls the live VAPID key from the API
+  // so a deploy that flips the env var doesn't require a client
+  // rebuild. window.HIVE_VAPID_PUBLIC_KEY (legacy) still works as a
+  // fast-path fallback for offline/PWA install scenarios where the
+  // initial fetch hasn't landed.
+  try {
+    const res = await authedFetch('/push/public-key');
+    if (res.ok) {
+      const j = (await res.json()) as { publicKey?: string };
+      if (j.publicKey) return j.publicKey;
+    }
+  } catch {
+    // network down — fall through to the window-global path
+  }
   const fromWindow = (window as unknown as { HIVE_VAPID_PUBLIC_KEY?: string })
     .HIVE_VAPID_PUBLIC_KEY;
   return fromWindow ?? null;
@@ -84,7 +100,7 @@ export async function subscribePush(opts: SubscribeOptions): Promise<boolean> {
   const existing = await reg.pushManager.getSubscription();
   let sub = existing;
   if (!sub) {
-    const key = getVapidPublicKey();
+    const key = await getVapidPublicKey(opts.authedFetch);
     if (!key) {
       // Server isn't configured to send pushes yet — record the user
       // intent so we can subscribe automatically once VAPID lands.

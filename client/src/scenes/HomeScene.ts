@@ -6,6 +6,10 @@ import { crispText } from '../ui/text.js';
 import { openAccountModal, openAccountInfoModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { maybeShowWhileAway } from '../ui/whileAwayModal.js';
+import { attachAmbientMotes } from '../ui/ambientMotes.js';
+import { setSceneTrack, resumeMusic } from '../ui/music.js';
+import { readWinStreak, streakBonusPct } from '../ui/winStreak.js';
+import { openMatchPreview } from '../ui/matchPreview.js';
 import { openSettings } from '../ui/settingsModal.js';
 import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
@@ -277,6 +281,11 @@ export class HomeScene extends Phaser.Scene {
     fadeInScene(this);
     installSceneClickDebug(this);
     this.drawAmbient();
+    attachAmbientMotes(this);
+    setSceneTrack('home');
+    // Music context stays suspended until a user gesture — defer the
+    // first resume to whatever pointer event lands first.
+    this.input.once('pointerdown', () => resumeMusic());
 
     // Layer survives `scene.restart()` via the registry. Without
     // this restore, claiming a streak / comeback / dismissing a
@@ -1206,7 +1215,18 @@ export class HomeScene extends Phaser.Scene {
         title: 'COMBAT',
         entries: [
           { label: '⚔  Raid a base', variant: 'primary',
-            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
+            onPress: () => {
+              this.closeBurgerDrawer();
+              const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+              if (rt) {
+                void openMatchPreview(this, rt);
+              } else {
+                // No runtime = guest sign-in still in flight; fall
+                // back to the legacy "go straight to raid" path so
+                // boot doesn't dead-end on a partial state.
+                fadeToScene(this, 'RaidScene');
+              }
+            } },
           { label: '📖  Campaign',
             onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
           { label: '🏟  Arena',
@@ -1504,13 +1524,49 @@ export class HomeScene extends Phaser.Scene {
     ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
     void trophyBg;
 
+    // Win-streak chip — paints between the trophy count and the tier
+    // badge whenever the session streak is hot (>= 2). Pulses to draw
+    // the eye toward "you're on a roll, raid again."
+    const streak = readWinStreak();
+    if (streak.count >= 2) {
+      const streakW = tier === 'phone' ? 60 : 70;
+      const streakH = tier === 'phone' ? 16 : 18;
+      const streakY = trophyY + trophyH + 3;
+      const streakBg = this.add.graphics().setDepth(DEPTHS.hud);
+      streakBg.fillStyle(0xff7a92, 1);
+      streakBg.fillRoundedRect(discX - streakW / 2, streakY, streakW, streakH, 5);
+      streakBg.lineStyle(1, 0xb13455, 1);
+      streakBg.strokeRoundedRect(discX - streakW / 2, streakY, streakW, streakH, 5);
+      const bonus = streakBonusPct(streak.count);
+      const streakLabel = crispText(
+        this,
+        discX,
+        streakY + streakH / 2,
+        bonus > 0 ? `🔥 ${streak.count} · +${bonus}%` : `🔥 ${streak.count} streak`,
+        labelTextStyle(tier === 'phone' ? 8 : 9, '#fff8ec'),
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+      this.tweens.add({
+        targets: [streakBg, streakLabel],
+        alpha: { from: 0.85, to: 1 },
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
     // Tier badge — small color chip directly under the trophy count
     // showing the player's ladder identity (Worker/Soldier/Drone/...).
     // Tappable to open the leaderboard.
     const tierData = Sim.trophyTierFor(trophies);
     const tierW = tier === 'phone' ? 64 : 72;
     const tierH = tier === 'phone' ? 16 : 18;
-    const tierY = trophyY + trophyH + 3;
+    // When the streak chip is showing, push the tier badge below it
+    // so the two don't overlap. The streak chip uses the same vertical
+    // slot, so we add streakH + gap when active.
+    const streakStackOffset =
+      streak.count >= 2 ? (tier === 'phone' ? 19 : 21) : 0;
+    const tierY = trophyY + trophyH + 3 + streakStackOffset;
     const tierBg = this.add.graphics().setDepth(DEPTHS.hud);
     tierBg.fillStyle(tierData.color, 1);
     tierBg.fillRoundedRect(discX - tierW / 2, tierY, tierW, tierH, 5);
@@ -3457,6 +3513,11 @@ export class HomeScene extends Phaser.Scene {
   // index (the index shifts when stack-top-budget hides entries on
   // shorter viewports).
   private cornerRaidButton: HiveButton | null = null;
+  // Online-now chip — paints next to the Raid CTA. Refreshed
+  // every 30s; cached value persists across scene restarts.
+  private onlineNowText: Phaser.GameObjects.Text | null = null;
+  private onlineNowBg: Phaser.GameObjects.Graphics | null = null;
+  private onlineNowTimer: number | null = null;
 
   private drawCornerActionStacks(): void {
     for (const btn of this.cornerActionButtons) btn.destroy();
@@ -3512,7 +3573,12 @@ export class HomeScene extends Phaser.Scene {
         variant: 'primary',
         onPress: () => {
           this.advanceCoachmark('raid');
-          fadeToScene(this, 'RaidScene');
+          const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+          if (rt) {
+            void openMatchPreview(this, rt);
+          } else {
+            fadeToScene(this, 'RaidScene');
+          }
         },
       },
       { label: '⚙', onPress: () => openSettings() },
@@ -3558,6 +3624,84 @@ export class HomeScene extends Phaser.Scene {
     placeColumn(leftStack, leftAnchorX, 'left');
     placeColumn(rightStack, rightAnchorX, 'right');
     void ctaTop; // ctaTop kept for layout reference; not currently used.
+
+    // Online-now chip — sits just above the Raid CTA so the player's
+    // eye lands on a "X online" social signal right next to the
+    // matchmaking button. Painted last so it draws above the icon
+    // stack regardless of column ordering.
+    this.paintOnlineChip();
+  }
+
+  private paintOnlineChip(): void {
+    if (this.onlineNowText) {
+      this.onlineNowText.destroy();
+      this.onlineNowText = null;
+    }
+    if (this.onlineNowBg) {
+      this.onlineNowBg.destroy();
+      this.onlineNowBg = null;
+    }
+    const btn = this.cornerRaidButton;
+    if (!btn) return;
+    const r = btn.container.getBounds();
+    const chipW = 96;
+    const chipH = 22;
+    const chipX = r.x + r.width / 2 - chipW / 2;
+    const chipY = r.y - chipH - 6;
+    this.onlineNowBg = this.add.graphics().setDepth(DEPTHS.hud);
+    this.onlineNowBg.fillStyle(0x1f2148, 0.78);
+    this.onlineNowBg.fillRoundedRect(chipX, chipY, chipW, chipH, 11);
+    this.onlineNowBg.lineStyle(1.5, 0x6cd47e, 0.9);
+    this.onlineNowBg.strokeRoundedRect(chipX, chipY, chipW, chipH, 11);
+    // Heartbeat dot — small green circle that pulses, signalling "live".
+    const dot = this.add
+      .circle(chipX + 12, chipY + chipH / 2, 4, 0x6cd47e, 1)
+      .setDepth(DEPTHS.hud);
+    this.tweens.add({
+      targets: dot,
+      alpha: { from: 0.4, to: 1 },
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    this.cornerActionButtons.push({
+      destroy: () => dot.destroy(),
+    } as unknown as HiveButton);
+    this.onlineNowText = crispText(
+      this,
+      chipX + chipW / 2 + 6,
+      chipY + chipH / 2,
+      '— online',
+      labelTextStyle(10, '#fff8ec'),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+    void this.refreshOnlineCount();
+    if (this.onlineNowTimer !== null) window.clearInterval(this.onlineNowTimer);
+    this.onlineNowTimer = window.setInterval(() => {
+      void this.refreshOnlineCount();
+    }, 30_000);
+    this.events.once('shutdown', () => {
+      if (this.onlineNowTimer !== null) {
+        window.clearInterval(this.onlineNowTimer);
+        this.onlineNowTimer = null;
+      }
+    });
+  }
+
+  private async refreshOnlineCount(): Promise<void> {
+    const rt = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!rt || !this.onlineNowText) return;
+    try {
+      const count = await rt.api.getOnlineCount();
+      if (!this.onlineNowText.active) return;
+      // Format: 1.2k for thousands, plain for under 1000.
+      const fmt = count >= 1000
+        ? `${(count / 1000).toFixed(1)}k online`
+        : `${count} online`;
+      this.onlineNowText.setText(fmt);
+    } catch {
+      // Silent — leave the placeholder text.
+    }
   }
 
   private drawFooter(): void {

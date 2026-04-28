@@ -8,6 +8,7 @@ import { requirePlayer } from '../auth/playerAuth.js';
 import { trophyDelta } from '../game/progression.js';
 import { isUnitUnlocked, queenLevel } from '../game/buildingRules.js';
 import { shieldHoursForStars } from '../game/shield.js';
+import { sendPushToPlayer } from '../game/pushSender.js';
 import {
   applyRaidProgress,
   refreshIfStale,
@@ -343,6 +344,29 @@ export function registerRaid(app: FastifyInstance): void {
       );
 
       await client.query('COMMIT');
+
+      // Fire a "you were attacked" push to the defender on any
+      // raid involving a real player. Best-effort + fire-and-forget
+      // so a slow web-push delivery can't bottleneck /raid/submit.
+      // The sender is a no-op when VAPID isn't configured, so this
+      // call is safe to keep wired regardless of env.
+      if (defenderId) {
+        const attackerName = (await client.query<{ display_name: string | null }>(
+          'SELECT display_name FROM players WHERE id = $1',
+          [attackerId],
+        )).rows[0]?.display_name ?? 'Someone';
+        const starGlyphs = stars > 0 ? '★'.repeat(stars) : '—';
+        void sendPushToPlayer(
+          defenderId,
+          {
+            title: stars >= 2 ? 'Your hive was raided!' : 'Your hive was probed.',
+            body: `${attackerName} hit your base (${starGlyphs}). Tap to see the replay.`,
+            tag: 'attacked',
+            url: '/play',
+          },
+          app.log,
+        );
+      }
 
       const att = attUpdate.rows[0]!;
       return {

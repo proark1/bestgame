@@ -13,6 +13,7 @@
 //     toggle consumers can opt into.
 
 import { getSettings as getAudio, setSettings as setAudio } from './audio.js';
+import { getMusicSettings, setMusicSettings } from './music.js';
 
 const STYLE_ID = 'hive-settings-style';
 const PERFORMANCE_KEY = 'hive.perfPreset';
@@ -182,7 +183,7 @@ export function openSettings(): () => void {
 
   const volRow = document.createElement('div');
   volRow.className = 'hive-settings-row';
-  volRow.innerHTML = '<label>Master volume</label>';
+  volRow.innerHTML = '<label>SFX volume</label>';
   const vol = document.createElement('input');
   vol.type = 'range';
   vol.min = '0'; vol.max = '1'; vol.step = '0.05';
@@ -192,6 +193,34 @@ export function openSettings(): () => void {
   });
   volRow.append(vol);
   card.append(volRow);
+
+  // Music — separate bus from SFX so a player can dial down the
+  // ambient drone without losing combat cues.
+  const music = getMusicSettings();
+  const musicMuteRow = document.createElement('div');
+  musicMuteRow.className = 'hive-settings-row';
+  musicMuteRow.innerHTML = '<label>Mute music</label>';
+  const musicMuteCb = document.createElement('input');
+  musicMuteCb.type = 'checkbox';
+  musicMuteCb.checked = music.muted;
+  musicMuteCb.addEventListener('change', () => {
+    setMusicSettings({ muted: musicMuteCb.checked });
+  });
+  musicMuteRow.append(musicMuteCb);
+  card.append(musicMuteRow);
+
+  const musicVolRow = document.createElement('div');
+  musicVolRow.className = 'hive-settings-row';
+  musicVolRow.innerHTML = '<label>Music volume</label>';
+  const musicVol = document.createElement('input');
+  musicVol.type = 'range';
+  musicVol.min = '0'; musicVol.max = '1'; musicVol.step = '0.05';
+  musicVol.value = String(music.volume);
+  musicVol.addEventListener('input', () => {
+    setMusicSettings({ volume: Number(musicVol.value) });
+  });
+  musicVolRow.append(musicVol);
+  card.append(musicVolRow);
 
   // Performance section ---------------------------------------------------
   card.insertAdjacentHTML('beforeend', '<h2>Performance</h2>');

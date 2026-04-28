@@ -10,6 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import { pushPublicKey } from '../game/pushSender.js';
 
 interface SubscribeBody {
   endpoint?: string;
@@ -22,6 +23,18 @@ interface UnsubscribeBody {
 }
 
 export function registerPush(app: FastifyInstance): void {
+  // GET /api/push/public-key — VAPID public key the client needs
+  // to call PushManager.subscribe(). Returns 503 when not configured
+  // so the client can suppress the opt-in toggle gracefully.
+  app.get('/push/public-key', async (_req, reply) => {
+    const key = pushPublicKey();
+    if (!key) {
+      reply.code(503);
+      return { error: 'push not configured' };
+    }
+    return { publicKey: key };
+  });
+
   // POST /api/push/subscribe — upsert subscription for caller. Body
   // is the JSON shape PushSubscription.toJSON() returns.
   app.post<{ Body: SubscribeBody }>('/push/subscribe', async (req, reply) => {

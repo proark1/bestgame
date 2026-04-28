@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { Types } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { setSceneTrack, resumeMusic } from '../ui/music.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { openClanCreateModal } from '../ui/clanCreateModal.js';
 import { openAlert, openConfirm, openSlideConfirm } from '../ui/confirmModal.js';
@@ -54,6 +55,8 @@ export class ClanScene extends Phaser.Scene {
     installSceneClickDebug(this);
     this.cameras.main.setBackgroundColor('#0f1b10');
     this.drawAmbient();
+    setSceneTrack('clan');
+    this.input.once('pointerdown', () => resumeMusic());
     this.drawHud();
     this.layerContainer = this.add.container(0, 0);
     this.chatContainer = this.add.container(0, 0);
@@ -469,13 +472,19 @@ export class ClanScene extends Phaser.Scene {
     const maxLines = Math.floor((h - 48) / lineH);
     const visible = msgs.slice(Math.max(0, msgs.length - maxLines));
     visible.forEach((m, i) => {
-      const text = `[${m.displayName}] ${m.content}`;
+      // System messages (war ticker, donations) come back with a
+      // sentinel displayName 'deleted' (NULL player_id falls
+      // through to the LEFT JOIN) — render them italic + dim so
+      // they don't get mistaken for a player saying weird things.
+      const isSystem = !m.playerId || m.displayName === 'deleted';
+      const text = isSystem ? m.content : `[${m.displayName}] ${m.content}`;
       this.chatContainer.add(
         this.add
           .text(x + pad, y + padTop + i * lineH, text, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '12px',
-            color: '#e6f5d2',
+            color: isSystem ? '#ffd98a' : '#e6f5d2',
+            fontStyle: isSystem ? 'italic' : 'normal',
             wordWrap: { width: w - pad * 2 },
           })
           .setOrigin(0, 0),

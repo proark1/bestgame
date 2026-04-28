@@ -20,6 +20,33 @@ interface LeaderboardEntry {
 }
 
 export function registerLeaderboard(app: FastifyInstance): void {
+  // GET /api/online — rough "players online right now" counter
+  // computed from players.last_seen_at within the last 5 minutes.
+  // Used by HomeScene to render a "327 online" chip next to the
+  // raid CTA — turns matchmaking latency into a social signal.
+  // Cached for 30s in-process so a poll storm can't hammer the DB.
+  let onlineCache: { value: number; fetchedAt: number } | null = null;
+  app.get('/online', async () => {
+    const pool = await getPool();
+    if (!pool) return { online: 0 };
+    const now = Date.now();
+    if (onlineCache && now - onlineCache.fetchedAt < 30_000) {
+      return { online: onlineCache.value };
+    }
+    try {
+      const res = await pool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c
+           FROM players
+          WHERE last_seen_at > NOW() - INTERVAL '5 minutes'`,
+      );
+      const value = Number(res.rows[0]?.c ?? 0) || 0;
+      onlineCache = { value, fetchedAt: now };
+      return { online: value };
+    } catch {
+      return { online: onlineCache?.value ?? 0 };
+    }
+  });
+
   app.get('/leaderboard', async (req, reply) => {
     const playerId = requirePlayer(req, reply);
     if (!playerId) return;

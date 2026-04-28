@@ -8,7 +8,7 @@ import {
   sfxVictory, sfxDefeat,
   sfxDeploy, sfxDig, sfxAmbush, sfxSplit,
   sfxModifierTick, sfxBuildingHit, sfxBuildingDestroyed,
-  sfxQueenDestroyed, sfxUnitDeath,
+  sfxQueenDestroyed, sfxUnitDeath, sfxEarn,
 } from '../ui/audio.js';
 import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
@@ -17,6 +17,10 @@ import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { haptic } from '../ui/haptics.js';
+import { attachAmbientMotes } from '../ui/ambientMotes.js';
+import { setSceneTrack, resumeMusic } from '../ui/music.js';
+import { recordRaidOutcome, streakBonusPct } from '../ui/winStreak.js';
+import { recordRaidStats, type AchievementDef } from '../ui/achievements.js';
 import { openUnitInfoModal } from '../ui/unitInfoModal.js';
 import { buildTacticShareUrl, TACTICS_STORAGE_KEY, TACTICS_LIMIT } from '../codex/tacticShare.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
@@ -517,6 +521,11 @@ export class RaidScene extends Phaser.Scene {
   // Side-maps for the hit-flash and death-burst juice. Kept separate
   // from SimState so the sim stays pure and replayable.
   private buildingLastHp = new Map<number, number>();
+  // MVP telemetry — purely client-side, computed from the visible
+  // sim state during render. Each entry tracks total damage credited
+  // and kills for one attacker unit kind. Powers the post-raid MVP
+  // card without changing the deterministic sim.
+  private mvpStats = new Map<Types.UnitKind, { damage: number; kills: number; deployed: number }>();
   private buildingKillPlayed = new Set<number>();
   private unitLastHp = new Map<number, number>();
   // Sprites can be either a static Image or an animated Sprite (walk
@@ -682,6 +691,9 @@ export class RaidScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLOR.grassFillCss);
     fadeInScene(this);
     installSceneClickDebug(this);
+    attachAmbientMotes(this, { density: 1 / 40000, alpha: 0.22 });
+    setSceneTrack('raid');
+    this.input.once('pointerdown', () => resumeMusic());
     // Reset all per-run state. Scene instances are reused across raids,
     // so previous-run state must be cleared here or it'll leak.
     // Deck is filtered by the attacker's own Queen level — locked
@@ -1520,6 +1532,11 @@ export class RaidScene extends Phaser.Scene {
       // via /api/raid/submit, where the shared sim re-runs it to verify
       // the outcome before awarding trophies/loot.
       this.raidInputs.push(input);
+      // MVP telemetry — track deploy counts per kind so the result
+      // card can show "deployed N" alongside damage + kills.
+      const mvpCur = this.mvpStats.get(entry.kind) ?? { damage: 0, kills: 0, deployed: 0 };
+      mvpCur.deployed += burst;
+      this.mvpStats.set(entry.kind, mvpCur);
       const start = this.drawingPoints[0];
       if (start) this.spawnDeployPopup(start.x + 18, start.y - 8, entry.label, burst);
       haptic(modifier ? [10, 6, 14] : 12);
@@ -2752,10 +2769,76 @@ export class RaidScene extends Phaser.Scene {
     const HERO_SIZE = 44;
     const UNIT_SIZE = 32;
     if (heroKind) {
-      return this.add
+      // Hero board identity: gold ground-circle aura under the
+      // sprite + a small name banner above it. Both auto-pan with
+      // the hero because they live on the same Image we return —
+      // the aura is drawn into a small Graphics, baked into a
+      // texture, and parented to the hero sprite via a container.
+      // We still return an Image so the existing physics + tween
+      // code that targets unit sprites (animations, dig flips,
+      // entry tween) keeps working without a rewrite.
+      const hero = this.add
         .image(x, y, `hero-${heroKind}`)
         .setDisplaySize(HERO_SIZE, HERO_SIZE)
         .setOrigin(0.5, 0.7);
+      // Aura — drawn once per scene per hero kind, cached as a
+      // texture so additional spawns don't re-bake. Pulses via a
+      // gentle scale tween on a sibling sprite that follows the
+      // hero's position via an `update` event.
+      const auraKey = 'hero-aura-disc';
+      if (!this.textures.exists(auraKey)) {
+        const g = this.add.graphics().setVisible(false);
+        // Three concentric soft rings to approximate radial fade.
+        g.fillStyle(0xffd76b, 0.22);
+        g.fillCircle(36, 36, 36);
+        g.fillStyle(0xffd76b, 0.32);
+        g.fillCircle(36, 36, 24);
+        g.fillStyle(0xffd76b, 0.55);
+        g.fillCircle(36, 36, 12);
+        g.generateTexture(auraKey, 72, 72);
+        g.destroy();
+      }
+      const aura = this.add
+        .image(x, y + 8, auraKey)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(hero.depth - 1);
+      this.boardContainer.add(aura);
+      this.tweens.add({
+        targets: aura,
+        scale: { from: 0.85, to: 1.05 },
+        alpha: { from: 0.7, to: 1 },
+        duration: 950,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      // Name banner
+      const banner = this.add
+        .text(x, y - HERO_SIZE * 0.7, heroKind, {
+          fontFamily: "'Arial Black', sans-serif",
+          fontSize: '10px',
+          color: '#fff8ec',
+          backgroundColor: '#c99b3a',
+          padding: { x: 4, y: 2 },
+        })
+        .setOrigin(0.5, 1);
+      this.boardContainer.add(banner);
+      // Position-tracking: each render frame, the existing unit
+      // sync sets hero.x/y. Mirror those onto aura + banner so the
+      // hero's identity moves with it without modifying the sync
+      // loop. preUpdate fires once per frame.
+      this.events.on('postupdate', () => {
+        if (!hero.active) return;
+        aura.setPosition(hero.x, hero.y + 8);
+        banner.setPosition(hero.x, hero.y - HERO_SIZE * 0.7);
+      });
+      // Tear down trailing decoration when the hero sprite is
+      // destroyed (death or end-of-raid cleanup).
+      hero.once('destroy', () => {
+        aura.destroy();
+        banner.destroy();
+      });
+      return hero;
     }
     const isAnimatedKind = (ANIMATED_UNIT_KINDS as readonly string[]).includes(kind);
     const enabled = this.animationEnabled[kind] !== false;
@@ -2916,6 +2999,31 @@ export class RaidScene extends Phaser.Scene {
         spr.setTint(0xffe799);
         this.time.delayedCall(70, () => spr.clearTint());
         const dmg = Math.round(prevHp - b.hp);
+        // MVP attribution — credit the closest attacker unit. Cheap
+        // O(n_units) scan inside the existing render loop; runs once
+        // per damaged-building per tick, n_units bounded to ~30.
+        // Heuristic but fine for surfacing "your Wasp dealt the most
+        // damage" on the result card.
+        const cx = b.anchorX + b.w / 2;
+        const cy = b.anchorY + b.h / 2;
+        let best: Types.Unit | null = null;
+        let bestDistSq = Infinity;
+        for (const u of this.state.units) {
+          if (u.owner !== 0 || u.hp <= 0) continue;
+          const ux = Sim.toFloat(u.x);
+          const uy = Sim.toFloat(u.y);
+          const d2 = (ux - cx) ** 2 + (uy - cy) ** 2;
+          if (d2 < bestDistSq) {
+            bestDistSq = d2;
+            best = u;
+          }
+        }
+        if (best) {
+          const cur = this.mvpStats.get(best.kind) ?? { damage: 0, kills: 0, deployed: 0 };
+          cur.damage += dmg;
+          if (b.hp <= 0 && prevHp > 0) cur.kills++;
+          this.mvpStats.set(best.kind, cur);
+        }
         // Damage chip — only on chunkier hits so we don't drown the
         // board in numbers during sustained fire.
         if (dmg >= 4 && this.damageNumbersThisFrame < 3) {
@@ -3279,6 +3387,84 @@ export class RaidScene extends Phaser.Scene {
     });
   }
 
+  // Resolve the MVP — best damage, ties broken by kills then deploy
+  // count. Returns null when no attacker stats were collected (very
+  // short raid that ended before a single hit).
+  private pickMvp():
+    | { kind: Types.UnitKind; damage: number; kills: number; deployed: number }
+    | null {
+    let best: {
+      kind: Types.UnitKind; damage: number; kills: number; deployed: number;
+    } | null = null;
+    for (const [kind, stats] of this.mvpStats) {
+      if (stats.damage <= 0 && stats.kills <= 0) continue;
+      if (
+        !best ||
+        stats.damage > best.damage ||
+        (stats.damage === best.damage && stats.kills > best.kills)
+      ) {
+        best = { kind, ...stats };
+      }
+    }
+    return best;
+  }
+
+  // Animated achievement-unlocked toast — slides in from the top
+  // edge, holds for ~2s, fades out. Lives above the result card
+  // (DEPTHS.resultContent + 10) so it's visible during the
+  // post-raid celebration.
+  private showAchievementToast(a: AchievementDef): void {
+    const tierFill =
+      a.tier === 'gold' ? 0xffd76b : a.tier === 'silver' ? 0xc4d4dc : 0xc99b3a;
+    const w = 260;
+    const h = 56;
+    const x = (this.scale.width - w) / 2;
+    const startY = -h - 8;
+    const restY = 28;
+    const c = this.add.container(x, startY).setDepth(DEPTHS.resultContent + 10);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1f2148, 1);
+    bg.fillRoundedRect(0, 0, w, h, 10);
+    bg.lineStyle(2, tierFill, 1);
+    bg.strokeRoundedRect(0, 0, w, h, 10);
+    const icon = this.add
+      .text(14, h / 2, a.icon, { fontSize: '22px' })
+      .setOrigin(0, 0.5);
+    const eyebrow = this.add
+      .text(50, 12, 'ACHIEVEMENT UNLOCKED', {
+        fontFamily: "'Arial Black', sans-serif",
+        fontSize: '9px',
+        color: '#ffd76b',
+      })
+      .setOrigin(0, 0);
+    const title = this.add
+      .text(50, 26, a.title, {
+        fontFamily: "'Arial Black', sans-serif",
+        fontSize: '13px',
+        color: '#fff8ec',
+      })
+      .setOrigin(0, 0);
+    c.add([bg, icon, eyebrow, title]);
+    this.tweens.add({
+      targets: c,
+      y: restY,
+      duration: 280,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: c,
+          y: startY,
+          alpha: 0,
+          duration: 260,
+          delay: 1800,
+          ease: 'Cubic.easeIn',
+          onComplete: () => c.destroy(),
+        });
+      },
+    });
+    sfxEarn();
+  }
+
   private spawnDeployPopup(x: number, y: number, label: string, count: number): void {
     const text = this.add
       .text(x, y, `+${count} ${label}`, {
@@ -3448,6 +3634,7 @@ export class RaidScene extends Phaser.Scene {
       this.buildingRoleLabels.clear();
       // Juice-pass side maps share the same per-raid lifecycle.
       this.buildingLastHp.clear();
+      this.mvpStats.clear();
       this.buildingKillPlayed.clear();
       this.drawBuildingsFromState();
       // "vs Opponent" — anchored just below the HUD strip on
@@ -3823,6 +4010,76 @@ export class RaidScene extends Phaser.Scene {
           );
         },
       });
+    }
+
+    // Win-streak counter — records the outcome (won/lost) and paints
+    // the resulting "🔥 N in a row!" chip when applicable. Skipped on
+    // tutorial / replay / arena raids so they can't pad the streak.
+    if (!this.tutorialMode && !this.replayContext) {
+      const streak = recordRaidOutcome(isWin);
+      if (streak.count >= 2) {
+        const bonus = streakBonusPct(streak.count);
+        this.add
+          .text(
+            this.scale.width / 2,
+            cy + 110,
+            `🔥 ${streak.count} in a row${bonus > 0 ? ` · +${bonus}% next loot` : ''}`,
+            displayTextStyle(13, '#ff7a92', 2),
+          )
+          .setOrigin(0.5)
+          .setDepth(DEPTHS.resultContent);
+      }
+      // Achievements — fan out the raid stats to the local registry.
+      // Toasts stagger 600ms apart so a multi-unlock raid (first
+      // raid + first win + first 3-star, all at once) doesn't pile
+      // them on top of each other.
+      let buildingsDestroyed = 0;
+      let queenKilled = false;
+      for (const b of this.state.buildings) {
+        if (b.hp <= 0) {
+          buildingsDestroyed++;
+          if (b.kind === 'QueenChamber') queenKilled = true;
+        }
+      }
+      const unlocks = recordRaidStats({
+        won: isWin,
+        stars,
+        queenKilled,
+        sugarLooted: this.state.attackerSugarLooted,
+        buildingsDestroyed,
+        winStreakAfter: streak.count,
+      });
+      unlocks.forEach((a, i) => {
+        this.time.delayedCall(800 + i * 700, () => this.showAchievementToast(a));
+      });
+    }
+
+    // MVP card — picks the unit kind with the highest damage, falls
+    // back to highest kills if no damage was credited (e.g. raid
+    // ended on timer). Surfaces "Wasp #1 — 320 dmg, 4 kills" so the
+    // player sees which unit carried the run.
+    const mvp = this.pickMvp();
+    if (mvp) {
+      const codex = UNIT_CODEX[mvp.kind];
+      const label = codex?.name ?? String(mvp.kind);
+      this.add
+        .text(
+          this.scale.width / 2,
+          cy + 152,
+          `MVP · ${label}`,
+          displayTextStyle(13, COLOR.textGold, 2),
+        )
+        .setOrigin(0.5)
+        .setDepth(DEPTHS.resultContent);
+      this.add
+        .text(
+          this.scale.width / 2,
+          cy + 172,
+          `${mvp.damage} dmg · ${mvp.kills} kill${mvp.kills === 1 ? '' : 's'} · ${mvp.deployed} deployed`,
+          bodyTextStyle(12, COLOR.textDim),
+        )
+        .setOrigin(0.5)
+        .setDepth(DEPTHS.resultContent);
     }
 
     // "NEW BEST" ribbon when this raid exceeds the player's tracked

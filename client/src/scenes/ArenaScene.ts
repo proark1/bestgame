@@ -8,6 +8,8 @@ import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
+import { attachAmbientMotes } from '../ui/ambientMotes.js';
+import { setSceneTrack, resumeMusic } from '../ui/music.js';
 import { crispText } from '../ui/text.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { BUILDING_CODEX } from '../codex/codexData.js';
@@ -139,6 +141,9 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     this.drawAmbient();
+    attachAmbientMotes(this);
+    setSceneTrack('arena');
+    this.input.once('pointerdown', () => resumeMusic());
     // Full-screen layout (Clash-of-Clans style): boardContainer first
     // so HUD elements (added in drawHud) render above with explicit
     // DEPTHS.hud. Board fills the viewport; HUD chips overlay.

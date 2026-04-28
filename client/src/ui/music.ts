@@ -1,0 +1,289 @@
+// Procedural ambient music — a slow-moving sine pad shaped to fit
+// behind UI without competing with the SFX layer. No audio files
+// shipped; the entire track is synthesised from a handful of
+// oscillator nodes routed through a shared LFO + per-scene chord
+// shifts. Adds production-value perceived weight at zero asset
+// cost, and degrades cleanly to silence when the user mutes music
+// or the AudioContext isn't available.
+//
+// Settings live in localStorage under hive.musicSettings (separate
+// blob from SFX so a player who wants quiet music + loud effects
+// can have it). Volume slider lives in settingsModal alongside the
+// existing SFX volume slider.
+
+const STORAGE_KEY = 'hive.musicSettings';
+
+export interface MusicSettings {
+  muted: boolean;
+  // 0..1 master volume on the music bus. Defaults conservative —
+  // 0.18 is roughly bed-music level under the SFX layer at 0.55.
+  volume: number;
+}
+
+const DEFAULT_SETTINGS: MusicSettings = {
+  muted: false,
+  volume: 0.18,
+};
+
+let cached: MusicSettings | null = null;
+
+export function getMusicSettings(): MusicSettings {
+  if (cached) return cached;
+  if (typeof window === 'undefined') return DEFAULT_SETTINGS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      cached = { ...DEFAULT_SETTINGS };
+      return cached;
+    }
+    const parsed = JSON.parse(raw) as Partial<MusicSettings>;
+    cached = {
+      muted: typeof parsed.muted === 'boolean' ? parsed.muted : DEFAULT_SETTINGS.muted,
+      volume:
+        typeof parsed.volume === 'number'
+          ? Math.max(0, Math.min(1, parsed.volume))
+          : DEFAULT_SETTINGS.volume,
+    };
+    return cached;
+  } catch {
+    cached = { ...DEFAULT_SETTINGS };
+    return cached;
+  }
+}
+
+export function setMusicSettings(next: Partial<MusicSettings>): MusicSettings {
+  const current = getMusicSettings();
+  cached = { ...current, ...next };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
+  } catch {
+    /* private mode */
+  }
+  applySettingsToActiveTrack();
+  return cached;
+}
+
+// ---- Audio graph ---------------------------------------------------------
+
+let ctx: AudioContext | null = null;
+let busGain: GainNode | null = null;
+let active: ActiveTrack | null = null;
+
+interface ActiveTrack {
+  scene: TrackPreset;
+  voices: OscillatorNode[];
+  voiceGains: GainNode[];
+  // Wall-clock when the chord progression last advanced; used by
+  // the cross-fade scheduler to decide when the next chord is due.
+  startedAt: number;
+}
+
+function ensureCtx(): AudioContext | null {
+  if (ctx) return ctx;
+  if (typeof window === 'undefined') return null;
+  const Ctor = window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    ctx = new Ctor();
+    busGain = ctx.createGain();
+    busGain.gain.value = effectiveVolume();
+    busGain.connect(ctx.destination);
+  } catch {
+    ctx = null;
+  }
+  return ctx;
+}
+
+function effectiveVolume(): number {
+  const s = getMusicSettings();
+  return s.muted ? 0 : s.volume;
+}
+
+function applySettingsToActiveTrack(): void {
+  if (!ctx || !busGain) return;
+  // Smooth ramp so dragging the slider doesn't introduce zipper noise.
+  const target = effectiveVolume();
+  busGain.gain.cancelScheduledValues(ctx.currentTime);
+  busGain.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.08);
+}
+
+// ---- Track presets -------------------------------------------------------
+// Each preset is a small chord progression with a tempo. Voice
+// frequencies are computed from the root note + intervals; LFO
+// shapes the chord cadence. Tuned so adjacent scenes feel related
+// (same root family) but distinct enough that the player notices
+// the music changing on transition.
+
+interface ChordSpec {
+  // Multiplier on root frequency for each voice. Three-voice triads
+  // (root + third + fifth) read as full pads without a fourth voice
+  // muddying the low end.
+  ratios: number[];
+}
+
+interface TrackPreset {
+  // Identifier used by setSceneTrack to decide whether a swap is
+  // needed (same id = leave the current track running).
+  id: string;
+  rootHz: number;
+  chords: ChordSpec[];
+  // Seconds per chord. Long enough to feel like an underscore, not a
+  // melodic phrase.
+  chordHoldSec: number;
+}
+
+const TRACK_HOME: TrackPreset = {
+  id: 'home',
+  rootHz: 174.61, // F3 — warm, neutral
+  chords: [
+    { ratios: [1, 1.25, 1.5] },     // major triad (root, M3, P5)
+    { ratios: [0.89, 1.12, 1.5] },  // sub-tonic, P4, P5 — gentle drift
+    { ratios: [1, 1.2, 1.5] },      // minor triad (root, m3, P5)
+  ],
+  chordHoldSec: 18,
+};
+
+const TRACK_RAID: TrackPreset = {
+  id: 'raid',
+  rootHz: 196.0, // G3 — slightly tense
+  chords: [
+    { ratios: [1, 1.2, 1.5] },        // minor triad
+    { ratios: [1, 1.2, 1.6] },        // minor + dim 5th
+    { ratios: [0.94, 1.18, 1.5] },    // tritone hint
+  ],
+  chordHoldSec: 12,
+};
+
+const TRACK_CLAN: TrackPreset = {
+  id: 'clan',
+  rootHz: 164.81, // E3 — soft, social
+  chords: [
+    { ratios: [1, 1.25, 1.5] },
+    { ratios: [1.12, 1.33, 1.68] },   // step up — feels conversational
+    { ratios: [1, 1.25, 1.5] },
+  ],
+  chordHoldSec: 24,
+};
+
+const TRACKS: Record<string, TrackPreset> = {
+  home: TRACK_HOME,
+  raid: TRACK_RAID,
+  arena: TRACK_RAID, // arena reuses raid's tense palette
+  clan: TRACK_CLAN,
+};
+
+// ---- Public API ----------------------------------------------------------
+
+// Idempotent — call from each scene's create(). Swapping to the same
+// track id is a no-op so the music streams across scene reloads of
+// the same scene.
+export function setSceneTrack(trackId: string): void {
+  const c = ensureCtx();
+  if (!c || !busGain) return;
+  if (active && active.scene.id === trackId) return;
+  const preset = TRACKS[trackId];
+  if (!preset) return;
+  stopTrack(0.5);
+  startTrack(preset);
+}
+
+export function stopMusic(): void {
+  stopTrack(0.4);
+}
+
+// Browsers refuse to start an AudioContext until a user gesture.
+// Scene code calls this from any pointerdown handler, defensively.
+export function resumeMusic(): void {
+  const c = ensureCtx();
+  if (!c) return;
+  if (c.state === 'suspended') void c.resume();
+}
+
+// ---- Internals -----------------------------------------------------------
+
+function startTrack(preset: TrackPreset): void {
+  const c = ensureCtx();
+  if (!c || !busGain) return;
+  const now = c.currentTime;
+  const voices: OscillatorNode[] = [];
+  const voiceGains: GainNode[] = [];
+  // Three voice pad: each voice is a sine + slight detune so
+  // overtones beat softly. Beating creates the "pad" feel that a
+  // single oscillator can't.
+  const initial = preset.chords[0]!;
+  for (let i = 0; i < 3; i++) {
+    const osc = c.createOscillator();
+    osc.type = 'sine';
+    const ratio = initial.ratios[i] ?? 1;
+    osc.frequency.value = preset.rootHz * ratio;
+    // Per-voice gain — middle voice loudest so the chord reads as
+    // unison rather than wide harmony.
+    const g = c.createGain();
+    g.gain.value = i === 1 ? 0.5 : 0.32;
+    osc.connect(g);
+    g.connect(busGain);
+    osc.start(now);
+    voices.push(osc);
+    voiceGains.push(g);
+  }
+  active = { scene: preset, voices, voiceGains, startedAt: now };
+  // Schedule the chord progression cross-fade loop. Each call
+  // advances one chord and schedules the next via setTimeout — one
+  // timer at a time so a fast scene-swap doesn't leak callbacks.
+  scheduleNextChord(preset, 0);
+}
+
+function stopTrack(fadeSec: number): void {
+  if (!ctx || !active) return;
+  const now = ctx.currentTime;
+  for (const g of active.voiceGains) {
+    g.gain.cancelScheduledValues(now);
+    g.gain.linearRampToValueAtTime(0, now + fadeSec);
+  }
+  // Stop oscillators after the fade so the gain ramp completes.
+  const stopAt = now + fadeSec + 0.05;
+  for (const o of active.voices) {
+    try { o.stop(stopAt); } catch { /* already stopped */ }
+  }
+  active = null;
+}
+
+let chordTimer: number | null = null;
+function scheduleNextChord(preset: TrackPreset, chordIdx: number): void {
+  if (chordTimer !== null) {
+    clearTimeout(chordTimer);
+    chordTimer = null;
+  }
+  const c = ctx;
+  if (!c || !active) return;
+  const chord = preset.chords[chordIdx % preset.chords.length]!;
+  // Cross-fade each voice's frequency over 4s so chord changes feel
+  // like organic drift, not a step.
+  const now = c.currentTime;
+  for (let i = 0; i < active.voices.length; i++) {
+    const ratio = chord.ratios[i] ?? 1;
+    const target = preset.rootHz * ratio;
+    active.voices[i]!.frequency.cancelScheduledValues(now);
+    active.voices[i]!.frequency.linearRampToValueAtTime(target, now + 4);
+  }
+  chordTimer = window.setTimeout(
+    () => scheduleNextChord(preset, chordIdx + 1),
+    preset.chordHoldSec * 1000,
+  );
+}
+
+// Pause music when the tab is hidden so the AudioContext doesn't
+// keep voicing into a backgrounded mixer (some platforms throttle,
+// others don't — being defensive saves battery either way).
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!ctx) return;
+    if (document.hidden) {
+      void ctx.suspend();
+    } else {
+      void ctx.resume();
+    }
+  });
+}

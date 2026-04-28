@@ -582,6 +582,19 @@ export class Api {
     return (await res.json()) as ClanMyResponse;
   }
 
+  // Rough "players online right now" snapshot. Server caches 30s
+  // so polling at the same interval is safe.
+  async getOnlineCount(): Promise<number> {
+    try {
+      const res = await this.authedFetch('/online');
+      if (!res.ok) return 0;
+      const j = (await res.json()) as { online?: number };
+      return Number(j.online) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async clanMessages(sinceId: number): Promise<ClanMessage[]> {
     const res = await this.authedFetch(`/clan/messages?sinceId=${sinceId}`);
     if (!res.ok) throw new Error(`clan/messages ${res.status}`);
