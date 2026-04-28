@@ -42,6 +42,12 @@ export const BUILDING_SPRITE_KEYS = [
   // setRotation on the H sprite produced banding that read as
   // sideways-text instead of a wall section).
   'building-LeafWallV',
+  // Corner variant — auto-picked at render time when a LeafWall has
+  // both an H and a V wall neighbour (i.e. it's the elbow of an
+  // L-shaped run). Without this the seam between an H section and a
+  // V section forms a visible gap; the corner sprite rounds it off
+  // the way Clash of Clans walls do at corners.
+  'building-LeafWallCorner',
   'building-PebbleBunker',
   'building-LarvaNursery',
   'building-SugarVault',
@@ -56,6 +62,8 @@ export const BUILDING_SPRITE_KEYS = [
   'building-ThornHedge',
   // Vertical thorn-hedge variant — same reasoning as LeafWallV.
   'building-ThornHedgeV',
+  // Corner variant — same auto-pick rule as LeafWallCorner.
+  'building-ThornHedgeCorner',
   // Premium producer (AphidMilk source).
   'building-AphidFarm',
   // Dedicated underground storage — leaf silo (caps leafBits) and
