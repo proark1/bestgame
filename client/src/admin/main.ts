@@ -474,6 +474,12 @@ const MENU_UI_KEYS = [
   // a different prompt composer (cinematic perspective + depth) so it
   // doesn't get the flat-2D, head-on UI-chrome constraint.
   'landing-hero',
+  // Wide promo banner shown in the landing page Store / Discover
+  // section. Same cinematic prompt path as `landing-hero`. Lives on
+  // the Logo & Branding admin tab even though the key starts with
+  // `ui-` so the operator sees every piece of marketing art in one
+  // place; the BRANDING_EXPLICIT_KEYS list below opts it in.
+  'ui-discover-banner',
   // Queen-skin portraits. Admin can generate + toggle each one;
   // the Queen picker + HomeScene identity chip render the image
   // when present and fall back to a tinted silhouette otherwise.
@@ -487,6 +493,23 @@ const MENU_UI_KEYS = [
   'queen-silver',
 ];
 
+// Keys that belong on the Logo & Branding tab even when they don't
+// match the `landing-` / `queen-` prefix convention. Add new
+// marketing-art keys here so they show up next to landing-hero
+// instead of getting hidden inside the generic UI grid.
+const BRANDING_EXPLICIT_KEYS: ReadonlySet<string> = new Set([
+  'ui-logo',
+  'ui-discover-banner',
+]);
+
+function isBrandingKey(key: string): boolean {
+  return (
+    key.startsWith('landing-') ||
+    key.startsWith('queen-') ||
+    BRANDING_EXPLICIT_KEYS.has(key)
+  );
+}
+
 function composePrompt(
   description: string,
   kind: 'unit' | 'building' | 'hero' | 'story' | 'menuUi',
@@ -498,7 +521,7 @@ function composePrompt(
   // head-on / no-characters constraints of the menuUi composer below.
   // Routed through its own branch so the painter is free to use
   // perspective, characters, and full-bleed framing.
-  if (kind === 'menuUi' && key && key.startsWith('landing-')) {
+  if (kind === 'menuUi' && key && (key.startsWith('landing-') || key === 'ui-discover-banner')) {
     // The global style lock ends with sprite-only technical constraints
     // ("128x128 transparent PNG, subject fills ~85%, no background, …")
     // that directly contradict the wide opaque hero brief below. Slice
@@ -981,14 +1004,14 @@ function renderSpritesTab(): HTMLElement {
       }
     }
   } else if (state.activeCategory === 'ui') {
-    for (const u of MENU_UI_KEYS.filter(k => !k.startsWith('landing-') && !k.startsWith('queen-'))) {
+    for (const u of MENU_UI_KEYS.filter(k => !isBrandingKey(k))) {
       const card = mk('menuUi', u);
       state.cards.push(card);
       grid.append(card.root);
     }
   } else if (state.activeCategory === 'branding') {
-    // Logo and branding: landing-hero + queen skins
-    const brandingKeys = MENU_UI_KEYS.filter(k => k.startsWith('landing-') || k.startsWith('queen-'));
+    // Logo and branding: landing/marketing art + queen skins.
+    const brandingKeys = MENU_UI_KEYS.filter(isBrandingKey);
     for (const k of brandingKeys) {
       const card = mk('menuUi', k);
       state.cards.push(card);

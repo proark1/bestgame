@@ -454,6 +454,31 @@ const PLACEHOLDER_BUILDINGS: Record<
     g.lineBetween(cx, y0 + 6, cx, y0 + panelH - 6);
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
   },
+  'building-LeafWallCorner': (g, s) => {
+    // Rounded corner / elbow piece — used when a LeafWall has both an
+    // H neighbour and a V neighbour (forming an L-shape). The shape
+    // is a quarter-disc anchored to the tile center so it bridges the
+    // gap between the two perpendicular sections without leaving a
+    // visible seam. Since the orientation of the elbow depends on
+    // which two neighbours are walls, we render a centered "node" the
+    // adjacent panels can butt into from any of the four sides — the
+    // node is symmetric so a single sprite handles all four corner
+    // rotations the renderer can request.
+    const cx = s / 2;
+    const cy = s / 2;
+    const r = Math.round(s * 0.30);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillStyle(PALETTE.leaf.belly, 1);
+    g.fillCircle(cx, cy, r);
+    g.strokeCircle(cx, cy, r);
+    // Inner ring for visual interest
+    g.fillStyle(PALETTE.leaf.body, 1);
+    g.fillCircle(cx, cy, Math.round(r * 0.66));
+    // Bright leaf-vein dot at the center so the corner reads as the
+    // junction the eye expects at an L-bend.
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    g.fillCircle(cx, cy, Math.round(r * 0.30));
+  },
   'building-PebbleBunker': (g, s) => {
     const cx = s / 2;
     g.lineStyle(OUTLINE_W, OUTLINE, 1);
@@ -648,6 +673,47 @@ const PLACEHOLDER_BUILDINGS: Record<
       // bottom spikes (point down)
       g.fillTriangle(sx, y0 + panelH - 4, sx + spikeW, y0 + panelH - 4, sx + spikeW / 2, y0 + panelH + 22);
       g.strokeTriangle(sx, y0 + panelH - 4, sx + spikeW, y0 + panelH - 4, sx + spikeW / 2, y0 + panelH + 22);
+    }
+  },
+  'building-ThornHedgeCorner': (g, s) => {
+    // Rounded thorn elbow — same role as LeafWallCorner but with the
+    // ThornHedge bramble palette + a few outward spikes so the corner
+    // reads as part of the hedge run rather than a foreign asset.
+    const cx = s / 2;
+    const cy = s / 2;
+    const r = Math.round(s * 0.32);
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillStyle(PALETTE.leaf.accent, 1);
+    g.fillCircle(cx, cy, r);
+    g.strokeCircle(cx, cy, r);
+    // Tangle texture — a few crossing twigs across the disc
+    g.lineStyle(2, OUTLINE, 0.85);
+    for (let i = 0; i < 4; i++) {
+      const a0 = (i / 4) * Math.PI;
+      const a1 = a0 + Math.PI;
+      g.lineBetween(
+        cx + Math.cos(a0) * (r - 4),
+        cy + Math.sin(a0) * (r - 4),
+        cx + Math.cos(a1) * (r - 4),
+        cy + Math.sin(a1) * (r - 4),
+      );
+    }
+    // Outward spikes (4-way) so the elbow visually keeps the threat
+    // read of the rest of the hedge.
+    g.lineStyle(OUTLINE_W, OUTLINE, 1);
+    g.fillStyle(PALETTE.leaf.body, 1);
+    const spikeLen = 14;
+    const dirs: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (const [dx, dy] of dirs) {
+      const bx = cx + dx * (r - 2);
+      const by = cy + dy * (r - 2);
+      const tx = cx + dx * (r + spikeLen);
+      const ty = cy + dy * (r + spikeLen);
+      // Triangle base perpendicular to the spike direction
+      const px = -dy * 7;
+      const py = dx * 7;
+      g.fillTriangle(bx + px, by + py, bx - px, by - py, tx, ty);
+      g.strokeTriangle(bx + px, by + py, bx - px, by - py, tx, ty);
     }
   },
   'building-ThornHedgeV': (g, s) => {

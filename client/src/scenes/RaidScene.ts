@@ -1099,6 +1099,20 @@ export class RaidScene extends Phaser.Scene {
       const unitRole = UNIT_CODEX[e.kind]?.role ?? '';
 
       container.add([bg, icon, label]);
+      // Tiny "↧" badge on dig-capable units so the dig modifier reads
+      // as "this unit will actually do the layer flip". Without the
+      // badge a player who armed Dig has no visible signal that
+      // SoldierAnt won't dig but DirtDigger will.
+      if (!e.heroKind && Sim.UNIT_STATS[e.kind]?.canDig === true) {
+        const digBadge = this.add
+          .text(DECK_CARD_W / 2 - 8, -DECK_CARD_H / 2 + 8, '↧', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '13px',
+            color: '#ffd98a',
+          })
+          .setOrigin(1, 0);
+        container.add(digBadge);
+      }
       if (unitRole) {
         const roleText = this.add
           .text(0, 29, unitRole, {
@@ -1285,6 +1299,27 @@ export class RaidScene extends Phaser.Scene {
       // Auto-attach the active modifier at the polyline's midpoint
       // waypoint. We never use index 0 (spawn) — pheromone_follow only
       // fires modifiers on arrival, so 0 would be inert.
+      //
+      // Dig sanity check: only canDig units flip layer at the marker.
+      // If the player armed Dig but selected a non-digger unit (e.g.
+      // SoldierAnt), the modifier is silently inert — surface it with
+      // a hint so the player knows to swap units. The path is still
+      // marked with the modifier so the visual stamp is consistent;
+      // the sim's applyPathModifierOnArrival is the actual no-op.
+      const willDig =
+        this.currentModifierMode === 'dig' &&
+        tilePoints.length >= 3 &&
+        !entry.heroKind &&
+        Sim.UNIT_STATS[entry.kind]?.canDig === true;
+      if (
+        this.currentModifierMode === 'dig' &&
+        tilePoints.length >= 3 &&
+        !willDig
+      ) {
+        this.deckHintText.setText(
+          `${entry.label} can't dig — pick a Digger or Termite, then redraw the path.`,
+        );
+      }
       const modifier: Types.PathModifier | undefined =
         this.currentModifierMode === 'none' || tilePoints.length < 3
           ? undefined

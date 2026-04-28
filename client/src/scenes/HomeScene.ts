@@ -102,11 +102,58 @@ function whatNextIdentity(
   return s.sceneKey;
 }
 
+// True when the pointer event came from a mouse (vs touch / pen).
+// Phaser's Pointer doesn't expose `pointerType` directly in its types,
+// but the underlying browser PointerEvent does — read it off `event`
+// when present and fall back to "treat as mouse" so desktop hovers
+// still work in environments without the property.
+function isMousePointer(p: Phaser.Input.Pointer): boolean {
+  const ev = (p as Phaser.Input.Pointer & { event?: PointerEvent | TouchEvent }).event;
+  if (!ev) return true;
+  if ('pointerType' in ev && typeof ev.pointerType === 'string') {
+    return ev.pointerType === 'mouse';
+  }
+  return false;
+}
+
 function buildingTextureKey(kind: Types.BuildingKind, rotation: 0 | 1 | 2 | 3 = 0): string {
   if (KINDS_WITH_V_VARIANTS.has(kind) && rotation % 2 === 1) {
     return `building-${kind}V`;
   }
   return `building-${kind}`;
+}
+
+// Wall corner detection: when a wall section has BOTH a horizontal
+// neighbour (same row, ±1 col) AND a vertical neighbour (same col,
+// ±1 row) of the same kind, it's the elbow of an L-bend and renders
+// using the corner sprite so the perpendicular sections butt into a
+// rounded node instead of leaving a visible seam. Falls back to the
+// regular H/V variant when no corner condition is detected.
+function wallTextureKey(
+  b: Types.Building,
+  base: Types.Base | null,
+  rot: 0 | 1 | 2 | 3,
+): string {
+  if (!KINDS_WITH_V_VARIANTS.has(b.kind)) {
+    return buildingTextureKey(b.kind, rot);
+  }
+  if (!base) return buildingTextureKey(b.kind, rot);
+  let hasH = false;
+  let hasV = false;
+  for (const n of base.buildings) {
+    if (n.id === b.id) continue;
+    if (n.kind !== b.kind) continue;
+    if (n.anchor.layer !== b.anchor.layer) continue;
+    if (n.anchor.y === b.anchor.y && Math.abs(n.anchor.x - b.anchor.x) === 1) {
+      hasH = true;
+    }
+    if (n.anchor.x === b.anchor.x && Math.abs(n.anchor.y - b.anchor.y) === 1) {
+      hasV = true;
+    }
+    if (hasH && hasV) break;
+  }
+  if (hasH && hasV) return `building-${b.kind}Corner`;
+  return buildingTextureKey(b.kind, rot);
 }
 
 // A fixed starter base. Each building is a tuple: [kind, x, y, layer].
@@ -1665,9 +1712,30 @@ export class HomeScene extends Phaser.Scene {
         face = crispText(this, 0, 1, fallbackGlyph, displayTextStyle(13, COLOR.textDark, 1)).setOrigin(0.5, 0.5);
       }
       const hit = this.add.zone(0, 0, 36, 36).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+      // Tap on the harvest chip MUST NOT also open the building info
+      // modal of the producer beneath it. Phaser's input dispatch isn't
+      // reliable here because the chip is a child of a container while
+      // the building sprite lives directly on boardContainer — the two
+      // interactives end up at adjacent depths and pointerup occasionally
+      // lands on the building. Belt + braces:
+      //   1. stopPropagation on pointerdown + pointerup so the bubbling
+      //      path is closed when topOnly does work.
+      //   2. Latch a "harvest tap was just here" timestamp the building
+      //      sprite's pointerup checks before opening its modal.
+      //   3. Latch the scene-level board-tap guard so wireBoardTap()'s
+      //      pointerup branch doesn't open the empty-tile picker either.
+      const stop = (e: Phaser.Types.Input.EventData): void => {
         e?.stopPropagation?.();
+      };
+      hit.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+        stop(e);
+        this.harvestTapAtMs = this.time.now;
+        this.tapStartedInsidePicker = true;
         void this.runHarvest();
+      });
+      hit.on('pointerup', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+        stop(e);
+        this.harvestTapAtMs = this.time.now;
       });
       chip.add([bg, face, hit]);
       // Gentle bobbing tween so the chip reads as "ready to claim"
@@ -1811,7 +1879,7 @@ export class HomeScene extends Phaser.Scene {
     const x = b.anchor.x * TILE + (b.footprint.w * TILE) / 2;
     const y = b.anchor.y * TILE + (b.footprint.h * TILE) / 2;
     const rot = (b.rotation ?? 0) as 0 | 1 | 2 | 3;
-    const spr = this.add.image(x, y, buildingTextureKey(b.kind, rot));
+    const spr = this.add.image(x, y, wallTextureKey(b, this.serverBase, rot));
     spr.setOrigin(0.5, 0.5) /* center sprite within footprint cell so it never bleeds above the grid */;
     spr.setAlpha(spansBoth && b.anchor.layer !== this.layer ? 0.65 : 1);
     // Buildings render at exactly footprint × TILE so each kind
@@ -1874,6 +1942,12 @@ export class HomeScene extends Phaser.Scene {
       e: Phaser.Types.Input.EventData,
     ) => {
       e?.stopPropagation?.();
+      // Suppress the info modal if the same gesture just hit a harvest
+      // chip — the chip sits over the building sprite, so the player's
+      // intent was "collect" not "inspect". See harvestTapAtMs notes.
+      if (this.time.now - this.harvestTapAtMs < HomeScene.HARVEST_TAP_GRACE_MS) {
+        return;
+      }
       const dragDist = Phaser.Math.Distance.Between(
         p.downX, p.downY, p.upX, p.upY,
       );
@@ -1892,8 +1966,57 @@ export class HomeScene extends Phaser.Scene {
       }
       this.openBuildingInfo(b);
     });
+    // Desktop hover: show the building's name + level as a quick
+    // tooltip without opening the full info modal. Touch devices
+    // synthesize a brief pointerover on tap, so we gate on
+    // `event.pointerType === 'mouse'` to keep the tooltip a desktop
+    // affordance.
+    spr.on('pointerover', (p: Phaser.Input.Pointer) => {
+      if (!isMousePointer(p)) return;
+      this.showBuildingHover(b, spr);
+    });
+    spr.on('pointerout', () => {
+      this.hideBuildingHover(b.id);
+    });
     this.boardContainer.add(spr);
     return spr;
+  }
+
+  // Single-flight tooltip per hovered building. Stored on the scene so
+  // a fast pointer-out → pointer-over on a different building doesn't
+  // leak labels. Container holds {bg, text} drawn relative to the
+  // building's center; cleaned up on pointer-out and on board redraw.
+  private buildingHoverTip: { id: string; container: Phaser.GameObjects.Container } | null = null;
+
+  private showBuildingHover(b: Types.Building, spr: Phaser.GameObjects.Image): void {
+    this.hideBuildingHover();
+    const codex = BUILDING_CODEX[b.kind];
+    const name = codex?.name ?? b.kind.replace(/([A-Z])/g, ' $1').trim();
+    const label = `${name}  ·  Lv ${b.level}`;
+    const text = crispText(this, 0, 0, label, labelTextStyle(11, COLOR.textGold))
+      .setOrigin(0.5, 0.5);
+    const padX = 8;
+    const padY = 4;
+    const w = text.width + padX * 2;
+    const h = text.height + padY * 2;
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.78);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 4);
+    bg.lineStyle(1, COLOR.brassDeep, 0.9);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 4);
+    const cx = spr.x;
+    const cy = spr.y - spr.displayHeight / 2 - h / 2 - 6;
+    const container = this.add.container(cx, cy, [bg, text]);
+    container.setDepth(DEPTHS.boardOverlay + 5);
+    this.boardContainer.add(container);
+    this.buildingHoverTip = { id: b.id, container };
+  }
+
+  private hideBuildingHover(id?: string): void {
+    if (!this.buildingHoverTip) return;
+    if (id !== undefined && this.buildingHoverTip.id !== id) return;
+    this.buildingHoverTip.container.destroy(true);
+    this.buildingHoverTip = null;
   }
 
   // Replace the sprite for a single building. Used after a successful
@@ -2347,7 +2470,7 @@ export class HomeScene extends Phaser.Scene {
       if (spr) {
         const rot = (updated.rotation ?? 0) as 0 | 1 | 2 | 3;
         if (KINDS_WITH_V_VARIANTS.has(updated.kind)) {
-          spr.setTexture(buildingTextureKey(updated.kind, rot));
+          spr.setTexture(wallTextureKey(updated, this.serverBase, rot));
           spr.setRotation(0);
         } else {
           spr.setRotation((rot * Math.PI) / 2);
@@ -3463,6 +3586,13 @@ export class HomeScene extends Phaser.Scene {
   // picker closes is treated as the tail of the close gesture.
   private pickerClosedAtMs = 0;
   private static readonly PICKER_REOPEN_GRACE_MS = 250;
+  // Timestamp of the last harvest-chip tap (down or up). The producer
+  // building sits directly under the chip; without this latch the same
+  // tap fires the building's pointerup handler immediately after the
+  // chip's, opening the info modal on top of the harvest call. The
+  // building handler bails out for the duration of HARVEST_TAP_GRACE_MS.
+  private harvestTapAtMs = 0;
+  private static readonly HARVEST_TAP_GRACE_MS = 280;
 
   private panAnchor: { px: number; py: number; cx: number; cy: number } | null = null;
   private isPanningBoard = false;
@@ -3711,23 +3841,31 @@ export class HomeScene extends Phaser.Scene {
       this.flashToast('Loading catalog…');
       return;
     }
-    // Layout: header / title / subtitle stay on top; building tiles
-    // sit in a single HORIZONTAL row below, scrollable when the row
-    // overflows the modal width. The previous 4-column grid grew
-    // with the building roster and started overflowing the viewport
-    // (Milk Pot was getting clipped on tall phones). A scrollable
-    // strip cap-bounds the modal height regardless of how many
-    // kinds the catalog returns.
-    const slotW = 116;
-    const slotH = 140;
+    // Layout: on desktop the picker is a slim, full-width strip pinned
+    // to the bottom of the viewport so the player can still see most of
+    // the board behind it. On phone-narrow viewports we fall back to
+    // the original centered card so the slots stay tap-sized.
+    //
+    // Common layout: header / title / subtitle stack on top; building
+    // tiles sit in a single horizontal row below, scrollable when the
+    // row overflows the modal width.
+    const isWide = !this.isMobileLayout();
+    const slotW = isWide ? 96 : 116;
+    const slotH = isWide ? 116 : 140;
     const slotGap = 10;
-    const headerH = 86;
-    const footerH = 28;
+    const headerH = isWide ? 56 : 86;
+    const footerH = isWide ? 14 : 28;
     const stripH = slotH + 16;
-    const W = Math.min(640, this.scale.width - 32);
-    const H = Math.min(this.scale.height - 80, headerH + stripH + footerH);
-    const ox = (this.scale.width - W) / 2;
-    const oy = (this.scale.height - H) / 2;
+    const W = isWide
+      ? this.scale.width
+      : Math.min(640, this.scale.width - 32);
+    const H = isWide
+      ? headerH + stripH + footerH
+      : Math.min(this.scale.height - 80, headerH + stripH + footerH);
+    const ox = isWide ? 0 : (this.scale.width - W) / 2;
+    const oy = isWide
+      ? this.scale.height - H
+      : (this.scale.height - H) / 2;
 
     const bg = this.add.graphics().setDepth(200);
     bg.fillStyle(0x000000, 0.6);
@@ -3768,13 +3906,16 @@ export class HomeScene extends Phaser.Scene {
     const container = this.add.container(0, 0).setDepth(202);
     container.add([bg, backdrop, card, cardZone]);
 
+    // Header layout differs between desktop (slim full-width strip,
+    // pill + title on a single row) and phone (taller stacked card).
     const headerPill = this.add.graphics().setDepth(203);
-    drawPill(headerPill, ox + 20, oy + 18, 126, 22, { brass: true });
+    const pillY = isWide ? oy + 10 : oy + 18;
+    drawPill(headerPill, ox + 20, pillY, 126, 22, { brass: true });
     container.add(headerPill);
     const headerLabel = crispText(
       this,
       ox + 83,
-      oy + 29,
+      pillY + 11,
       'Build menu',
       labelTextStyle(10, COLOR.textGold),
     )
@@ -3782,34 +3923,61 @@ export class HomeScene extends Phaser.Scene {
       .setDepth(203);
     container.add(headerLabel);
 
-    const title = crispText(
-      this,
-      ox + 20,
-      oy + 48,
-      this.layer === 0
-        ? `Build on surface tile ${tx}, ${ty}`
-        : `Build on underground tile ${tx}, ${ty}`,
-      displayTextStyle(15, COLOR.textGold, 3),
-    )
-      .setOrigin(0, 0)
-      .setDepth(203);
-    container.add(title);
-    const subtitle = crispText(
-      this,
-      ox + 20,
-      oy + 70,
-      'Choose a structure to place in this slot.',
-      bodyTextStyle(12, COLOR.textPrimary),
-    )
-      .setOrigin(0, 0)
-      .setDepth(203);
-    container.add(subtitle);
+    const titleText = this.layer === 0
+      ? `Build on surface tile ${tx}, ${ty}`
+      : `Build on underground tile ${tx}, ${ty}`;
+    const subtitleText = 'Choose a structure to place in this slot.';
+    if (isWide) {
+      // Single-row header: pill on the left, title + subtitle to its
+      // right, close button on the far right.
+      const title = crispText(
+        this,
+        ox + 160,
+        oy + 14,
+        titleText,
+        displayTextStyle(14, COLOR.textGold, 2),
+      )
+        .setOrigin(0, 0)
+        .setDepth(203);
+      container.add(title);
+      const subtitle = crispText(
+        this,
+        ox + 160,
+        oy + 32,
+        subtitleText,
+        bodyTextStyle(11, COLOR.textPrimary),
+      )
+        .setOrigin(0, 0)
+        .setDepth(203);
+      container.add(subtitle);
+    } else {
+      const title = crispText(
+        this,
+        ox + 20,
+        oy + 48,
+        titleText,
+        displayTextStyle(15, COLOR.textGold, 3),
+      )
+        .setOrigin(0, 0)
+        .setDepth(203);
+      container.add(title);
+      const subtitle = crispText(
+        this,
+        ox + 20,
+        oy + 70,
+        subtitleText,
+        bodyTextStyle(12, COLOR.textPrimary),
+      )
+        .setOrigin(0, 0)
+        .setDepth(203);
+      container.add(subtitle);
+    }
 
     // Close button
     const close = crispText(
       this,
       ox + W - 18,
-      oy + 16,
+      isWide ? oy + 8 : oy + 16,
       'X',
       displayTextStyle(18, '#c3e8b0', 2),
     )
