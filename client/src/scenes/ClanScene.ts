@@ -9,6 +9,7 @@ import type { ClanMyResponse, ClanSummary } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 // ClanScene — three views:
@@ -782,20 +783,17 @@ export class ClanScene extends Phaser.Scene {
   private renderBrowseList(): void {
     const rows = this.browseLoaded ?? [];
     if (rows.length === 0) {
-      this.layerContainer.add(
-        this.add
-          .text(
-            this.scale.width / 2,
-            HUD_H + 80,
-            'No open clans yet — create the first one!',
-            {
-              fontFamily: 'ui-monospace, monospace',
-              fontSize: '13px',
-              color: '#9cb98a',
-            },
-          )
-          .setOrigin(0.5),
-      );
+      const cardW = Math.min(this.scale.width - 32, 480);
+      const handle = drawEmptyState({
+        scene: this,
+        x: (this.scale.width - cardW) / 2,
+        y: HUD_H + 60,
+        width: cardW,
+        glyph: '🐜',
+        title: 'No open clans yet',
+        body: 'Be the first to start one — your name on the chamber wall.',
+      });
+      this.layerContainer.add(handle.container);
       return;
     }
     const maxW = Math.min(600, this.scale.width - 32);

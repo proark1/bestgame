@@ -38,6 +38,16 @@ export interface HiveRuntime {
   auth: AuthClient;
   api: Api;
   player: PlayerMeResponse | null;
+  // One-shot delta payload set by RaidScene right after a raid
+  // submission lands (pre-mutation snapshot vs. server response).
+  // HomeScene reads + clears this on next entry to spawn flying
+  // "+N" pulses over the resource pills, so the player can see
+  // exactly what they earned. Always cleared after consumption.
+  pendingResourceGain?: {
+    sugar: number;
+    leafBits: number;
+    aphidMilk: number;
+  };
 }
 
 // Remove the HTML splash shown during initial JS load. Called twice

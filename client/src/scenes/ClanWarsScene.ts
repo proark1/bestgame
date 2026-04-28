@@ -11,6 +11,7 @@ import {
 import { makeHiveButton } from '../ui/button.js';
 import { crispText } from '../ui/text.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import {
   COLOR,
   bodyTextStyle,
@@ -107,27 +108,18 @@ export class ClanWarsScene extends Phaser.Scene {
     }
 
     if (!state.war) {
-      body.container.add(
-        crispText(this, originX, y,
-          'No active war.',
-          displayTextStyle(18, COLOR.textGold, 3),
-        ),
-      );
-      y += 36;
-      body.container.add(
-        crispText(this, originX, y,
-          'Your clan leader starts a war against another clan. Every member of both clans has one attack shot, scored in stars. Highest-stars clan wins; ties split a smaller bonus.',
-          bodyTextStyle(13, COLOR.textDim),
-        ).setWordWrapWidth(maxW, true),
-      );
-      y += 84;
-      body.container.add(
-        crispText(this, originX, y,
-          'Ask your leader to start one from the Clan screen.',
-          bodyTextStyle(12, COLOR.textMuted),
-        ),
-      );
-      body.setContentHeight(y + 40);
+      const handle = drawEmptyState({
+        scene: this,
+        x: originX,
+        y,
+        width: maxW,
+        glyph: '⚔️',
+        title: 'No active war',
+        body:
+          'Your clan leader starts a war against another clan. Each member gets one attack, scored in stars. Highest-stars clan wins.',
+      });
+      body.container.add(handle.container);
+      body.setContentHeight(y + handle.height + 12);
       return;
     }
 

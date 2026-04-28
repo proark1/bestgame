@@ -6,6 +6,7 @@ import type { LeaderboardEntry } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 const HUD_H = 56;
@@ -191,25 +192,20 @@ export class LeaderboardScene extends Phaser.Scene {
     if (rows.length === 0) {
       // Empty state — brand-new seasons (or a server with no recent
       // raids) would otherwise land the user on a header-only page.
-      this.rowContainer.add(
-        crispText(
-          this,
-          this.scale.width / 2,
-          y + 28,
-          'No commanders on the board yet.',
-          displayTextStyle(15, COLOR.textDim, 3),
-        ).setOrigin(0.5, 0),
-      );
-      this.rowContainer.add(
-        crispText(
-          this,
-          this.scale.width / 2,
-          y + 56,
+      // Uses the shared emptyState helper so the look matches the
+      // raid-history / replay-feed empty cards.
+      const handle = drawEmptyState({
+        scene: this,
+        x: originX,
+        y: y + 12,
+        width: maxW,
+        glyph: '🏆',
+        title: 'No commanders on the board yet',
+        body:
           'Raid a base to log your first trophies — you might take the top slot.',
-          bodyTextStyle(12, COLOR.textMuted),
-        ).setOrigin(0.5, 0),
-      );
-      y += 96;
+      });
+      this.rowContainer.add(handle.container);
+      y += handle.height + 24;
     }
 
     rows.forEach((r, i) => {

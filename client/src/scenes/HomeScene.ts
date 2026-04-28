@@ -224,6 +224,17 @@ export class HomeScene extends Phaser.Scene {
     this.drawStickyHooks();
     this.drawFooter();
     this.wireBoardTap();
+    // If RaidScene stashed a delta on the way out, pulse the pills
+    // and float a "+N" number for each positive gain. One-shot:
+    // clear it so a later re-entry (e.g. opening the burger drawer
+    // and coming back) doesn't replay the same animation.
+    const runtimeForGain = this.registry.get('runtime') as
+      | HiveRuntime
+      | undefined;
+    if (runtimeForGain?.pendingResourceGain) {
+      this.pulseResourceGains(runtimeForGain.pendingResourceGain);
+      delete runtimeForGain.pendingResourceGain;
+    }
     // Kick off catalog fetch (non-blocking) — it's cached per scene
     // enter. If it fails, the picker shows a network error.
     void this.loadCatalog();
@@ -433,6 +444,61 @@ export class HomeScene extends Phaser.Scene {
       duration: 260,
       ease: 'Sine.easeOut',
     });
+  }
+
+  // Bigger one-shot reward animation, fired on scene entry when
+  // RaidScene set a pendingResourceGain on the runtime. For each
+  // non-zero positive delta we (a) scale-pulse the pill text and
+  // (b) float a "+N" number upward from the pill, fading out. Zero
+  // and negative deltas are skipped — players don't need a "+0" or
+  // a refund to fly across the screen. The whole thing lives on a
+  // tween schedule so it never blocks input.
+  private pulseResourceGains(deltas: {
+    sugar: number;
+    leafBits: number;
+    aphidMilk: number;
+  }): void {
+    const targets: Array<{
+      text: Phaser.GameObjects.Text | null;
+      delta: number;
+      color: string;
+    }> = [
+      { text: this.sugarText, delta: Math.round(deltas.sugar), color: '#ffd98a' },
+      { text: this.leafText, delta: Math.round(deltas.leafBits), color: '#c8f2a0' },
+      { text: this.milkText, delta: Math.round(deltas.aphidMilk), color: '#dfe8ff' },
+    ];
+    for (const t of targets) {
+      if (!t.text || t.delta <= 0) continue;
+      // Scale-pulse the pill text — peaks at 1.18× over ~140 ms,
+      // settles back over ~260 ms. yoyo in two halves rather than
+      // one long tween so the snap-back has its own ease.
+      this.tweens.add({
+        targets: t.text,
+        scale: 1.18,
+        duration: 140,
+        ease: 'Cubic.easeOut',
+        yoyo: true,
+      });
+      // Floating "+N" number. Anchored just left of the pill text
+      // so it doesn't overlap, drifts up ~28 px while fading.
+      const float = crispText(
+        this,
+        t.text.x - 8,
+        t.text.y,
+        `+${t.delta.toLocaleString()}`,
+        displayTextStyle(13, t.color, 3),
+      )
+        .setOrigin(1, 0.5)
+        .setDepth(DEPTHS.hud + 1);
+      this.tweens.add({
+        targets: float,
+        y: t.text.y - 28,
+        alpha: { from: 1, to: 0 },
+        duration: 900,
+        ease: 'Cubic.easeOut',
+        onComplete: () => float.destroy(),
+      });
+    }
   }
 
   // Formats the inside-pill value text. Sugar + leaf show
