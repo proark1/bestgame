@@ -38,6 +38,12 @@ const HUD_H = 56;
 const DECK_CARD_H = 96;
 const DECK_CARD_W = 108;
 const DECK_GRID_GAP = 12;
+// Below this viewport width we collapse to the phone layout: hide
+// the layer badges + LOOTABLE preview + "vs Opponent" text, drop
+// the deck-tray hint line, and the metadata strip shrinks. Single
+// source of truth so HUD / deck / opponent banner / lootable
+// banner all flip on the same threshold.
+const NARROW_WIDTH = 600;
 const TICK_HZ = 30;
 const RAID_SECONDS = 90;
 const SPAWN_ZONE_W = TILE * 2;
@@ -781,18 +787,22 @@ export class RaidScene extends Phaser.Scene {
     // attacker's units are on each layer right now. Drawn dim by
     // default and brighten when the corresponding layer is active.
     // Positioned to the immediate left of the timer in layout().
+    // Layer badges — used to render with ☼ / ⛏ glyphs but those
+    // didn't always rasterise on iOS Safari (left a bare "10" /
+    // "0" floating near the timer). Plain "Sur" / "Und" labels
+    // avoid the font fallback issue and fit narrower.
     this.layerBadgeSurface = this.add
-      .text(0, 0, '☼ 0', {
+      .text(0, 0, 'Sur 0', {
         fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
+        fontSize: '12px',
         color: '#9fc79a',
       })
       .setOrigin(1, 0.5)
       .setDepth(DEPTHS.hud);
     this.layerBadgeUnderground = this.add
-      .text(0, 0, '⛏ 0', {
+      .text(0, 0, 'Und 0', {
         fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
+        fontSize: '12px',
         color: '#9fc79a',
       })
       .setOrigin(1, 0.5)
@@ -823,7 +833,13 @@ export class RaidScene extends Phaser.Scene {
     // `lootText` above ticks up during the raid and represents what
     // they've actually banked at this point.
     const lootable = this.computeLootableTotal();
-    if (lootable.sugar > 0 || lootable.leafBits > 0) {
+    // Lootable preview — only shown on wider viewports. On phone
+    // it just stacks more text under the timer and the player can
+    // see the live loot counter on the right anyway.
+    if (
+      (lootable.sugar > 0 || lootable.leafBits > 0) &&
+      this.scale.width >= NARROW_WIDTH
+    ) {
       this.add
         .text(
           this.scale.width / 2,
@@ -1019,6 +1035,12 @@ export class RaidScene extends Phaser.Scene {
 
       const codex = BUILDING_CODEX[b.kind];
       if (codex) {
+        // Role label is hidden by default — used to render always-on,
+        // which on a phone-narrow viewport produced a wall of stacked
+        // text covering the buildings (every neighbour's label
+        // overlapped the next). Now it's a tap-to-reveal surface:
+        // we still build the text object so other code paths can
+        // flash it, but visibility starts off.
         const labelY = b.anchorY * TILE - 6;
         const roleLabel = this.add
           .text(x, labelY, codex.role, {
@@ -1029,9 +1051,33 @@ export class RaidScene extends Phaser.Scene {
             padding: { x: 4, y: 2 },
           })
           .setOrigin(0.5, 1)
-          .setDepth(6);
+          .setDepth(6)
+          .setVisible(false);
         this.boardContainer.add(roleLabel);
         this.buildingRoleLabels.set(b.id, roleLabel);
+
+        // Tap the building to flash its role label for ~2 s. Spans
+        // the whole footprint so the hit zone matches the visible
+        // tile, and an existing pulse on the same building cancels
+        // before the new one starts so rapid taps don't pile up.
+        spr.setInteractive({ useHandCursor: true });
+        spr.on('pointerdown', () => {
+          // Don't flash the label on a building that's already
+          // dead — its sprite is faded to 0.18 alpha (see destroy
+          // tween in the build-update loop) and a fresh full-alpha
+          // role tag floating above looks broken.
+          if (b.hp <= 0) return;
+          roleLabel.setVisible(true);
+          roleLabel.setAlpha(1);
+          this.tweens.killTweensOf(roleLabel);
+          this.tweens.add({
+            targets: roleLabel,
+            alpha: 0,
+            duration: 1800,
+            delay: 400,
+            onComplete: () => roleLabel.setVisible(false),
+          });
+        });
       }
     }
   }
@@ -1952,17 +1998,23 @@ export class RaidScene extends Phaser.Scene {
       .setDisplaySize(34, 34)
       .setDepth(31);
     this.deckSelectedText = this.add
+      // Left-anchored so the title flows from the icon outward on a
+      // narrow viewport instead of being center-anchored over the
+      // big count text.
       .text(0, 0, '', displayTextStyle(15, '#ffd98a', 3))
-      .setOrigin(0.5, 0)
+      .setOrigin(0, 0.5)
       .setDepth(31);
     this.deckUnitCountText = this.add
+      // Right-anchored so the X/Y count sits in the corner away
+      // from the centered title + hint. Slightly smaller (24 → 22)
+      // so it doesn't tower over the description on phone.
       .text(0, 0, '', {
         fontFamily: 'ui-monospace, monospace',
-        fontSize: '28px',
+        fontSize: '22px',
         fontStyle: 'bold',
         color: '#c3e8b0',
       })
-      .setOrigin(0.5, 0.5)
+      .setOrigin(1, 0.5)
       .setDepth(31);
     this.deckHintText = this.add
       .text(
@@ -2086,12 +2138,14 @@ export class RaidScene extends Phaser.Scene {
     if (!entry) return;
     this.deckSelectedIcon.setTexture(entry.icon);
     this.deckSelectedIcon.setAlpha(entry.count > 0 ? 1 : 0.5);
-    const status = entry.count > 0 ? `${entry.count} ready` : 'depleted';
-    const burst = Math.min(entry.count, 5);
     const unitCodex = UNIT_CODEX[entry.kind];
     const roleStr = unitCodex ? ` — ${unitCodex.role}` : '';
+    // Title row stays short — just "Wasp — Flying sniper". The big
+    // X/Y count and per-card "×N" badge already say "ready" and
+    // "deploys N", and previously cramming "(4 ready) • deploys 4"
+    // into the title overlapped the count + hint on phone.
     this.deckSelectedText.setText(
-      `${entry.label}${roleStr} (${status})${entry.count > 0 ? ` • deploys ${burst}` : ''}`,
+      entry.count > 0 ? `${entry.label}${roleStr}` : `${entry.label} — depleted`,
     );
 
     // Unit count display: shows current/max count, color-coded by readiness
@@ -2132,26 +2186,32 @@ export class RaidScene extends Phaser.Scene {
     cols: number;
     scale: number;
     trayHeight: number;
+    showHint: boolean;
+    // Pixel offset from the tray top to the first card row. Equals
+    // the metadata strip height (50 narrow / 72 wide) — exposed so
+    // layout() and the grid offset stay in sync without each
+    // hardcoding the same constant.
+    headerHeight: number;
   } {
-    // Minimum scale that keeps a card tap-friendly (48 px physical
-    // targets per iOS HIG; DECK_CARD_W * 0.62 ≈ 67 px, comfortable for
-    // thumbs and still shows the icon + count). Below this we wrap to
-    // another row rather than shrinking cards further.
+    // Minimum scale that keeps a card tap-friendly. Below this we
+    // wrap to another row rather than shrinking cards further.
     const MIN_SCALE = 0.62;
     const WRAP_SCALE = 0.78;
 
     const count = Math.max(1, this.deckEntries.length);
     const availW = this.scale.width - 24;
+    // Phone-narrow heuristic — under 600 px we drop the codex
+    // power-blurb hint line from the tray entirely (the deck cards
+    // are tiny, the title says enough). Saves ~22 px of height
+    // which goes back into the playable board.
+    const isNarrow = this.scale.width < NARROW_WIDTH;
     const scaleFor = (cols: number): number =>
       Math.min(
         1,
         (availW - DECK_GRID_GAP * Math.max(0, cols - 1)) / (DECK_CARD_W * cols),
       );
 
-    // Pick the fewest rows that keep cards readable. Previously capped
-    // at 2 rows, which on ≤360 px phones packed 5 cards into a row at
-    // scale ~0.53 — below the tap-target floor. Now we fall through to
-    // 3 rows when 2 would still shrink cards past MIN_SCALE.
+    // Pick the fewest rows that keep cards readable.
     let rows: 1 | 2 | 3 = 1;
     if (scaleFor(count) < WRAP_SCALE) rows = 2;
     if (rows === 2 && scaleFor(Math.ceil(count / 2)) < MIN_SCALE) rows = 3;
@@ -2159,9 +2219,20 @@ export class RaidScene extends Phaser.Scene {
     const cols = Math.ceil(count / rows);
     const scale = Math.max(MIN_SCALE, scaleFor(cols));
     const rowHeight = DECK_CARD_H * scale;
-    const trayHeight =
-      Math.ceil(56 + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 18);
-    return { rows, cols, scale, trayHeight };
+    // Metadata strip above the cards: 50 px = title row + divider.
+    // Plus the optional hint line (22 px) on wider viewports.
+    const headerHeight = isNarrow ? 50 : 72;
+    const trayHeight = Math.ceil(
+      headerHeight + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 14,
+    );
+    return {
+      rows,
+      cols,
+      scale,
+      trayHeight,
+      showHint: !isNarrow,
+      headerHeight,
+    };
   }
 
   // Spawn the right visual for a unit. Three conditions must all be
@@ -2513,11 +2584,11 @@ export class RaidScene extends Phaser.Scene {
     // Layer activity badges. Surface count brightens to gold when
     // anyone is up top; underground dims to a cool teal otherwise.
     if (this.layerBadgeSurface) {
-      this.layerBadgeSurface.setText(`☼ ${surfaceCount}`);
+      this.layerBadgeSurface.setText(`Sur ${surfaceCount}`);
       this.layerBadgeSurface.setColor(surfaceCount > 0 ? '#ffd98a' : '#54663f');
     }
     if (this.layerBadgeUnderground) {
-      this.layerBadgeUnderground.setText(`⛏ ${undergroundCount}`);
+      this.layerBadgeUnderground.setText(`Und ${undergroundCount}`);
       this.layerBadgeUnderground.setColor(undergroundCount > 0 ? '#a8c6ff' : '#3a4a55');
     }
   }
@@ -2808,14 +2879,26 @@ export class RaidScene extends Phaser.Scene {
       this.buildingLastHp.clear();
       this.buildingKillPlayed.clear();
       this.drawBuildingsFromState();
-      this.add
-        .text(this.scale.width / 2, 4, `vs ${match.opponent.displayName}`, {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: match.opponent.isBot ? '#c3e8b0' : '#ffd98a',
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(DEPTHS.raidHudValue);
+      // "vs Opponent" — anchored just below the HUD strip on
+      // wide viewports, hidden on phone where it would overlap
+      // the timer column. Fits within MODIFIER_BAR_H so the
+      // modifier toolbar still sits comfortably below it.
+      const isNarrow = this.scale.width < NARROW_WIDTH;
+      if (!isNarrow) {
+        this.add
+          .text(
+            this.scale.width / 2,
+            HUD_H - 12,
+            `vs ${match.opponent.displayName}`,
+            {
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: '11px',
+              color: match.opponent.isBot ? '#c3e8b0' : '#ffd98a',
+            },
+          )
+          .setOrigin(0.5, 0)
+          .setDepth(DEPTHS.raidHudValue);
+      }
     } catch (err) {
       // Non-fatal — keep the hard-coded bot.
       console.warn('match fetch failed, staying on bot:', err);
@@ -3341,15 +3424,27 @@ export class RaidScene extends Phaser.Scene {
       this.modifierBarBg.fillStyle(0x0a120b, 0.6);
       this.modifierBarBg.fillRoundedRect(-12, -4, groupW + 24, 40, 10);
     }
+    // Tighter HUD layout. On phone-narrow viewports (< 600 px) the
+    // layer badges hide entirely — they're a power-user readout
+    // and used to cram against the timer to produce stray "10" /
+    // "0" floaters once the unicode glyphs failed to render.
+    // Reuse deckLayout.showHint as the narrow-viewport flag —
+    // both surfaces flip on the same NARROW_WIDTH threshold.
+    const isNarrow = !deckLayout.showHint;
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
-    // Layer badges sit immediately to the left of the centred timer.
     if (this.layerBadgeSurface) {
-      this.layerBadgeSurface.setPosition(this.scale.width / 2 - 60, HUD_H / 2 - 10);
+      this.layerBadgeSurface.setVisible(!isNarrow);
+      if (!isNarrow) {
+        this.layerBadgeSurface.setPosition(this.scale.width / 2 - 60, HUD_H / 2 - 10);
+      }
     }
     if (this.layerBadgeUnderground) {
-      this.layerBadgeUnderground.setPosition(this.scale.width / 2 - 60, HUD_H / 2 + 10);
+      this.layerBadgeUnderground.setVisible(!isNarrow);
+      if (!isNarrow) {
+        this.layerBadgeUnderground.setPosition(this.scale.width / 2 - 60, HUD_H / 2 + 10);
+      }
     }
 
     const trayTop = this.scale.height - deckLayout.trayHeight - 12;
@@ -3365,34 +3460,55 @@ export class RaidScene extends Phaser.Scene {
       shadowOffset: 5,
       shadowAlpha: 0.42,
     });
+    // Title/strip divider — same width as the tray, sits below the
+    // single-row title (icon + name + count). Moved down from +44
+    // to +50 to clear the new title baseline.
     this.deckTrayBg.fillStyle(COLOR.brass, 0.18);
-    this.deckTrayBg.fillRect(28, trayTop + 44, this.scale.width - 56, 2);
+    this.deckTrayBg.fillRect(28, trayTop + 50, this.scale.width - 56, 2);
+    // Brass pill backing the icon — anchored to the left tray edge.
     drawPill(
       this.deckTrayBg,
-      this.scale.width / 2 - 178,
-      trayTop + 10,
-      44,
-      36,
+      18,
+      trayTop + 6,
+      52,
+      32,
       { brass: true },
     );
 
-    this.deckSelectedIcon.setPosition(this.scale.width / 2 - 154, trayTop + 28);
+    // Single-row title strip: [icon] [name — role] ........... [N/M]
+    // Icon hugs the left edge, title flows right from it, count
+    // sits in the right corner. On narrow viewports the title
+    // wraps at the count column instead of running underneath the
+    // big number.
+    const trayInsetX = 18;
+    const titleY = trayTop + 22;
+    const iconX = trayInsetX + 22;
+    const titleX = iconX + 28;
+    const countX = this.scale.width - trayInsetX;
+    this.deckSelectedIcon.setPosition(iconX, titleY);
     this.deckSelectedText
-      .setWordWrapWidth(220)
-      .setPosition(this.scale.width / 2 + 12, trayTop + 10);
-    this.deckUnitCountText
-      .setPosition(this.scale.width / 2 + 82, trayTop + 24);
+      .setWordWrapWidth(Math.max(120, countX - titleX - 56))
+      .setPosition(titleX, titleY);
+    this.deckUnitCountText.setPosition(countX, titleY);
+    // Hint sits BELOW the title strip instead of on top of it. On
+    // phone we drop it entirely (showHint=false) so the tray stays
+    // compact and the board gets the freed pixels.
     this.deckHintText
+      .setVisible(deckLayout.showHint)
       .setWordWrapWidth(this.scale.width - 56)
-      .setPosition(this.scale.width / 2, trayTop + 28);
+      .setPosition(this.scale.width / 2, trayTop + 50);
     this.deckUnlockText
+      .setVisible(deckLayout.showHint)
       .setWordWrapWidth(this.scale.width - 56)
-      .setPosition(this.scale.width / 2, trayTop + 44);
+      .setPosition(this.scale.width / 2, trayTop + 64);
 
     const rowHeight = DECK_CARD_H * deckLayout.scale;
     this.deckCardScale = deckLayout.scale;
     const rowGap = DECK_GRID_GAP;
-    const gridTop = trayTop + 72;
+    // Card grid starts just below the metadata strip — matches the
+    // stripH constant in deckLayoutMetrics so trayHeight always
+    // accounts for the same offset (50 narrow / 72 wide).
+    const gridTop = trayTop + deckLayout.headerHeight;
     for (let row = 0; row < deckLayout.rows; row++) {
       const rowStartIndex = row * deckLayout.cols;
       const rowCount = Math.min(
