@@ -30,6 +30,7 @@ import {
   generateAudio,
   putAudioPrompt,
   saveAudio,
+  setAudioEnabled,
   type AudioKind,
   type AudioPromptEntry,
   type AudioStatus,
@@ -122,8 +123,10 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
   function buildCard(key: string, entry: AudioPromptEntry): HTMLElement {
     const card = document.createElement('article');
     card.className = `audio-card audio-card-${entry.kind}`;
+    const enabled = entry.enabled !== false;
+    if (!enabled) card.classList.add('audio-card-disabled');
 
-    // Header: key + kind badge + on-disk status.
+    // Header: key + kind badge + on-disk status + enable toggle.
     const head = document.createElement('header');
     const title = document.createElement('h3');
     title.textContent = key;
@@ -131,6 +134,27 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
     badge.className = `audio-badge audio-badge-${entry.kind}`;
     badge.textContent = entry.kind === 'music' ? 'Music' : 'SFX';
     head.append(title, badge);
+
+    // Switch — flips the manifest entry on/off without touching the
+    // .mp3 on disk. Disabled keys fall back to the synth (sfx) or the
+    // procedural pad (music) at runtime, which is exactly what the
+    // operator wants when A/B-ing real vs synthesised audio.
+    const toggleWrap = document.createElement('label');
+    toggleWrap.className = 'audio-toggle';
+    toggleWrap.title = enabled
+      ? 'Click to disable — the game will fall back to synth/procedural'
+      : 'Click to enable — the saved sample will play in-game';
+    const toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleInput.checked = enabled;
+    const toggleSlider = document.createElement('span');
+    toggleSlider.className = 'audio-toggle-slider';
+    const toggleLabel = document.createElement('span');
+    toggleLabel.className = 'audio-toggle-label';
+    toggleLabel.textContent = enabled ? 'Enabled' : 'Disabled';
+    toggleWrap.append(toggleInput, toggleSlider, toggleLabel);
+    head.append(toggleWrap);
+
     const meta = fileMetaFor(key);
     const fileNote = document.createElement('small');
     fileNote.className = 'audio-file-note';
@@ -142,6 +166,35 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
     }
     head.append(fileNote);
     card.append(head);
+
+    toggleInput.addEventListener('change', () => {
+      const next = toggleInput.checked;
+      // Optimistic — flip the UI immediately, roll back on error so
+      // the operator always sees the truthful state.
+      const prev = !next;
+      toggleInput.disabled = true;
+      toggleLabel.textContent = next ? 'Enabled' : 'Disabled';
+      card.classList.toggle('audio-card-disabled', !next);
+      void (async () => {
+        try {
+          await setAudioEnabled(key, next);
+          if (status) status.prompts[key] = { ...entry, enabled: next };
+          opts.showStatus(
+            next
+              ? `${key} enabled — reload the game to hear the sample`
+              : `${key} disabled — falls back to synth/procedural on next reload`,
+            'success',
+          );
+        } catch (err) {
+          toggleInput.checked = prev;
+          toggleLabel.textContent = prev ? 'Enabled' : 'Disabled';
+          card.classList.toggle('audio-card-disabled', !prev);
+          opts.showStatus((err as Error).message, 'error');
+        } finally {
+          toggleInput.disabled = false;
+        }
+      })();
+    });
 
     // Label.
     const labelRow = document.createElement('label');

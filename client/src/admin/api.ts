@@ -377,6 +377,11 @@ export interface AudioPromptEntry {
   promptInfluence?: number;
   gain?: number;
   label?: string;
+  // Per-key kill switch. When `false`, the runtime skips the saved
+  // sample and falls back to its synth (sfx) or procedural pad
+  // (music) so the admin can A/B real audio against the fallback
+  // without deleting the file.
+  enabled?: boolean;
 }
 
 export interface AudioFileMeta {
@@ -457,6 +462,16 @@ export async function deleteAudio(key: string): Promise<void> {
   await req<{ ok: true }>(`/admin/api/audio/${encodeURIComponent(key)}`, {
     method: 'DELETE',
   });
+}
+
+export async function setAudioEnabled(
+  key: string,
+  enabled: boolean,
+): Promise<{ ok: true; key: string; enabled: boolean }> {
+  return req<{ ok: true; key: string; enabled: boolean }>(
+    `/admin/api/audio/prompts/${encodeURIComponent(key)}/enabled`,
+    { method: 'PATCH', json: { enabled } },
+  );
 }
 
 // Trigger a browser download of the whole sprites folder as a zip. The
