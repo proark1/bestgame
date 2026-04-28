@@ -6,6 +6,7 @@ import type { QuestsResponse, SeasonMilestone } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 
 const HUD_H = 56;
@@ -263,29 +264,20 @@ export class QuestsScene extends Phaser.Scene {
     title: string,
     body: string,
   ): number {
-    const h = 74;
-    const card = this.add.graphics();
-    drawPanel(card, originX, y, maxW, h, {
-      topColor: COLOR.bgCard,
-      botColor: COLOR.bgInset,
-      stroke: COLOR.outline,
-      strokeWidth: 2,
-      highlight: COLOR.brass,
-      highlightAlpha: 0.08,
-      radius: 12,
-      shadowOffset: 3,
-      shadowAlpha: 0.2,
+    // Delegate to the shared emptyState helper so the daily-quests
+    // empty card matches the look used by raid history, replay
+    // feed, leaderboard, and clan browse.
+    const handle = drawEmptyState({
+      scene: this,
+      x: originX,
+      y,
+      width: maxW,
+      glyph: '📋',
+      title,
+      body,
     });
-    this.rowContainer.add(card);
-    this.rowContainer.add(
-      crispText(this, originX + 18, y + 14, title, displayTextStyle(15, COLOR.textGold, 3)).setOrigin(0, 0),
-    );
-    this.rowContainer.add(
-      crispText(this, originX + 18, y + 40, body, bodyTextStyle(12, COLOR.textDim))
-        .setOrigin(0, 0)
-        .setWordWrapWidth(maxW - 36),
-    );
-    return y + h + 8;
+    this.rowContainer.add(handle.container);
+    return y + handle.height + 8;
   }
 
   private renderSeasonProgress(originX: number, maxW: number, y: number): number {

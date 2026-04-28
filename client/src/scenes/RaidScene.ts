@@ -16,6 +16,7 @@ import { drawPanel, drawPill } from '../ui/panel.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { haptic } from '../ui/haptics.js';
+import { openUnitInfoModal } from '../ui/unitInfoModal.js';
 import { buildTacticShareUrl, TACTICS_STORAGE_KEY, TACTICS_LIMIT } from '../codex/tacticShare.js';
 import { BUILDING_CODEX, UNIT_CODEX } from '../codex/codexData.js';
 import type { HiveRuntime } from '../main.js';
@@ -1034,19 +1035,48 @@ export class RaidScene extends Phaser.Scene {
         container.add(roleText);
       }
       container.setSize(DECK_CARD_W, DECK_CARD_H);
-      container
-        .setInteractive(
-          new Phaser.Geom.Rectangle(
-            -DECK_CARD_W / 2,
-            -DECK_CARD_H / 2,
-            DECK_CARD_W,
-            DECK_CARD_H,
-          ),
-          Phaser.Geom.Rectangle.Contains,
-        )
-        .on('pointerdown', () => {
-          this.selectDeckIndex(i);
+      container.setInteractive(
+        new Phaser.Geom.Rectangle(
+          -DECK_CARD_W / 2,
+          -DECK_CARD_H / 2,
+          DECK_CARD_W,
+          DECK_CARD_H,
+        ),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      // Long-press → codex peek. A short tap still selects the card
+      // (the existing behaviour). After ~350 ms of unmoved hold, we
+      // open a read-only codex modal for the unit on the card so a
+      // mid-raid player can refresh "what does FireAnt do?" without
+      // leaving the scene. Pointerup with the timer still pending
+      // counts as a tap; pointerout / pointermove cancel both paths.
+      const cardKind = e.kind;
+      let holdTimer: Phaser.Time.TimerEvent | null = null;
+      let opened = false;
+      const cancelHold = (): void => {
+        if (holdTimer) {
+          holdTimer.remove(false);
+          holdTimer = null;
+        }
+      };
+      container.on('pointerdown', () => {
+        opened = false;
+        cancelHold();
+        holdTimer = this.time.delayedCall(350, () => {
+          opened = true;
+          haptic(15);
+          openUnitInfoModal({ scene: this, kind: cardKind });
         });
+      });
+      container.on('pointerup', () => {
+        const wasLongPress = opened;
+        cancelHold();
+        if (!wasLongPress) {
+          this.selectDeckIndex(i);
+        }
+      });
+      container.on('pointerout', cancelHold);
+      container.on('pointerupoutside', cancelHold);
 
       this.deckContainers.push(container);
       this.deckLabels.push(label);
@@ -2741,10 +2771,21 @@ export class RaidScene extends Phaser.Scene {
         clientResultHash: Sim.hashToHex(Sim.hashSimState(this.state)),
       });
       if (runtime.player) {
+        const prevSugar = runtime.player.player.sugar;
+        const prevLeaf = runtime.player.player.leafBits;
+        const prevMilk = runtime.player.player.aphidMilk;
         runtime.player.player.trophies = res.player.trophies;
         runtime.player.player.sugar = res.player.sugar;
         runtime.player.player.leafBits = res.player.leafBits;
         runtime.player.player.aphidMilk = res.player.aphidMilk;
+        // Stash the delta so HomeScene can pulse the pills + float
+        // a "+N" number on next entry. Even small/zero deltas are
+        // recorded so HomeScene can decide which pills to animate.
+        runtime.pendingResourceGain = {
+          sugar: res.player.sugar - prevSugar,
+          leafBits: res.player.leafBits - prevLeaf,
+          aphidMilk: res.player.aphidMilk - prevMilk,
+        };
       }
       this.replayName = res.replayName ?? null;
       if (this.replayNameText && this.replayName) {
