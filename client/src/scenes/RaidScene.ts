@@ -361,6 +361,64 @@ function buildDeck(
   return [...heroes, ...swarm];
 }
 
+// Hand-tuned tutorial base. Deliberately undefended so a first-time
+// player wins their first raid 3-stars on a single deploy. The
+// structure teaches the basics: queen at the back, two storages to
+// loot, one tiny turret so the hit-flash + audio cues fire at least
+// once. Used when the home CTA stamps tutorialMission=true on the
+// registry; consumed once and resets so a re-entry runs normal
+// matchmaking again.
+const TUTORIAL_BASE: Types.Base = {
+  baseId: 'tutorial-0',
+  ownerId: 'tutorial-0',
+  faction: 'Beetles',
+  gridSize: { w: GRID_W, h: GRID_H },
+  resources: { sugar: 800, leafBits: 200, aphidMilk: 0 },
+  trophies: 0,
+  version: 1,
+  tunnels: [],
+  buildings: [
+    {
+      id: 'tut-queen',
+      kind: 'QueenChamber',
+      anchor: { x: 11, y: 5, layer: 0 },
+      footprint: { w: 2, h: 2 },
+      spans: [0, 1],
+      level: 1,
+      // Half the standard Q1 HP so two SoldierAnt waves crack it.
+      hp: 400,
+      hpMax: 400,
+    },
+    {
+      id: 'tut-turret',
+      kind: 'MushroomTurret',
+      anchor: { x: 8, y: 5, layer: 0 },
+      footprint: { w: 1, h: 1 },
+      level: 1,
+      hp: 200,
+      hpMax: 200,
+    },
+    {
+      id: 'tut-vault',
+      kind: 'SugarVault',
+      anchor: { x: 13, y: 7, layer: 0 },
+      footprint: { w: 1, h: 1 },
+      level: 1,
+      hp: 200,
+      hpMax: 200,
+    },
+    {
+      id: 'tut-silo',
+      kind: 'LeafSilo',
+      anchor: { x: 10, y: 8, layer: 0 },
+      footprint: { w: 1, h: 1 },
+      level: 1,
+      hp: 200,
+      hpMax: 200,
+    },
+  ],
+};
+
 const BOT_BASE: Types.Base = {
   baseId: 'bot-0',
   ownerId: 'bot-0',
@@ -491,6 +549,12 @@ export class RaidScene extends Phaser.Scene {
   // so a swarm of overlapping events doesn't spam the WebAudio mixer.
   private buildingHitsThisFrame = 0;
   private unitDeathsThisFrame = 0;
+  private damageNumbersThisFrame = 0;
+  // Slow-mo gate for hero moments (Queen kill). When > 0, sim ticks
+  // are paused and the value decrements by render delta. Lets the
+  // fanfare + flash + zoom punch land before the rest of the buildings
+  // also collapse a frame later.
+  private slowMoMs = 0;
   // Populated from GET /api/settings/animation at scene create.
   // A kind is "animated" iff (it's in ANIMATED_UNIT_KINDS) AND
   // (this Record has it set to true) AND (the walk texture loaded).
@@ -591,6 +655,11 @@ export class RaidScene extends Phaser.Scene {
   // Stickiness contexts (consumed from registry once per raid).
   private warContext: { warId: string; defenderId: string } | null = null;
   private campaignContext: { missionId: number; chapterId: number; title: string } | null = null;
+  // True when this raid is the scripted tutorial first-run. Set from
+  // a registry flag, consumed once. While true: matchmaking is
+  // skipped, the result card surfaces a hero-reveal beat, and the
+  // server's tutorial_stage advances on win.
+  private tutorialMode = false;
   private replayContext: {
     id: string;
     seed: number;
@@ -694,12 +763,18 @@ export class RaidScene extends Phaser.Scene {
     const revengeCtx = this.registry.get('revengeContext') as {
       defenderId: string;
     } | null;
+    // Tutorial flag — set by HomeScene's first-run CTA. Routes the
+    // raid against the hand-tuned TUTORIAL_BASE and skips matchmaking
+    // so the new player can't get queued against a real defender.
+    const tutorialFlag = this.registry.get('tutorialMission') === true;
     // One-shot consumption so a back-and-forth doesn't re-fire.
     this.registry.set('prefilledMatch', null);
     this.registry.set('warContext', null);
     this.registry.set('campaignMission', null);
     this.registry.set('replayContext', null);
     this.registry.set('revengeContext', null);
+    this.registry.set('tutorialMission', false);
+    this.tutorialMode = tutorialFlag;
     this.warContext = warCtx;
     this.campaignContext = campaignCtx;
     this.replayContext = replayCtx;
@@ -710,7 +785,7 @@ export class RaidScene extends Phaser.Scene {
       ?? 0xc0ffee;
     const snapshot = prefilledMatch?.baseSnapshot
       ?? replayCtx?.baseSnapshot
-      ?? BOT_BASE;
+      ?? (tutorialFlag ? TUTORIAL_BASE : BOT_BASE);
     this.cfg = {
       tickRate: 30,
       maxTicks: TICK_HZ * RAID_SECONDS,
@@ -726,6 +801,9 @@ export class RaidScene extends Phaser.Scene {
       // finishes and skip match fetching + submission. Scheduled on a
       // tick so the scene is fully wired before the first deploy.
       this.time.delayedCall(50, () => this.bootReplayPlayback());
+    } else if (tutorialFlag) {
+      // Tutorial: stay on TUTORIAL_BASE; skip /api/match so the new
+      // player can't get queued against a real defender.
     } else {
       void this.fetchMatchFromServer();
     }
@@ -803,8 +881,15 @@ export class RaidScene extends Phaser.Scene {
     const replayMult = this.replayContext ? this.replaySpeed : 1;
 
     // Step the deterministic sim at 30 Hz regardless of render rate.
+    // Slow-mo gate: hero moments (Queen kill) freeze sim advancement
+    // for ~250ms while the visual fanfare plays. Renders keep running
+    // so tweens + particles still animate.
     const msPerTick = 1000 / TICK_HZ;
-    this.simTickElapsed += deltaMs * replayMult;
+    if (this.slowMoMs > 0) {
+      this.slowMoMs = Math.max(0, this.slowMoMs - deltaMs);
+    } else {
+      this.simTickElapsed += deltaMs * replayMult;
+    }
     while (this.simTickElapsed >= msPerTick && this.state.outcome === 'ongoing') {
       this.simTickElapsed -= msPerTick;
       const nextTick = this.state.tick + 1;
@@ -2744,6 +2829,7 @@ export class RaidScene extends Phaser.Scene {
     // twice per frame across the whole board so we never melt the
     // mix when a 5-unit burst spreads across multiple targets.
     this.buildingHitsThisFrame = 0;
+    this.damageNumbersThisFrame = 0;
     this.unitDeathsThisFrame = 0;
 
     // Pre-pass: tally where the attacker actually is right now. Used
@@ -2784,6 +2870,10 @@ export class RaidScene extends Phaser.Scene {
               sfxQueenDestroyed();
               this.cameras.main.shake(340, 0.012);
               this.cameras.main.flash(180, 255, 230, 160);
+              // Slow-mo for the hero kill — pauses sim for 260ms so
+              // the fanfare + zoom punch land cleanly before any
+              // remaining buildings also collapse this frame.
+              this.slowMoMs = 260;
               // Brief zoom punch: scale up the board container then
               // ease back. Uses the existing boardContainer transform
               // (layout() reads .x/.y/.scaleX) so no layout math breaks.
@@ -2825,6 +2915,24 @@ export class RaidScene extends Phaser.Scene {
       if (b.hp < prevHp) {
         spr.setTint(0xffe799);
         this.time.delayedCall(70, () => spr.clearTint());
+        const dmg = Math.round(prevHp - b.hp);
+        // Damage chip — only on chunkier hits so we don't drown the
+        // board in numbers during sustained fire.
+        if (dmg >= 4 && this.damageNumbersThisFrame < 3) {
+          this.damageNumbersThisFrame++;
+          const cx = b.anchorX * TILE + (b.w * TILE) / 2 + (Math.random() - 0.5) * 12;
+          const cy = b.anchorY * TILE + (b.h * TILE) / 2 - 4;
+          this.spawnDamageNumber(cx, cy, dmg);
+        }
+        // Heavy-hit burst: extra debris when a single tick takes a
+        // big chunk off, so AOE / siege units feel meaty.
+        if (dmg >= 12) {
+          this.spawnDebrisBurst(
+            b.anchorX * TILE + (b.w * TILE) / 2,
+            b.anchorY * TILE + (b.h * TILE) / 2,
+            4,
+          );
+        }
         // Throttle the hit thuds with a per-frame budget so a 5-unit
         // burst against one building doesn't fire five overlapping
         // SFX in the same render tick.
@@ -3069,6 +3177,47 @@ export class RaidScene extends Phaser.Scene {
     this.trailEmitter.emitParticle(quantity, x, y);
   }
 
+  // Damage chip — small floating "−N" that arcs up from a building hit.
+  // Throttled per-frame at the call site so a sustained barrage doesn't
+  // bury the board in numbers.
+  private spawnDamageNumber(x: number, y: number, dmg: number): void {
+    const big = dmg >= 20;
+    const text = this.add
+      .text(x, y, `−${dmg}`, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: big ? '17px' : '13px',
+        color: big ? '#ffd76b' : '#ffe5c2',
+        stroke: '#3a1a08',
+        strokeThickness: 3,
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(DEPTHS.raidHudLabel)
+      .setScale(0.6)
+      .setAlpha(0);
+    this.boardContainer.add(text);
+    const driftX = (Math.random() - 0.5) * 18;
+    this.tweens.add({
+      targets: text,
+      scale: 1,
+      alpha: 1,
+      duration: 90,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({
+          targets: text,
+          x: x + driftX,
+          y: y - 28,
+          alpha: 0,
+          scale: 0.9,
+          duration: 520,
+          ease: 'Sine.easeIn',
+          onComplete: () => text.destroy(),
+        });
+      },
+    });
+  }
+
   // Confetti burst for the victory card. Spawns ~24 small colored
   // rectangles along the top of the card, each tweened downward
   // with gravity-ish falloff and a soft alpha fade. Pure Phaser;
@@ -3213,13 +3362,25 @@ export class RaidScene extends Phaser.Scene {
         break;
     }
 
-    // Start the sprite at the off-screen position.
+    // Start the sprite at the off-screen position with a fade-in,
+    // so the entry reads as "arriving" rather than "snapping in".
     spr.setPosition(startX, startY);
+    spr.setAlpha(0);
+    spr.setScale((spr.scaleX || 1) * 0.7);
 
     // Burst staggering: delay animation based on unit index in the deployment.
     // With 40ms stagger and max 5 units per burst, wave effect spans ~160ms.
     const STAGGER_MS = 40;
     const delay = staggerIndex * STAGGER_MS;
+    const targetScale = spr.scaleX / 0.7;
+
+    // Spawn-puff: tiny dirt burst at the entry tile so the eye snaps
+    // to where new units came from. Only fires on the first unit of
+    // the burst (staggerIndex 0) so a 5-unit deployment doesn't drop
+    // 5 overlapping puffs.
+    if (staggerIndex === 0) {
+      this.spawnDebrisBurst(targetX, targetY, 4);
+    }
 
     // Tween to the actual position over 300ms with Power2.easeOut for
     // a snappy, satisfying entry feel. Matches Clash of Clans troop
@@ -3228,6 +3389,9 @@ export class RaidScene extends Phaser.Scene {
       targets: spr,
       x: targetX,
       y: targetY,
+      alpha: 1,
+      scaleX: targetScale,
+      scaleY: targetScale,
       duration: 300,
       delay,
       ease: 'Power2.easeOut',
@@ -3380,6 +3544,23 @@ export class RaidScene extends Phaser.Scene {
         runtime.api
           .completeMission(this.campaignContext.missionId)
           .catch((err) => console.warn('campaign submit failed:', err));
+      }
+      // Tutorial completion — bump the server-side stage so the
+      // home CTA flips to the regular "Raid a base" button. We
+      // gate on stars >= 1 (any win) since the tutorial base is
+      // hand-tuned to make 3-stars trivial; failing it suggests
+      // the player wants to retry. Best-effort, no toast on error.
+      if (this.tutorialMode && this.state.outcome === 'attackerWin' && stars >= 1) {
+        const cur = runtime.player?.player.tutorialStage ?? 0;
+        const next = Math.max(cur, 10);
+        runtime.api
+          .setTutorialStage(next)
+          .then(() => {
+            if (runtime.player) {
+              runtime.player.player.tutorialStage = next;
+            }
+          })
+          .catch((err) => console.warn('tutorial stage submit failed:', err));
       }
     } catch (err) {
       // Showing an error would steal focus from the result screen;

@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { Types } from '@hive/shared';
+import { Sim, Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
 import type { BuilderEntry } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal, openAccountInfoModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
+import { maybeShowWhileAway } from '../ui/whileAwayModal.js';
 import { openSettings } from '../ui/settingsModal.js';
 import { dismissBanner, isBannerDismissed } from '../ui/banners.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
@@ -382,6 +383,19 @@ export class HomeScene extends Phaser.Scene {
     // scene, not a half-painted one mid-fadeIn.
     if (shouldShowTutorial()) {
       this.time.delayedCall(350, () => openTutorial());
+    } else {
+      // While-you-were-away report — shown at most once per session
+      // when the player has un-seen defenses since their last home
+      // visit. Lazy: scheduled after the scene fully paints so the
+      // modal lands on a stable backdrop. Won't fire if the
+      // tutorial modal is already showing.
+      const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+      if (runtime) {
+        this.time.delayedCall(500, () => {
+          if (!this.scene.isActive()) return;
+          void maybeShowWhileAway(this, runtime);
+        });
+      }
     }
 
     // Interactive coachmark drill — only on the first visit. Steps:
@@ -1489,6 +1503,26 @@ export class HomeScene extends Phaser.Scene {
       labelTextStyle(tier === 'phone' ? 9 : 10, COLOR.textGold),
     ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
     void trophyBg;
+
+    // Tier badge — small color chip directly under the trophy count
+    // showing the player's ladder identity (Worker/Soldier/Drone/...).
+    // Tappable to open the leaderboard.
+    const tierData = Sim.trophyTierFor(trophies);
+    const tierW = tier === 'phone' ? 64 : 72;
+    const tierH = tier === 'phone' ? 16 : 18;
+    const tierY = trophyY + trophyH + 3;
+    const tierBg = this.add.graphics().setDepth(DEPTHS.hud);
+    tierBg.fillStyle(tierData.color, 1);
+    tierBg.fillRoundedRect(discX - tierW / 2, tierY, tierW, tierH, 5);
+    tierBg.lineStyle(1, COLOR.strokeDark, 1);
+    tierBg.strokeRoundedRect(discX - tierW / 2, tierY, tierW, tierH, 5);
+    crispText(
+      this,
+      discX,
+      tierY + tierH / 2,
+      `${tierData.glyph} ${tierData.name} ${tierData.stripe}`,
+      labelTextStyle(tier === 'phone' ? 8 : 9, '#1f2148'),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
 
     // Single hit zone covering disc + trophy chip — entire icon
     // stack is tappable so even fat-finger taps catch the menu.
@@ -2959,6 +2993,16 @@ export class HomeScene extends Phaser.Scene {
     if (!ps) return;
     let topY = HUD_H + 8;
 
+    // First-raid tutorial banner — shows once, while tutorial_stage
+    // is still in the "saw prologue, hasn't fought yet" range. Hand-
+    // off into RaidScene with the tutorialMission flag set so the
+    // raid runs against the scripted under-defended TUTORIAL_BASE
+    // (guaranteed first-win onboarding, top-10 audit #8).
+    const stage = ps.tutorialStage ?? 0;
+    if (stage >= 5 && stage < 10) {
+      topY = this.drawFirstRaidBanner(topY);
+    }
+
     // Comeback banner — the strongest signal (away 3+ days). Pushed
     // above everything else. Dismissible: each appearance is keyed on
     // the comeback-pending flag transition, so dismissing once doesn't
@@ -3188,12 +3232,11 @@ export class HomeScene extends Phaser.Scene {
     if (!ps?.streak) return topY;
     const maxW = Math.min(520, this.scale.width - 24);
     const x = (this.scale.width - maxW) / 2;
-    const h = 58;
+    // Taller banner so the 7-day pip chain has room without
+    // crowding the title + claim CTA.
+    const h = 78;
     const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
     drawPanel(bg, x, topY, maxW, h, {
-      // Light cream panel for readable body text. Was dark mossy
-      // 0x2a3f2d/0x09100a which made the navy textPrimary body
-      // unreadable.
       stroke: COLOR.brassDeep, strokeWidth: 2,
       highlight: COLOR.brass, highlightAlpha: 0.18,
       radius: 10, shadowOffset: 3, shadowAlpha: 0.22,
@@ -3202,13 +3245,70 @@ export class HomeScene extends Phaser.Scene {
       `Login streak: day ${ps.streak.count}`,
       labelTextStyle(11, COLOR.textGold),
     ).setDepth(DEPTHS.boardOverlay);
-    crispText(this, x + 14, topY + 28,
+    crispText(this, x + 14, topY + 26,
       ps.streak.nextReward.label,
       bodyTextStyle(12, COLOR.textPrimary),
     ).setDepth(DEPTHS.boardOverlay);
+
+    // 7-day pip chain — visual progress that makes "make it to day 7"
+    // tangible. Claimed days are gold-filled, today's day pulses, and
+    // upcoming days are dim. Keeps the player oriented even when the
+    // numeric "day N" alone wouldn't sell the journey.
+    const today = ps.streak.count;
+    const claimedThrough = ps.streak.lastClaim;
+    const pipCount = 7;
+    const pipSize = 18;
+    const pipGap = 6;
+    const totalPipsW = pipCount * pipSize + (pipCount - 1) * pipGap;
+    const pipsStartX = x + 14;
+    const pipsY = topY + 50;
+    const todayIdx = ((Math.max(1, today) - 1) % pipCount) + 1;
+    for (let i = 1; i <= pipCount; i++) {
+      const px = pipsStartX + (i - 1) * (pipSize + pipGap);
+      const isClaimed = i <= claimedThrough;
+      const isToday = i === todayIdx;
+      const isUpcoming = i > today;
+      const fill = isClaimed
+        ? 0xfdcd6a // gold
+        : isToday
+        ? 0xff90a8 // pulsing coral for today
+        : isUpcoming
+        ? 0xece2e7 // dim
+        : 0xfff4d6; // pending claim today's day (warm)
+      const stroke = isClaimed ? 0xc99b3a : isToday ? 0xb13455 : 0xb8a285;
+      const pip = this.add
+        .graphics()
+        .setDepth(DEPTHS.boardOverlay);
+      pip.fillStyle(fill, 1);
+      pip.fillRoundedRect(px, pipsY, pipSize, pipSize, 5);
+      pip.lineStyle(1.5, stroke, 1);
+      pip.strokeRoundedRect(px, pipsY, pipSize, pipSize, 5);
+      const dayTxt = crispText(this, px + pipSize / 2, pipsY + pipSize / 2,
+        String(i),
+        bodyTextStyle(10, isClaimed || isToday ? '#1f2148' : '#6e7196'),
+      ).setOrigin(0.5).setDepth(DEPTHS.boardOverlay);
+      if (isToday) {
+        // Soft pulse on today's pip to signal "claim me".
+        this.tweens.add({
+          targets: [pip, dayTxt],
+          alpha: { from: 0.7, to: 1 },
+          duration: 700,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
+    }
+    // Tiny day-7 trophy hint at the right of the chain so the
+    // commitment payoff is visible at a glance.
+    crispText(this, pipsStartX + totalPipsW + 8, pipsY + pipSize / 2,
+      '🏆',
+      bodyTextStyle(14, COLOR.textGold),
+    ).setOrigin(0, 0.5).setDepth(DEPTHS.boardOverlay);
+
     const btn = makeHiveButton(this, {
       x: x + maxW - 70,
-      y: topY + h / 2,
+      y: topY + 22,
       width: 120,
       height: 34,
       label: 'Claim',
@@ -3236,6 +3336,58 @@ export class HomeScene extends Phaser.Scene {
     } catch (err) {
       console.warn('streak claim failed', err);
     }
+  }
+
+  private drawFirstRaidBanner(topY: number): number {
+    const maxW = Math.min(520, this.scale.width - 24);
+    const x = (this.scale.width - maxW) / 2;
+    const h = 70;
+    const bg = this.add.graphics().setDepth(DEPTHS.boardOverlay);
+    drawPanel(bg, x, topY, maxW, h, {
+      stroke: COLOR.brassDeep, strokeWidth: 2,
+      highlight: COLOR.brass, highlightAlpha: 0.28,
+      radius: 12, shadowOffset: 4, shadowAlpha: 0.3,
+    });
+    crispText(this, x + 16, topY + 10,
+      'YOUR FIRST RAID',
+      labelTextStyle(11, COLOR.textGold),
+    ).setDepth(DEPTHS.boardOverlay);
+    crispText(this, x + 16, topY + 30,
+      'A scout outpost is unguarded. Take it.',
+      bodyTextStyle(13, COLOR.textPrimary),
+    ).setDepth(DEPTHS.boardOverlay);
+    crispText(this, x + 16, topY + 48,
+      'Drag a path from the left edge — the swarm follows.',
+      bodyTextStyle(11, COLOR.textDim),
+    ).setDepth(DEPTHS.boardOverlay);
+    const btn = makeHiveButton(this, {
+      x: x + maxW - 84,
+      y: topY + h / 2,
+      width: 150,
+      height: 40,
+      label: '⚔ Begin raid',
+      variant: 'primary',
+      fontSize: 13,
+      onPress: () => {
+        // Stamp the tutorial flag so RaidScene routes the raid
+        // against the scripted base instead of matchmaking. The
+        // tutorial flag is consumed once on RaidScene.create.
+        this.registry.set('tutorialMission', true);
+        fadeToScene(this, 'RaidScene');
+      },
+    });
+    btn.container.setDepth(DEPTHS.boardOverlay);
+    // Pulse the CTA so the new player's eye catches it without
+    // having to read the body text first.
+    this.tweens.add({
+      targets: btn.container,
+      scale: { from: 1, to: 1.04 },
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+    return topY + h + 8;
   }
 
   private drawNemesisRibbon(topY: number, runtime: HiveRuntime): number {

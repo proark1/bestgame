@@ -26,6 +26,7 @@ import { registerCampaign } from './routes/campaign.js';
 import { registerBuilder } from './routes/builder.js';
 import { registerReplayFeed } from './routes/replayFeed.js';
 import { registerHiveWar } from './routes/hiveWar.js';
+import { registerPush } from './routes/push.js';
 import { registerPlayerAuthHook } from './auth/playerAuth.js';
 import { getPool, isConfigured } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -174,6 +175,7 @@ async function start(): Promise<void> {
       registerBuilder(scope);
       registerReplayFeed(scope);
       registerHiveWar(scope);
+      registerPush(scope);
     },
     { prefix: '/api' },
   );

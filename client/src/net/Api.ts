@@ -589,6 +589,52 @@ export class Api {
     return j.messages;
   }
 
+  // Subscribe to live chat via SSE. Returns a close handle. Server
+  // pushes a `messages` event whenever a new chat row appears,
+  // typically within ~1.5s of being posted. Falls back transparently
+  // if EventSource isn't available (very old browsers): caller can
+  // detect the immediate close + fall back to polling.
+  clanMessagesStream(
+    sinceId: number,
+    onMessages: (messages: ClanMessage[]) => void,
+    onError?: () => void,
+  ): { close: () => void } {
+    if (typeof EventSource === 'undefined') {
+      // Caller falls back to polling — return a no-op close.
+      onError?.();
+      return { close: () => undefined };
+    }
+    const token = this.auth.token ?? '';
+    const url =
+      `${this.baseUrl}/clan/messages/stream?sinceId=${sinceId}` +
+      (token ? `&token=${encodeURIComponent(token)}` : '');
+    const es = new EventSource(url);
+    es.addEventListener('messages', (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          messages?: ClanMessage[];
+        };
+        if (data.messages && data.messages.length > 0) {
+          onMessages(data.messages);
+        }
+      } catch {
+        // ignore malformed payloads
+      }
+    });
+    es.addEventListener('error', () => {
+      onError?.();
+    });
+    return {
+      close: () => {
+        try {
+          es.close();
+        } catch {
+          /* already closed */
+        }
+      },
+    };
+  }
+
   async clanMessageSend(content: string): Promise<{ ok: true; id: string }> {
     const res = await this.authedFetch('/clan/message', {
       method: 'POST',

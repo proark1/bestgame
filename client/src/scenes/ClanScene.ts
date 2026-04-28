@@ -32,6 +32,8 @@ export class ClanScene extends Phaser.Scene {
   private tunnelIRequested = new Set<string>();
   private pollTimer: number | null = null;
   private latestMessageId = 0;
+  // Live SSE handle. Null when chat is using legacy polling fallback.
+  private chatStream: { close: () => void } | null = null;
 
   // Layers (destroyed on view switch so we don't leak DOM between modes).
   private layerContainer!: Phaser.GameObjects.Container;
@@ -86,6 +88,10 @@ export class ClanScene extends Phaser.Scene {
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+    if (this.chatStream) {
+      this.chatStream.close();
+      this.chatStream = null;
     }
     if (this.chatInputEl) {
       this.chatInputEl.remove();
@@ -620,7 +626,53 @@ export class ClanScene extends Phaser.Scene {
 
   private startPolling(): void {
     if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
-    this.pollTimer = window.setInterval(() => void this.pollMessages(), 5000);
+    if (this.chatStream) {
+      this.chatStream.close();
+      this.chatStream = null;
+    }
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    // Prefer the SSE stream — sub-second chat latency vs. the 5s
+    // poll. We still keep a slow polling timer as a heartbeat
+    // safety net (in case the stream silently drops on a flaky
+    // connection); cadence is 30s so it's nearly free.
+    this.chatStream = runtime.api.clanMessagesStream(
+      this.latestMessageId,
+      (newMsgs) => {
+        if (!this.scene.isActive() || !this.my) return;
+        this.my.messages = [...(this.my.messages ?? []), ...newMsgs];
+        const last = newMsgs[newMsgs.length - 1]!;
+        this.latestMessageId = Number(last.id);
+        this.repaintChatPane();
+      },
+      () => {
+        // Stream errored — close it and fall back to faster polling
+        // for the rest of this scene lifetime.
+        if (this.chatStream) {
+          this.chatStream.close();
+          this.chatStream = null;
+        }
+        if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
+        this.pollTimer = window.setInterval(() => void this.pollMessages(), 3000);
+      },
+    );
+    // Slow fallback poll: catches any messages SSE missed (mobile
+    // backgrounding, proxy idle-disconnect). 30s cadence is cheap.
+    this.pollTimer = window.setInterval(() => void this.pollMessages(), 30_000);
+  }
+
+  // Single repaint of the chat list — extracted so both poll and SSE
+  // handlers share the same render path.
+  private repaintChatPane(): void {
+    const listX = 20;
+    const listY = HUD_H + 70;
+    const listW = 240;
+    const listH = this.scale.height - listY - 80;
+    const chatX = listX + listW + 20;
+    const chatY = listY;
+    const chatW = this.scale.width - chatX - 20;
+    const chatH = listH;
+    this.renderMessages(chatX, chatY, chatW, chatH);
   }
 
   private async pollMessages(): Promise<void> {
@@ -634,16 +686,7 @@ export class ClanScene extends Phaser.Scene {
       this.my.messages = [...(this.my.messages ?? []), ...newMsgs];
       const last = newMsgs[newMsgs.length - 1]!;
       this.latestMessageId = Number(last.id);
-      // Re-render chat pane only (cheap — only ~50 rows)
-      const listX = 20;
-      const listY = HUD_H + 70;
-      const listW = 240;
-      const listH = this.scale.height - listY - 80;
-      const chatX = listX + listW + 20;
-      const chatY = listY;
-      const chatW = this.scale.width - chatX - 20;
-      const chatH = listH;
-      this.renderMessages(chatX, chatY, chatW, chatH);
+      this.repaintChatPane();
     } catch (err) {
       console.debug('poll failed', err);
     }

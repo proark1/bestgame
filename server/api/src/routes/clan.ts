@@ -488,6 +488,116 @@ export function registerClan(app: FastifyInstance): void {
     },
   );
 
+  // -- SSE stream for live chat ---------------------------------------------
+  // Server-Sent Events at /clan/messages/stream. The client opens an
+  // EventSource and receives `message` events with the same shape the
+  // poll endpoint returns. Uses a server-side 1500ms poll loop per
+  // connection (cheap: a single indexed lookup keyed on clan_id +
+  // last id), but spares the client a full HTTP round-trip per tick
+  // and tightens chat latency from 5s to ~1.5s.
+  //
+  // Auth piggy-backs on the same Bearer token query the rest of the
+  // API uses, but EventSource can't set custom headers — so we fall
+  // back to a `?token=` query param. The auth hook already reads
+  // Authorization or token; routes get req.playerId either way.
+  app.get<{ Querystring: { sinceId?: string } }>(
+    '/clan/messages/stream',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const clanRow = await pool.query<{ clan_id: string }>(
+        'SELECT clan_id FROM clan_members WHERE player_id = $1',
+        [playerId],
+      );
+      if (clanRow.rows.length === 0) {
+        reply.code(403);
+        return { error: 'not in a clan' };
+      }
+      const clanId = clanRow.rows[0]!.clan_id;
+      let lastId = Number(req.query?.sinceId ?? 0);
+      if (!Number.isFinite(lastId) || lastId < 0) lastId = 0;
+
+      // Hijack the raw response so we can stream line-by-line.
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        // Disable proxy buffering on common platforms so the client
+        // sees events the moment we write them.
+        'X-Accel-Buffering': 'no',
+      });
+      reply.raw.write(`retry: 5000\n\n`);
+
+      let alive = true;
+      const heartbeat = setInterval(() => {
+        if (!alive) return;
+        // Comment lines keep the connection warm through proxies that
+        // would otherwise idle-close it; ignored by EventSource.
+        try {
+          reply.raw.write(`: ping\n\n`);
+        } catch {
+          alive = false;
+        }
+      }, 25_000);
+
+      const tick = async (): Promise<void> => {
+        if (!alive) return;
+        try {
+          const res = await pool.query<{
+            id: string;
+            player_id: string;
+            display_name: string | null;
+            content: string;
+            created_at: Date;
+          }>(
+            `SELECT m.id, m.player_id, p.display_name, m.content, m.created_at
+               FROM clan_messages m
+               LEFT JOIN players p ON p.id = m.player_id
+              WHERE m.clan_id = $1 AND m.id > $2
+              ORDER BY m.id ASC
+              LIMIT 50`,
+            [clanId, lastId],
+          );
+          if (res.rows.length > 0 && alive) {
+            const payload = {
+              messages: res.rows.map((m) => ({
+                id: m.id,
+                playerId: m.player_id,
+                displayName: m.display_name ?? 'deleted',
+                content: m.content,
+                createdAt: m.created_at.toISOString(),
+              })),
+            };
+            lastId = Number(res.rows[res.rows.length - 1]!.id);
+            reply.raw.write(`event: messages\n`);
+            reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+        } catch {
+          // Pool errors shouldn't kill the stream — try again next tick.
+        }
+      };
+
+      const interval = setInterval(() => void tick(), 1500);
+      // Send any backlog immediately so the client doesn't have to
+      // wait the first 1500ms after subscribing.
+      void tick();
+
+      const close = (): void => {
+        alive = false;
+        clearInterval(heartbeat);
+        clearInterval(interval);
+        try { reply.raw.end(); } catch { /* already closed */ }
+      };
+      req.raw.on('close', close);
+      req.raw.on('aborted', close);
+    },
+  );
+
   // -- Open a unit-donation request -----------------------------------------
   // The requester must be in a clan; only one open request per player at
   // a time (DB partial-unique index enforces it). Posts a flavor message

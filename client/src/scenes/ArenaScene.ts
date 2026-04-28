@@ -328,9 +328,23 @@ export class ArenaScene extends Phaser.Scene {
     'Wasp',
     'Termite',
   ];
+  // Short label under each deck icon so the player sees the unit
+  // name without having to memorise the silhouette. Kept terse so a
+  // 56-px-wide card doesn't truncate.
+  private static readonly DECK_LABELS: Partial<Record<Types.UnitKind, string>> = {
+    SoldierAnt: 'Soldier',
+    WorkerAnt: 'Worker',
+    FireAnt: 'Fire',
+    Wasp: 'Wasp',
+    Termite: 'Termite',
+  };
+
   private drawDeckRail(): void {
-    const CARD_W = 56;
-    const CARD_H = 56;
+    // Card height grew from 56 to 70 to fit a label band under the
+    // icon — matches RaidScene's deck card information density so
+    // the multiplayer rail doesn't read as half-finished.
+    const CARD_W = 60;
+    const CARD_H = 70;
     const GAP = 8;
     this.deckRail = this.add.container(0, 0).setDepth(DEPTHS.hud);
     this.deckCards = [];
@@ -340,9 +354,17 @@ export class ArenaScene extends Phaser.Scene {
       const card = this.add.container(i * (CARD_W + GAP), 0);
       const bg = this.add.graphics();
       const icon = this.add
-        .image(CARD_W / 2, CARD_H / 2, `unit-${kind}`)
-        .setDisplaySize(CARD_W - 12, CARD_H - 12);
-      card.add([bg, icon]);
+        .image(CARD_W / 2, (CARD_H - 14) / 2, `unit-${kind}`)
+        .setDisplaySize(CARD_W - 14, CARD_H - 28);
+      const label = this.add
+        .text(
+          CARD_W / 2,
+          CARD_H - 12,
+          ArenaScene.DECK_LABELS[kind] ?? kind,
+          labelTextStyle(9, '#fff8ec'),
+        )
+        .setOrigin(0.5, 0.5);
+      card.add([bg, icon, label]);
       card.setSize(CARD_W, CARD_H);
       card.setInteractive(
         new Phaser.Geom.Rectangle(0, 0, CARD_W, CARD_H),
@@ -394,21 +416,30 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private refreshDeckSelection(): void {
-    const CARD_W = 56;
-    const CARD_H = 56;
+    const CARD_W = 60;
+    const CARD_H = 70;
     for (const card of this.deckCards) {
       card.bg.clear();
       const selected = card.kind === this.selectedUnitKind;
-      card.bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
-      card.bg.lineStyle(selected ? 3 : 2, selected ? 0xffd98a : 0x2c5a23, 1);
+      // Selected card pops with a brassy gold tint + glow band; idle
+      // cards stay green-on-green so the picked unit reads instantly
+      // even when the player's eyes are on the board.
+      card.bg.fillStyle(selected ? 0x4d8a3f : 0x1f3320, 1);
       card.bg.fillRoundedRect(0, 0, CARD_W, CARD_H, 10);
+      // Label band along the bottom edge so the kind name has a
+      // legible plate behind it.
+      card.bg.fillStyle(selected ? 0x2d5a2a : 0x122014, 1);
+      card.bg.fillRoundedRect(2, CARD_H - 22, CARD_W - 4, 20, 6);
+      card.bg.lineStyle(selected ? 3 : 2, selected ? 0xffd98a : 0x2c5a23, 1);
       card.bg.strokeRoundedRect(0, 0, CARD_W, CARD_H, 10);
+      // Subtle scale up on selection so the picked card "lifts".
+      card.container.setScale(selected ? 1.06 : 1);
     }
   }
 
   private layoutDeckRail(boardBottom: number): void {
     if (!this.deckRail) return;
-    const CARD_W = 56;
+    const CARD_W = 60;
     const GAP = 8;
     const railW =
       ArenaScene.DECK_KINDS.length * CARD_W +
@@ -416,7 +447,7 @@ export class ArenaScene extends Phaser.Scene {
     const x = Math.round((this.scale.width - railW) / 2);
     // Sits 8 px above the status card. If the viewport is too short
     // we tuck the rail right under the board edge.
-    const y = Math.min(this.scale.height - 158, boardBottom - 70);
+    const y = Math.min(this.scale.height - 168, boardBottom - 80);
     this.deckRail.setPosition(x, y);
   }
 

@@ -103,3 +103,45 @@ self.addEventListener('fetch', (event) => {
     ),
   );
 });
+
+// ---- Push notifications --------------------------------------------------
+// Wakes the SW when the server delivers a Web Push message. Payload is
+// JSON with { title, body, tag, url } so a single handler covers every
+// notification type (builder done, raid alert, clan war, etc.). Tag
+// collapses repeats so a burst of "you were attacked" pushes shows
+// only the latest.
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let payload = { title: 'Hive Wars', body: '', tag: 'hive-generic', url: '/' };
+  try {
+    payload = { ...payload, ...event.data.json() };
+  } catch {
+    payload.body = event.data.text();
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      tag: payload.tag,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: payload.url },
+      renotify: true,
+    }),
+  );
+});
+
+// Click handler — focus an open game tab if one exists, otherwise
+// open a new window at the deep link the push specified (defaults
+// to '/' so the player lands on Home).
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((all) => {
+      for (const client of all) {
+        if (client.url.includes(target) && 'focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    }),
+  );
+});

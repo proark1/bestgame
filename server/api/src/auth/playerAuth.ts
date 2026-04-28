@@ -98,6 +98,18 @@ export function registerPlayerAuthHook(app: FastifyInstance): void {
     if (auth && auth.startsWith('Bearer ')) {
       const claims = verifySessionToken(auth.slice('Bearer '.length));
       if (claims) req.playerId = claims.sub;
+    } else {
+      // EventSource fallback — browsers won't let us set custom
+      // headers on /clan/messages/stream, so SSE clients send the
+      // bearer token via `?token=`. Token-in-query is OK for SSE
+      // because the URL never appears in cross-site referers
+      // (EventSource is same-origin) and the request never carries
+      // a body.
+      const token = (req.query as { token?: string } | undefined)?.token;
+      if (typeof token === 'string' && token.length > 0) {
+        const claims = verifySessionToken(token);
+        if (claims) req.playerId = claims.sub;
+      }
     }
     done();
   });

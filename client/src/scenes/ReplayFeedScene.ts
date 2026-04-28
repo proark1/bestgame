@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { HiveRuntime } from '../main.js';
 import type { ReplayFeedEntry } from '../net/Api.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { tacticFromReplayInputs, stashTactic } from '../codex/tacticFromReplay.js';
 import {
   drawSceneAmbient,
   drawSceneHud,
@@ -152,9 +153,9 @@ export class ReplayFeedScene extends Phaser.Scene {
 
     // Upvote button
     const upBtn = makeHiveButton(this, {
-      x: originX + maxW - 140,
+      x: originX + maxW - 246,
       y: y + h / 2,
-      width: 100,
+      width: 92,
       height: 32,
       label: `${e.hasMyUpvote ? '♥' : '♡'} ${e.upvoteCount}`,
       variant: e.hasMyUpvote ? 'primary' : 'ghost',
@@ -162,6 +163,21 @@ export class ReplayFeedScene extends Phaser.Scene {
       onPress: () => { void this.toggleUpvote(e, runtime); },
     });
     this.body.container.add(upBtn.container);
+    // Steal — copies the attacker's first-deploy path into the local
+    // tactic library. Turns "watching cool plays" into "running cool
+    // plays" with one tap. Available regardless of upvote state so a
+    // player can steal without endorsing.
+    const stealBtn = makeHiveButton(this, {
+      x: originX + maxW - 142,
+      y: y + h / 2,
+      width: 96,
+      height: 32,
+      label: '⚙ Steal',
+      variant: 'ghost',
+      fontSize: 12,
+      onPress: () => { void this.stealTactic(e, runtime); },
+    });
+    this.body.container.add(stealBtn.container);
     // Watch button
     const wBtn = makeHiveButton(this, {
       x: originX + maxW - 40,
@@ -201,6 +217,59 @@ export class ReplayFeedScene extends Phaser.Scene {
     } catch (err) {
       console.warn('upvote failed', err);
     }
+  }
+
+  private async stealTactic(e: ReplayFeedEntry, runtime: HiveRuntime): Promise<void> {
+    try {
+      const full = await runtime.api.replay(e.id);
+      const tactic = tacticFromReplayInputs(
+        full.replay.inputs as Parameters<typeof tacticFromReplayInputs>[0],
+        full.replay.attackerName ?? e.attackerName,
+      );
+      if (!tactic) {
+        this.flashToast('No path to steal — attacker never deployed.');
+        return;
+      }
+      const ok = stashTactic(tactic);
+      this.flashToast(
+        ok
+          ? `Stolen! ${tactic.name} added to your tactic library.`
+          : 'Could not save tactic (storage full?).',
+      );
+    } catch {
+      this.flashToast('Could not load replay.');
+    }
+  }
+
+  // Lightweight inline toast — same idea as transitions but local to
+  // this scene since the feed is the only caller. 1.6s lifespan,
+  // bottom-anchored so it doesn't cover replay rows.
+  private flashToast(message: string): void {
+    const t = this.add
+      .text(this.scale.width / 2, this.scale.height - 64, message, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#fff8ec',
+        backgroundColor: '#1f2148e8',
+        padding: { x: 14, y: 8 },
+      })
+      .setOrigin(0.5)
+      .setDepth(900)
+      .setAlpha(0);
+    this.tweens.add({
+      targets: t,
+      alpha: 1,
+      duration: 140,
+      onComplete: () => {
+        this.tweens.add({
+          targets: t,
+          alpha: 0,
+          delay: 1300,
+          duration: 240,
+          onComplete: () => t.destroy(),
+        });
+      },
+    });
   }
 
   private async watch(e: ReplayFeedEntry, runtime: HiveRuntime): Promise<void> {

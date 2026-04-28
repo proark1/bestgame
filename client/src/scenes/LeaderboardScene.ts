@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Sim } from '@hive/shared';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import type { HiveRuntime } from '../main.js';
@@ -319,14 +320,29 @@ export class LeaderboardScene extends Phaser.Scene {
         bodyTextStyle(14, isMe ? COLOR.textGold : COLOR.textPrimary),
       ).setOrigin(0, 0),
     );
+    const tier = Sim.trophyTierFor(r.trophies);
     this.rowContainer.add(
       crispText(
         this,
         originX + 80,
         y + 33,
-        `${factionName(r.faction)}`,
+        `${factionName(r.faction)} · ${tier.glyph} ${tier.name} ${tier.stripe}`,
         bodyTextStyle(11, COLOR.textDim),
       ).setOrigin(0, 0),
+    );
+    // Tier badge — small color chip to the left of the trophy count
+    // so the ladder identity reads at a glance, not just the number.
+    const badgeX = originX + maxW - 96;
+    const badgeY = y + rowH / 2 - 11;
+    const badge = this.add.graphics();
+    badge.fillStyle(tier.color, 1);
+    badge.fillRoundedRect(badgeX, badgeY, 22, 22, 6);
+    badge.lineStyle(1.5, COLOR.strokeDark, 1);
+    badge.strokeRoundedRect(badgeX, badgeY, 22, 22, 6);
+    this.rowContainer.add(badge);
+    this.rowContainer.add(
+      crispText(this, badgeX + 11, badgeY + 11, tier.glyph, bodyTextStyle(12, '#1f2148'))
+        .setOrigin(0.5),
     );
     this.rowContainer.add(
       crispText(
