@@ -132,6 +132,20 @@ export interface PlayerState {
     equipped: Types.HeroKind[];
     chestClaimed: boolean;
   };
+  // Active-tunnel-link production buff. activeLinkCount caps at 3,
+  // productionMultiplier = 1 + 0.10 * count (so 1.0..1.3). Optional
+  // for older servers; client treats absent as no-buff.
+  tunnels?: {
+    activeLinkCount: number;
+    productionMultiplier: number;
+  };
+  // Quiet-hours soft shield (audit top-10 #10). startHour=null
+  // means "disabled"; otherwise the player is invisible to
+  // matchmaking during [startHour, startHour+lengthHours) UTC.
+  quietHours?: {
+    startHour: number | null;
+    lengthHours: number;
+  };
 }
 
 export interface DailyQuestState {
@@ -435,6 +449,38 @@ export class Api {
       throw new Error(msg);
     }
     return (await res.json()) as PlaceBuildingResponse;
+  }
+
+  // Set or clear the daily quiet-hours window. Pass startHour=null
+  // to disable. Server enforces 0..23 hour + 1..3 hour length caps.
+  async setQuietHours(
+    startHour: number | null,
+    lengthHours = 3,
+  ): Promise<{ ok: true; startHour: number | null; lengthHours: number }> {
+    const res = await this.authedFetch('/player/quiet-hours', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startHour, lengthHours }),
+    });
+    if (!res.ok) throw await errorFromResponse(res, 'quiet-hours');
+    return (await res.json()) as Awaited<ReturnType<Api['setQuietHours']>>;
+  }
+
+  // 5-second placement undo. Returns the refunded cost so the
+  // client can flash a "↶ +N sugar refunded" toast. Throws if the
+  // window has elapsed or the building doesn't exist.
+  async undoPlacement(buildingId: string): Promise<{
+    ok: true;
+    base: Types.Base;
+    player: { sugar: number; leafBits: number; aphidMilk: number };
+    refunded: { sugar: number; leafBits: number; aphidMilk: number };
+  }> {
+    const res = await this.authedFetch(
+      `/player/building/${encodeURIComponent(buildingId)}/undo-placement`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw await errorFromResponse(res, 'undo-placement');
+    return (await res.json()) as Awaited<ReturnType<Api['undoPlacement']>>;
   }
 
   async moveBuilding(args: {

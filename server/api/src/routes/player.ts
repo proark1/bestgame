@@ -94,6 +94,11 @@ const INCOME_PER_SECOND: Partial<
 // doesn't flood the economy.
 const MAX_OFFLINE_SECONDS = 60 * 60 * 8;
 
+// 5-second window after placement during which the player can press
+// "↶ Undo" to refund the placement cost. Exposed as a constant so a
+// future tweak (3 s? 10 s?) is one line.
+const UNDO_WINDOW_MS = 5_000;
+
 interface PlayerRow {
   id: string;
   display_name: string;
@@ -145,6 +150,11 @@ interface PlayerRow {
   hero_ownership: Record<string, true>;
   hero_equipped: string[];
   hero_chest_claimed: boolean;
+  // Quiet-hours soft shield (migrations/0024). NULL start =
+  // disabled. When set, matchmaking skips this player during the
+  // (start, start+length) UTC hour window.
+  quiet_hour_start: number | null;
+  quiet_hour_length: number;
 }
 
 interface BaseRow {
@@ -193,6 +203,7 @@ function computeBuildingPending(
   b: Types.Building,
   lastMs: number,
   nowMs: number,
+  linkMultiplier = 1,
 ): { sugar: number; leafBits: number; aphidMilk: number } {
   const elapsedSec = Math.max(
     0,
@@ -201,9 +212,9 @@ function computeBuildingPending(
   if (elapsedSec === 0) return { sugar: 0, leafBits: 0, aphidMilk: 0 };
   const rate = incomePerSecondForBuilding(b);
   return {
-    sugar: Math.floor(rate.sugar * elapsedSec),
-    leafBits: Math.floor(rate.leafBits * elapsedSec),
-    aphidMilk: Math.floor(rate.aphidMilk * elapsedSec),
+    sugar: Math.floor(rate.sugar * elapsedSec * linkMultiplier),
+    leafBits: Math.floor(rate.leafBits * elapsedSec * linkMultiplier),
+    aphidMilk: Math.floor(rate.aphidMilk * elapsedSec * linkMultiplier),
   };
 }
 
@@ -337,6 +348,22 @@ export function registerPlayer(app: FastifyInstance): void {
           Math.floor((nowMs - lastSeenMs) / 1000),
         ),
       );
+      // Tunnel-link passive buff. Each active link gives both
+      // partners +10% production while the link is active; caps at
+      // +30% so a clan-wide link party doesn't break the econ. We
+      // count from the player's perspective, both directions of the
+      // link table contribute. Cheap one-shot count query — the
+      // links table is small and the index covers it.
+      const linkCountResult = await client.query<{ active_links: string }>(
+        `SELECT COUNT(*)::text AS active_links
+           FROM clan_tunnel_links
+          WHERE state = 'active'
+            AND (player_a = $1::uuid OR player_b = $1::uuid)`,
+        [playerId],
+      );
+      const activeLinks = Math.min(3, Number(linkCountResult.rows[0]?.active_links ?? 0));
+      const linkMultiplier = 1 + 0.10 * activeLinks; // 1.0 .. 1.3
+
       let pendingHarvestMutated = false;
       for (const b of base.snapshot.buildings) {
         const rate = incomePerSecondForBuilding(b);
@@ -357,7 +384,7 @@ export function registerPlayer(app: FastifyInstance): void {
         // Defensive: a malformed timestamp ⇒ treat as "now" so we
         // don't credit a giant retroactive bucket.
         const safeLastMs = Number.isFinite(lastMs) ? lastMs : nowMs;
-        const pending = computeBuildingPending(b, safeLastMs, nowMs);
+        const pending = computeBuildingPending(b, safeLastMs, nowMs, linkMultiplier);
         // Always set lastHarvestAt to its known timestamp (or now() on
         // first visit) so subsequent /me calls compute against a stable
         // anchor. Snapshot mutation is gated below to avoid a no-op
@@ -414,6 +441,13 @@ export function registerPlayer(app: FastifyInstance): void {
       const newLeaf = BigInt(player.leaf_bits);
       const newMilk = BigInt(player.aphid_milk);
       const tick = incomePerSecond(base.snapshot);
+      // Note: production credit moved to /player/harvest with the
+      // tap-to-harvest model on main. The tunnel-link multiplier is
+      // applied during pendingHarvest accumulation above (see the
+      // computeBuildingPending call site) so the reward already
+      // reflects the buff before the player taps. We still count
+      // active links here to echo on the response so the HUD can
+      // render a "🌐 +X%" pill alongside the resource pills.
       const caps = storageCaps(base.snapshot);
 
       // Login streak resolution. Runs on the /me path so every client
@@ -562,6 +596,19 @@ export function registerPlayer(app: FastifyInstance): void {
             owned: player.hero_ownership ?? {},
             equipped: player.hero_equipped ?? [],
             chestClaimed: !!player.hero_chest_claimed,
+          },
+          // Tunnel-link state — surfaced so the HUD can render a
+          // "🌐 +20%" pill alongside the resource pills. Capped at
+          // 3 active links so the multiplier maxes at 1.3×.
+          tunnels: {
+            activeLinkCount: activeLinks,
+            productionMultiplier: linkMultiplier,
+          },
+          // Quiet-hours preference — let the settings modal render
+          // the current window without a second round-trip.
+          quietHours: {
+            startHour: player.quiet_hour_start,
+            lengthHours: player.quiet_hour_length,
           },
         },
         base: base.snapshot,
@@ -1004,6 +1051,11 @@ export function registerPlayer(app: FastifyInstance): void {
         level: 1,
         hp: defaults.hp,
         hpMax: defaults.hp,
+        // Stamp the placement timestamp so /undo-placement can
+        // enforce the 5-second window. Existing buildings without
+        // this field simply can't be undone, which matches pre-
+        // feature behaviour.
+        placedAt: new Date().toISOString(),
         ...(defaults.spans ? { spans: defaults.spans } : {}),
       };
       const updatedBase: Types.Base = {
@@ -1128,6 +1180,117 @@ export function registerPlayer(app: FastifyInstance): void {
         app.log.error({ err }, 'player/building DELETE failed');
         reply.code(500);
         return { error: 'delete failed' };
+      } finally {
+        client.release();
+      }
+    },
+  );
+
+  // POST /api/player/building/:id/undo-placement — 5-second undo
+  // window after placement. Validates the building was placed within
+  // UNDO_WINDOW_MS, removes it from the base snapshot, and refunds
+  // the placement cost. Out-of-window calls return 410 (gone) so
+  // the client can hide its Undo button immediately on the next
+  // round-trip.
+  app.post<{ Params: { id: string } }>(
+    '/player/building/:id/undo-placement',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const id = req.params.id;
+      if (!/^b-[0-9a-f]{12}$/.test(id)) {
+        reply.code(400);
+        return { error: 'bad building id' };
+      }
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const baseRes = await client.query<{ snapshot: Types.Base }>(
+          'SELECT snapshot FROM bases WHERE player_id = $1 FOR UPDATE',
+          [playerId],
+        );
+        if (baseRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'base not found' };
+        }
+        const base = baseRes.rows[0]!.snapshot;
+        const target = base.buildings.find((b) => b.id === id);
+        if (!target) {
+          await client.query('ROLLBACK');
+          reply.code(404);
+          return { error: 'building not found' };
+        }
+        if (!target.placedAt) {
+          // Building predates the placedAt column — can't be undone.
+          await client.query('ROLLBACK');
+          reply.code(410);
+          return { error: 'undo window has elapsed' };
+        }
+        const placedMs = Date.parse(target.placedAt);
+        const ageMs = Date.now() - placedMs;
+        if (!Number.isFinite(placedMs) || ageMs < 0 || ageMs > UNDO_WINDOW_MS) {
+          await client.query('ROLLBACK');
+          reply.code(410);
+          return { error: 'undo window has elapsed' };
+        }
+        const cost = BUILDING_PLACEMENT_COSTS[target.kind];
+        if (!cost) {
+          await client.query('ROLLBACK');
+          reply.code(400);
+          return { error: 'no refund cost for this kind' };
+        }
+        // Snapshot mutate: drop the building.
+        const next: Types.Base = {
+          ...base,
+          buildings: base.buildings.filter((b) => b.id !== id),
+          version: (base.version ?? 0) + 1,
+        };
+        await client.query(
+          'UPDATE bases SET snapshot = $2::jsonb, version = version + 1, updated_at = NOW() WHERE player_id = $1',
+          [playerId, JSON.stringify(next)],
+        );
+        // Refund. Sugar/leaf are bigint columns; pass as string-
+        // safe positive integers. total_invested mirrors what the
+        // placement endpoint added (sugar + leaf only — milk is
+        // tracked separately and not part of the colony-rank
+        // running total). Including milk here would silently drift
+        // the running total downward over time on every undo.
+        const refundRes = await client.query<{
+          sugar: string;
+          leaf_bits: string;
+          aphid_milk: string;
+        }>(
+          `UPDATE players
+              SET sugar = sugar + $2,
+                  leaf_bits = leaf_bits + $3,
+                  aphid_milk = aphid_milk + $4,
+                  total_invested = GREATEST(0, total_invested - ($2 + $3))
+            WHERE id = $1
+        RETURNING sugar, leaf_bits, aphid_milk`,
+          [playerId, cost.sugar, cost.leafBits, cost.aphidMilk],
+        );
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          base: next,
+          player: {
+            sugar: safeBigintToNumber(refundRes.rows[0]!.sugar, 'sugar', app.log),
+            leafBits: safeBigintToNumber(refundRes.rows[0]!.leaf_bits, 'leaf_bits', app.log),
+            aphidMilk: safeBigintToNumber(refundRes.rows[0]!.aphid_milk, 'aphid_milk', app.log),
+          },
+          refunded: cost,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        app.log.error({ err }, 'undo-placement failed');
+        reply.code(500);
+        return { error: 'undo failed' };
       } finally {
         client.release();
       }
@@ -2655,6 +2818,49 @@ export function registerPlayer(app: FastifyInstance): void {
       } finally {
         client.release();
       }
+    },
+  );
+
+  // POST /api/player/quiet-hours — set or clear the daily quiet
+  // window. start=null disables; otherwise [0..23]. length capped
+  // at 3 (DB CHECK enforces too). Validates types + ranges; returns
+  // the resulting state so the client can confirm.
+  app.post<{ Body: { startHour?: number | null; lengthHours?: number } }>(
+    '/player/quiet-hours',
+    async (req, reply) => {
+      const playerId = requirePlayer(req, reply);
+      if (!playerId) return;
+      const pool = await getPool();
+      if (!pool) {
+        reply.code(503);
+        return { error: 'database not configured' };
+      }
+      const start = req.body?.startHour;
+      const length = req.body?.lengthHours;
+      // null start means "disable". Validate the rest only when
+      // setting an active window.
+      if (start === null || start === undefined) {
+        await pool.query(
+          'UPDATE players SET quiet_hour_start = NULL WHERE id = $1::uuid',
+          [playerId],
+        );
+        return { ok: true, startHour: null, lengthHours: 3 };
+      }
+      if (
+        !Number.isInteger(start) || start < 0 || start > 23 ||
+        !Number.isInteger(length) || length === undefined || length < 1 || length > 3
+      ) {
+        reply.code(400);
+        return { error: 'startHour 0..23 + lengthHours 1..3' };
+      }
+      await pool.query(
+        `UPDATE players
+            SET quiet_hour_start = $2,
+                quiet_hour_length = $3
+          WHERE id = $1::uuid`,
+        [playerId, start, length],
+      );
+      return { ok: true, startHour: start, lengthHours: length };
     },
   );
 }

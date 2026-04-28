@@ -15,6 +15,36 @@ import { requirePlayer } from '../auth/playerAuth.js';
 // rendering — it is never read back on submit.
 
 const TROPHY_BAND = 75;
+
+// Quiet-hours predicate. A player's quiet window is active when:
+//   start IS NOT NULL AND ((current_hour - start + 24) % 24) < length
+// We invert to "NOT active" so the matchmaking SELECTs read
+// naturally (`AND quiet_hours_not_active`). Inlined as a string
+// fragment instead of a stored function so the migration stays
+// schema-only and a future hosted DB doesn't need a function-grant.
+const QUIET_HOURS_NOT_ACTIVE = `(
+  p.quiet_hour_start IS NULL
+  OR (
+    (
+      (EXTRACT(HOUR FROM NOW() AT TIME ZONE 'UTC')::int
+        - p.quiet_hour_start + 24) % 24
+    ) >= p.quiet_hour_length
+  )
+)`;
+
+// Pure helper exposed for unit tests so the wrap-around math is
+// pinned without spinning up a DB. Returns true iff the player's
+// quiet window is currently active.
+export function isQuietHourActive(
+  startHour: number | null,
+  lengthHours: number,
+  currentHourUtc: number,
+): boolean {
+  if (startHour === null || startHour === undefined) return false;
+  if (lengthHours <= 0) return false;
+  const diff = ((currentHourUtc - startHour) + 24) % 24;
+  return diff < lengthHours;
+}
 const ACTIVE_WINDOW_DAYS = 3;
 const MATCH_TTL_MINUTES = 15;
 
@@ -132,6 +162,7 @@ export function registerMatchmaking(app: FastifyInstance): void {
            JOIN bases b ON b.player_id = p.id
           WHERE p.id = $1::uuid
             AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
+            AND ${QUIET_HOURS_NOT_ACTIVE}
           LIMIT 1`,
         [targetDefenderId],
       );
@@ -156,6 +187,7 @@ export function registerMatchmaking(app: FastifyInstance): void {
             AND p.trophies BETWEEN $2 AND $3
             AND p.last_seen_at > NOW() - ($4 || ' days')::INTERVAL
             AND (p.shield_expires_at IS NULL OR p.shield_expires_at <= NOW())
+            AND ${QUIET_HOURS_NOT_ACTIVE}
           ORDER BY random()
           LIMIT 1`,
         [

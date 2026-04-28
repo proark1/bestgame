@@ -66,6 +66,14 @@ export interface Building {
   // does. The sim ignores rotation for collision + combat — it's a
   // purely cosmetic transform applied at render time.
   rotation?: 0 | 1 | 2 | 3;
+  // ISO-8601 timestamp set when the building was first placed. Used
+  // by /player/building/:id/undo-placement to enforce the 5-second
+  // undo window — the server rejects an undo on a building whose
+  // placedAt is older than that. Optional so existing buildings
+  // (placed before the column landed) survive deserialise; any
+  // building without placedAt simply can't be undone, which matches
+  // pre-feature behaviour.
+  placedAt?: string;
   // Player-authored defender AI rules attached to this building. The
   // sim's `ai_rules` system evaluates them each tick and mutates
   // SimBuilding state (boost timers, extra spawns, reveal, etc.).
