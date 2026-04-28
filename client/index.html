@@ -1437,18 +1437,23 @@
               );
               rail.addEventListener('keydown', (ev) => {
                 const step = rail.clientWidth * 0.85;
-                if (ev.key === 'ArrowRight') {
-                  ev.preventDefault();
-                  rail.scrollBy({ left: step, behavior: 'smooth' });
-                } else if (ev.key === 'ArrowLeft') {
-                  ev.preventDefault();
-                  rail.scrollBy({ left: -step, behavior: 'smooth' });
-                } else if (ev.key === 'Home') {
-                  ev.preventDefault();
-                  rail.scrollTo({ left: 0, behavior: 'smooth' });
-                } else if (ev.key === 'End') {
-                  ev.preventDefault();
-                  rail.scrollTo({ left: rail.scrollWidth, behavior: 'smooth' });
+                switch (ev.key) {
+                  case 'ArrowRight':
+                    ev.preventDefault();
+                    rail.scrollBy({ left: step, behavior: 'smooth' });
+                    break;
+                  case 'ArrowLeft':
+                    ev.preventDefault();
+                    rail.scrollBy({ left: -step, behavior: 'smooth' });
+                    break;
+                  case 'Home':
+                    ev.preventDefault();
+                    rail.scrollTo({ left: 0, behavior: 'smooth' });
+                    break;
+                  case 'End':
+                    ev.preventDefault();
+                    rail.scrollTo({ left: rail.scrollWidth, behavior: 'smooth' });
+                    break;
                 }
               });
               const total = story.panels.length;

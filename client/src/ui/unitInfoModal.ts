@@ -124,7 +124,7 @@ export function openUnitInfoModal(opts: OpenUnitInfoOpts): () => void {
   ).setWordWrapWidth(MODAL_W - padX * 2);
   root.add(story);
 
-  const powerStart = bodyStart + (story.height as number) + 14;
+  const powerStart = bodyStart + story.height + 14;
   root.add(
     crispText(
       scene,
