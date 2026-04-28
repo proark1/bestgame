@@ -312,6 +312,27 @@ export function sfxNotify(): void {
   if (playSampleOrSynth('notify')) return;
   tone({ freq: 1080, duration: 0.08, type: 'sine', gain: 0.2, release: 0.1 });
 }
+export function sfxHarvest(): void {
+  if (playSampleOrSynth('harvest')) return;
+  // Coin-shower cascade for the "tap producer to claim" gesture.
+  // Three quick rising chimes + a short noise sparkle on top so the
+  // cue reads as a satisfying resource pickup distinct from the
+  // generic earn/click blips.
+  const c = ensureContext();
+  if (!c) return;
+  const now = c.currentTime;
+  [660, 880, 1170].forEach((f, i) => {
+    tone({
+      freq: f,
+      duration: 0.07,
+      type: 'triangle',
+      gain: 0.28,
+      release: 0.08,
+      startTime: now + i * 0.05,
+    });
+  });
+  noiseBurst({ centerHz: 5200, q: 6, duration: 0.06, gain: 0.05, release: 0.08, startTime: now + 0.03 });
+}
 
 // ---------- Raid-specific SFX vocabulary ----------
 // The raid scene fires dozens of moments per second; each cue here is

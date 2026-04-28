@@ -7,7 +7,7 @@ import { openAccountModal, openAccountInfoModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
 import { maybeShowWhileAway } from '../ui/whileAwayModal.js';
 import { attachAmbientMotes } from '../ui/ambientMotes.js';
-import { setSceneTrack, resumeMusic } from '../ui/music.js';
+import { setSceneTrack, resumeMusic, setMusicSettings, getMusicSettings } from '../ui/music.js';
 import { readWinStreak, streakBonusPct } from '../ui/winStreak.js';
 import { openMatchPreview } from '../ui/matchPreview.js';
 import { openSettings } from '../ui/settingsModal.js';
@@ -42,7 +42,7 @@ function markHomeCoachmarksDone(): void {
 import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { spawnFloatNumber } from '../ui/floatNumber.js';
-import { getSettings, setSettings } from '../ui/audio.js';
+import { getSettings, setSettings, sfxHarvest } from '../ui/audio.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
@@ -865,28 +865,42 @@ export class HomeScene extends Phaser.Scene {
     const cy = HUD_H / 2;
 
     // Optional admin-flipped wordmark image — kept for branded skins.
-    // When the logo is on, it owns the top-left HUD strip (slightly
-    // taller than the bar, anchored to the top-left corner) and the
-    // account / level disc drops below it instead of fighting for the
-    // same row. Without the override the level disc takes the slot.
+    // When the logo is on, it owns the top-left column (the gap
+    // between the viewport edge and the centered game board) and the
+    // account / level disc stacks beneath it. On wide viewports we
+    // anchor the column at its horizontal midpoint so the brand mark
+    // and the level/trophy stack share a single visual axis.
     const logoActive = tier !== 'phone' && isUiOverrideActive(this, 'ui-logo');
+    const leftColumnCenterX = this.computeLeftColumnCenterX(tier);
     if (logoActive) {
-      // Bigger than the HUD itself so the wordmark reads from across
-      // the screen — the bottom of the logo bleeds a few pixels into
-      // the board area where the user-level disc + trophy chip sit
-      // beneath it (drawAccountChip handles the vertical offset).
-      const logoH = Math.round(HUD_H * 1.4);
-      const logoX = tier === 'wide' ? 24 : 16;
-      const logo = this.add.image(logoX, 8, 'ui-logo')
-        .setOrigin(0, 0)
+      // Logo height scales with the available column width so the
+      // wordmark reads from across the screen on wide displays. We
+      // cap it (and budget against the texture's native aspect) so
+      // narrow viewports don't get an oversized brand mark covering
+      // the level disc beneath.
+      const logo = this.add.image(leftColumnCenterX, SPACING.sm, 'ui-logo')
+        .setOrigin(0.5, 0)
         .setDepth(DEPTHS.hud);
       const source = logo.texture.getSourceImage();
       const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
       const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
-      const scale = logoH / Math.max(1, srcH);
-      logo.setDisplaySize(srcW * scale, logoH);
+      const aspect = srcW / Math.max(1, srcH);
+      const colW = this.computeLeftColumnWidth(tier);
+      // Aim for ~88% of the column width, capped so the logo never
+      // grows taller than ~3× the HUD bar (avoids dwarfing the level
+      // disc and trophy chip stacked below).
+      const targetW = Math.min(colW * 0.88, HUD_H * 3 * aspect);
+      const targetH = Math.min(targetW / aspect, HUD_H * 3);
+      logo.setDisplaySize(targetH * aspect, targetH);
       logo.setInteractive({ useHandCursor: true });
       logo.on('pointerdown', () => openTutorial({ force: true }));
+      // Stash the painted height so drawAccountChip can stack the
+      // level disc directly under the wordmark without re-deriving
+      // the aspect-ratio math (the previous estimator dropped the
+      // aspect term and misaligned non-square logos).
+      this.logoBottomY = SPACING.sm + targetH;
+    } else {
+      this.logoBottomY = null;
     }
 
     // Player profile card — Clash-of-Clans-style level + name combo
@@ -1004,10 +1018,11 @@ export class HomeScene extends Phaser.Scene {
     // here (not in the corner stack) because it's lookup, not action.
     this.drawCodexChip(rightEdge, pillY + PILL_H / 2 + 4, tier);
 
-    // Quick-toggles row — sfx mute + fullscreen, pinned right under
-    // the codex chip on the same right edge. One tap, no menu hunt.
-    // Both toggles persist via the existing settings / scale APIs.
-    this.drawHudQuickToggles(rightEdge, pillY + PILL_H + 12, tier);
+    // The audio mute + fullscreen quick-toggles used to live here on
+    // the right HUD edge. They've moved to the bottom-left button
+    // stack (drawCornerActionStacks) so the right edge stays a clean
+    // resource readout column and the player has a single discover-
+    // ability anchor for "controls" on the left.
 
     // Mobile burger. Replaces the full-width footer with a slide-in
     // drawer so phone viewports hand back the ~140 px the 2-row
@@ -1405,64 +1420,34 @@ export class HomeScene extends Phaser.Scene {
     void glyph;
   }
 
-  // Sfx + fullscreen quick-toggles. Sit just below the codex chip on
-  // the same right edge so a single tap from anywhere on the home
-  // screen mutes audio or enters fullscreen — without making the
-  // player hunt for Settings inside the burger drawer.
-  private drawHudQuickToggles(
-    rightEdgeX: number,
-    cy: number,
-    tier: 'wide' | 'narrow' | 'phone',
-  ): void {
-    const size = tier === 'phone' ? 28 : 32;
-    const gap = 6;
-    let cursorX = rightEdgeX - size / 2;
-    const drawOne = (
-      glyph: () => string,
-      onPress: () => void,
-    ): void => {
-      const ix = cursorX;
-      const bg = this.add.graphics().setDepth(DEPTHS.hud);
-      const txt = crispText(
-        this,
-        ix,
-        cy,
-        glyph(),
-        labelTextStyle(tier === 'phone' ? 14 : 16, COLOR.textGold),
-      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
-      const paint = (): void => {
-        bg.clear();
-        bg.fillStyle(0x1a2b1a, 0.9);
-        bg.lineStyle(1, COLOR.brassDeep, 1);
-        bg.fillCircle(ix, cy, size / 2);
-        bg.strokeCircle(ix, cy, size / 2);
-      };
-      paint();
-      this.add
-        .zone(ix, cy, size, size)
-        .setOrigin(0.5, 0.5)
-        .setInteractive({ useHandCursor: true })
-        .setDepth(DEPTHS.hud)
-        .on('pointerdown', () => {
-          onPress();
-          txt.setText(glyph());
-          paint();
-        });
-      cursorX -= size + gap;
-    };
-
-    drawOne(
-      () => (getSettings().muted ? '🔇' : '🔊'),
-      () => setSettings({ muted: !getSettings().muted }),
-    );
-    drawOne(
-      () => (this.scale.isFullscreen ? '⤡' : '⤢'),
-      () => {
-        if (this.scale.isFullscreen) this.scale.stopFullscreen();
-        else this.scale.startFullscreen();
-      },
-    );
+  // The board fills the viewport horizontally up to a 2.4× zoom cap;
+  // anything left over becomes a vertical band on each side. This
+  // helper returns the width of the left band so the wordmark + level
+  // stack can center inside it (mirroring CoC's home-village HUD).
+  private computeLeftColumnWidth(tier: 'wide' | 'narrow' | 'phone'): number {
+    if (tier === 'phone' || this.isMobileLayout()) return 0;
+    const fitW = this.scale.width / BOARD_W;
+    const fitH = this.scale.height / BOARD_H;
+    const fit = Math.min(fitW, fitH);
+    const scale = Math.max(1.0, Math.min(2.4, fit));
+    const scaledW = BOARD_W * scale;
+    const gap = (this.scale.width - scaledW) / 2;
+    // Min width keeps the column usable even when the board nearly
+    // fills the viewport — the wordmark just sits a bit closer to the
+    // edge than the perfect midpoint in that case.
+    return Math.max(96, gap);
   }
+
+  private computeLeftColumnCenterX(tier: 'wide' | 'narrow' | 'phone'): number {
+    if (tier === 'phone' || this.isMobileLayout()) return SPACING.md;
+    const colW = this.computeLeftColumnWidth(tier);
+    return colW / 2;
+  }
+
+  // Captured by drawHud when the logo override is active so the level
+  // disc / trophy stack can anchor directly under the painted wordmark
+  // (we can't re-derive the height without the texture's aspect ratio).
+  private logoBottomY: number | null = null;
 
   // Icon-only profile card — Clash-of-Clans style. A brass level
   // disc sits in the top-left corner with a compact trophy chip
@@ -1484,9 +1469,16 @@ export class HomeScene extends Phaser.Scene {
     // park the disc directly below the wordmark instead of inside the
     // HUD bar, so the user sees [LOGO] / [LEVEL+TROPHY] stacked.
     const discSize = tier === 'phone' ? 36 : 44;
-    const discX = burgerSlot + SPACING.sm + discSize / 2;
-    const cy = logoActive
-      ? Math.round(HUD_H * 1.4) + 16 + discSize / 2
+    // On wide / narrow viewports the level + trophy stack centers in
+    // the gap between the viewport edge and the centered game board,
+    // matching the wordmark's axis. On phone (or when the burger
+    // drawer eats the corner) we keep the legacy left-anchored layout
+    // so the stack doesn't drift over the playfield.
+    const discX = tier === 'phone' || this.isMobileLayout()
+      ? burgerSlot + SPACING.sm + discSize / 2
+      : this.computeLeftColumnCenterX(tier);
+    const cy = logoActive && this.logoBottomY !== null
+      ? this.logoBottomY + 14 + discSize / 2
       : HUD_H / 2;
     const discBg = this.add.graphics().setDepth(DEPTHS.hud);
     drawPill(discBg, discX - discSize / 2, cy - discSize / 2, discSize, discSize, {
@@ -2073,6 +2065,7 @@ export class HomeScene extends Phaser.Scene {
   private async runHarvest(): Promise<void> {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     if (!runtime) return;
+    sfxHarvest();
     try {
       const res = await runtime.api.harvestAll();
       // Patch runtime so a subsequent scene enter sees the new
@@ -3544,13 +3537,24 @@ export class HomeScene extends Phaser.Scene {
     // so the early-out triggered at i=0 and no icons rendered.
     const stackTopBudget = HUD_H + 130;
 
-    type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
+    type Entry = {
+      label: string;
+      onPress: (btn: HiveButton) => void;
+      variant?: 'primary' | 'secondary';
+      // When set, the press handler re-evaluates this and writes the
+      // result back via setLabel. Used for the audio + fullscreen
+      // toggles whose icon depends on a piece of mutable state.
+      glyph?: () => string;
+    };
     // Layer flip is the BOTTOM entry of the left stack so it sits in
     // the corner where the player's thumb naturally rests; Quests +
-    // Recent + Help climb up from there. The icon reflects the
-    // CURRENT mode (not the destination) so the button reads as a
-    // status indicator at a glance — ☀ on surface, ⛏ underground.
+    // Recent + Help + the audio / fullscreen toggles climb up from
+    // there. The flip icon reflects the CURRENT mode (not the
+    // destination) so the button reads as a status indicator at a
+    // glance — ☀ on surface, ⛏ underground.
     const flipIcon = this.layer === 0 ? '☀' : '⛏';
+    const audioGlyph = (): string => (getSettings().muted ? '🔇' : '🔊');
+    const fsGlyph = (): string => (this.scale.isFullscreen ? '⤡' : '⤢');
     const leftStack: Entry[] = [
       {
         label: flipIcon,
@@ -3566,6 +3570,27 @@ export class HomeScene extends Phaser.Scene {
       { label: '🗓', onPress: () => fadeToScene(this, 'QuestsScene') },
       { label: '📜', onPress: () => fadeToScene(this, 'RaidHistoryScene') },
       { label: '❓', onPress: () => openTutorial({ force: true }) },
+      {
+        label: audioGlyph(),
+        glyph: audioGlyph,
+        onPress: (btn) => {
+          // Toggle SFX + music together so the speaker icon honestly
+          // reads as a master mute (see drawHud notes for rationale).
+          const next = !getSettings().muted;
+          setSettings({ muted: next });
+          setMusicSettings({ muted: next });
+          btn.setLabel(audioGlyph());
+        },
+      },
+      {
+        label: fsGlyph(),
+        glyph: fsGlyph,
+        onPress: (btn) => {
+          if (this.scale.isFullscreen) this.scale.stopFullscreen();
+          else this.scale.startFullscreen();
+          btn.setLabel(fsGlyph());
+        },
+      },
     ];
     // Raid is the bottom-most right-stack entry — primary variant so
     // the gold pill reads as the main action of the screen even at
@@ -3574,7 +3599,7 @@ export class HomeScene extends Phaser.Scene {
       {
         label: '⚔',
         variant: 'primary',
-        onPress: () => {
+        onPress: (): void => {
           this.advanceCoachmark('raid');
           const rt = this.registry.get('runtime') as HiveRuntime | undefined;
           if (rt) {
@@ -3602,7 +3627,7 @@ export class HomeScene extends Phaser.Scene {
         const x = side === 'left'
           ? anchorX + iconBtnSize / 2
           : anchorX - iconBtnSize / 2;
-        const btn = makeHiveButton(this, {
+        const btn: HiveButton = makeHiveButton(this, {
           x,
           y,
           width: iconBtnSize,
@@ -3610,7 +3635,7 @@ export class HomeScene extends Phaser.Scene {
           label: e.label,
           variant: e.variant ?? 'secondary',
           fontSize: 20,
-          onPress: e.onPress,
+          onPress: () => e.onPress(btn),
         });
         btn.container.setDepth(DEPTHS.hud);
         this.cornerActionButtons.push(btn);
