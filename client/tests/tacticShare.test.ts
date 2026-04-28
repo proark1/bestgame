@@ -72,8 +72,17 @@ describe('encodeTactic / decodeTactic', () => {
   });
 
   it('rejects bogus spawn edges', () => {
-    const enc = encodeTactic({ ...SAMPLE, spawnEdge: 'right' as 'left' });
+    // 'inside' isn't one of the four legal edges; the decoder
+    // should reject it. ('right' was previously bogus too but is
+    // now a real spawn edge once RaidScene started accepting it.)
+    const enc = encodeTactic({ ...SAMPLE, spawnEdge: 'inside' as 'left' });
     expect(decodeTactic(enc)).toBeNull();
+  });
+
+  it('round-trips the right spawn edge', () => {
+    const enc = encodeTactic({ ...SAMPLE, spawnEdge: 'right' });
+    const decoded = decodeTactic(enc);
+    expect(decoded?.spawnEdge).toBe('right');
   });
 
   it('rejects modifiers that point outside the polyline', () => {

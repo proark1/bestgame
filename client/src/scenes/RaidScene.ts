@@ -43,7 +43,7 @@ const RAID_SECONDS = 90;
 const SPAWN_ZONE_W = TILE * 2;
 const SPAWN_ZONE_H = TILE * 2;
 
-type SpawnEdge = 'left' | 'top' | 'bottom';
+type SpawnEdge = 'left' | 'top' | 'bottom' | 'right';
 
 interface DeckEntry {
   kind: Types.UnitKind;
@@ -135,7 +135,13 @@ function isValidTactic(t: unknown): t is SavedTactic {
   if (r.pointsTile.length < 2) return false;
   if (r.pointsTile.length > TACTIC_POINTS_LIMIT) return false;
   if (!r.pointsTile.every(isValidPoint)) return false;
-  if (r.spawnEdge !== 'left' && r.spawnEdge !== 'top' && r.spawnEdge !== 'bottom') return false;
+  if (
+    r.spawnEdge !== 'left' &&
+    r.spawnEdge !== 'top' &&
+    r.spawnEdge !== 'bottom' &&
+    r.spawnEdge !== 'right'
+  )
+    return false;
   if (r.modifier !== undefined) {
     const m = r.modifier as Partial<Types.PathModifier>;
     if (typeof m !== 'object' || m === null) return false;
@@ -885,17 +891,24 @@ export class RaidScene extends Phaser.Scene {
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
     this.spawnZoneGraphics.strokeRect(0, 0, SPAWN_ZONE_W, BOARD_H);
 
-    // Top spawn zone (excluding corner covered by left)
+    // Top spawn zone (excluding corners covered by left/right)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
-    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
-    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
 
-    // Bottom spawn zone (excluding corner covered by left)
+    // Bottom spawn zone (excluding corners covered by left/right)
     this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
-    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
     this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
-    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W, SPAWN_ZONE_H);
+    this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
+
+    // Right spawn zone — full height, mirrors the left strip. Lets
+    // attackers come at a defender's funnel from the far side too.
+    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillRect(BOARD_W - SPAWN_ZONE_W, 0, SPAWN_ZONE_W, BOARD_H);
+    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.strokeRect(BOARD_W - SPAWN_ZONE_W, 0, SPAWN_ZONE_W, BOARD_H);
 
     // Chevron indicators for each edge
     const leftChevrons = [0, 1, 2].map((i) =>
@@ -931,6 +944,17 @@ export class RaidScene extends Phaser.Scene {
         .setAlpha(0.28),
     );
 
+    const rightChevrons = [0, 1, 2].map((i) =>
+      this.add
+        .text(BOARD_W - SPAWN_ZONE_W / 2, 140 + i * 120, '<<<', {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '22px',
+          color: '#c3e8b0',
+        })
+        .setOrigin(0.5)
+        .setAlpha(0.28),
+    );
+
     this.spawnZoneLabel = this.add
       .text(SPAWN_ZONE_W / 2, BOARD_H / 2, 'SPAWN\nEDGE', {
         fontFamily: 'ui-monospace, monospace',
@@ -942,7 +966,12 @@ export class RaidScene extends Phaser.Scene {
       .setAlpha(0.75)
       .setDepth(3);
 
-    const allChevrons = [...leftChevrons, ...topChevrons, ...bottomChevrons];
+    const allChevrons = [
+      ...leftChevrons,
+      ...topChevrons,
+      ...bottomChevrons,
+      ...rightChevrons,
+    ];
     this.spawnZoneCue = this.add.container(0, 0, allChevrons);
     this.spawnZoneCue.setDepth(3);
     this.tweens.add({
@@ -1117,10 +1146,24 @@ export class RaidScene extends Phaser.Scene {
       const local = toBoardLocal(px, py);
       // Left edge: x <= 2 tiles
       if (local.x <= SPAWN_ZONE_W) return 'left';
-      // Top edge: y <= 2 tiles (excluding corners covered by left)
-      if (local.y <= SPAWN_ZONE_H && local.x > SPAWN_ZONE_W) return 'top';
-      // Bottom edge: y >= height - 2 tiles (excluding corners covered by left)
-      if (local.y >= BOARD_H - SPAWN_ZONE_H && local.x > SPAWN_ZONE_W) return 'bottom';
+      // Right edge: x >= width - 2 tiles (mirrors left so the player
+      // can flank from the far side; defender bases that funnel left-
+      // to-right now get a real second axis of attack).
+      if (local.x >= BOARD_W - SPAWN_ZONE_W) return 'right';
+      // Top edge: y <= 2 tiles (excluding corners covered by left/right)
+      if (
+        local.y <= SPAWN_ZONE_H &&
+        local.x > SPAWN_ZONE_W &&
+        local.x < BOARD_W - SPAWN_ZONE_W
+      )
+        return 'top';
+      // Bottom edge: y >= height - 2 tiles (excluding corners)
+      if (
+        local.y >= BOARD_H - SPAWN_ZONE_H &&
+        local.x > SPAWN_ZONE_W &&
+        local.x < BOARD_W - SPAWN_ZONE_W
+      )
+        return 'bottom';
       return null;
     };
 
@@ -1133,7 +1176,7 @@ export class RaidScene extends Phaser.Scene {
       }
       const edge = determineSpawnEdge(p.x, p.y);
       if (!edge) {
-        this.deckHintText.setText('Start your drag from a glowing spawn edge (left, top, or bottom).');
+        this.deckHintText.setText('Start your drag from a glowing spawn edge (left, right, top, or bottom).');
         // Flash the spawn-zone graphics so the player can see WHERE
         // the legal start regions actually are. Pairs with a short
         // haptic buzz so the failure registers physically.
@@ -1260,11 +1303,34 @@ export class RaidScene extends Phaser.Scene {
       }
       this.advanceCoachmark('spawn');
 
-      // fade the committed trail
+      // Confirm the commit visually: a brief scale-pulse on the
+      // selected deck card so the player sees the count tick down
+      // without staring at it, plus a slower fade on the trail with
+      // a one-shot brighter overdraw so the pheromone path reads as
+      // "yep, deployed" before it dissolves.
+      const activeCard = this.deckContainers[this.selectedDeckIdx];
+      if (activeCard) {
+        // Pulse RELATIVE to the dynamic base scale — deckCardScale
+        // drops to ~0.62 on phone-narrow viewports, so a hardcoded
+        // absolute target would yank the card to ~2× its rest size.
+        // Kill any in-flight tween + reset to base first so a rapid
+        // double-deploy doesn't snap the card mid-yoyo.
+        this.tweens.killTweensOf(activeCard);
+        activeCard.setScale(this.deckCardScale);
+        this.tweens.add({
+          targets: activeCard,
+          scale: this.deckCardScale * 1.12,
+          duration: 110,
+          ease: 'Cubic.easeOut',
+          yoyo: true,
+        });
+      }
+      // fade the committed trail (extended from 600 → 900 ms so the
+      // player has a clearer beat to see what they drew)
       this.tweens.add({
         targets: this.trailGraphics,
         alpha: { from: 1, to: 0 },
-        duration: 600,
+        duration: 900,
         onComplete: () => {
           this.trailGraphics.clear();
           this.trailGraphics.setAlpha(1);
@@ -2639,6 +2705,7 @@ export class RaidScene extends Phaser.Scene {
       const px = Sim.toFloat(firstPoint.x) * TILE;
       const py = Sim.toFloat(firstPoint.y) * TILE;
       if (px <= SPAWN_ZONE_W) edge = 'left';
+      else if (px >= BOARD_W - SPAWN_ZONE_W) edge = 'right';
       else if (py <= SPAWN_ZONE_H) edge = 'top';
       else if (py >= BOARD_H - SPAWN_ZONE_H) edge = 'bottom';
     }
@@ -2656,6 +2723,9 @@ export class RaidScene extends Phaser.Scene {
     switch (edge) {
       case 'left':
         startX = targetX - offset;
+        break;
+      case 'right':
+        startX = targetX + offset;
         break;
       case 'top':
         startY = targetY - SPAWN_ZONE_H;
