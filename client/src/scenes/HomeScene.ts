@@ -1099,73 +1099,143 @@ export class HomeScene extends Phaser.Scene {
       close,
     ]);
 
-    // Action list. Same set as the desktop footer, plus a Fullscreen
-    // toggle and the Codex shortcut so the drawer is a complete nav
-    // menu. Each entry is a full-width secondary button — big tap
-    // target, one action per line, comfortable for thumb reach.
+    // Action list — 17+ entries grouped into 4 categories so the
+    // drawer reads as sections instead of a wall of buttons. Each
+    // section header is a tiny label rendered at startY, and the
+    // entries below follow the same layout/pacing.
     type Entry = { label: string; onPress: () => void; variant?: 'primary' | 'secondary' };
-    const entries: Entry[] = [
-      {
-        label: this.layer === 0 ? '↓ Underground' : '↑ Surface',
-        onPress: () => {
-          this.closeBurgerDrawer();
-          // Move mode's overlay lives on boardContainer; flipping the
-          // layer destroys it. Exit cleanly first so the banner/sprite
-          // alpha also get restored.
-          this.exitMoveMode();
-          this.layer = this.layer === 0 ? 1 : 0;
-          this.boardContainer.removeAll(true);
-          this.drawBoard();
-          this.drawBuildings();
-        },
+    type Section = { title: string; entries: Entry[] };
+    const flipLayer: Entry = {
+      label: this.layer === 0 ? '↓ Switch to Underground' : '↑ Switch to Surface',
+      onPress: () => {
+        this.closeBurgerDrawer();
+        // Move mode's overlay lives on boardContainer; flipping the
+        // layer destroys it. Exit cleanly first so the banner/sprite
+        // alpha also get restored.
+        this.exitMoveMode();
+        this.layer = this.layer === 0 ? 1 : 0;
+        this.boardContainer.removeAll(true);
+        this.drawBoard();
+        this.drawBuildings();
       },
-      { label: '⚔  Raid a base', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
-      { label: '📖  Campaign', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
-      { label: '🏰  Clan wars', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
-      { label: '🌐  Hive war',  onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
-      { label: '🎬  Top raids', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
-      { label: '👑  Queen',    onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
-      { label: '🌳  Colony path', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
-      { label: '⏳  Builders', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
-      { label: '🗓  Quests', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
-      { label: '🧠  Defender AI', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
-      { label: '🏆  Ranks', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
-      { label: '📜  Recent', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidHistoryScene'); } },
-      { label: '⚙  Upgrades', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'UpgradeScene'); } },
-      { label: '👥  Clan', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
-      { label: '🏟  Arena', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
-      { label: '📖  Codex', onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
-      { label: '⚙️  Settings', onPress: () => { this.closeBurgerDrawer(); openSettings(); } },
-      { label: '❓  Help', onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
+    };
+    const sections: Section[] = [
       {
-        label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
-        onPress: () => {
-          this.closeBurgerDrawer();
-          // iOS Safari refuses this — silent no-op there.
-          if (this.scale.isFullscreen) this.scale.stopFullscreen();
-          else this.scale.startFullscreen();
-        },
+        title: 'COMBAT',
+        entries: [
+          { label: '⚔  Raid a base', variant: 'primary',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidScene'); } },
+          { label: '📖  Campaign',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CampaignScene'); } },
+          { label: '🏟  Arena',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ArenaScene'); } },
+          { label: '📜  Recent raids',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'RaidHistoryScene'); } },
+        ],
+      },
+      {
+        title: 'WARS & FEED',
+        entries: [
+          { label: '🏰  Clan wars',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanWarsScene'); } },
+          { label: '🌐  Hive war',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'HiveWarScene'); } },
+          { label: '🎬  Top raids',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ReplayFeedScene'); } },
+        ],
+      },
+      {
+        title: 'PROGRESSION',
+        entries: [
+          { label: '🌳  Queen path',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ProgressionScene'); } },
+          { label: '👑  Queen',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QueenSkinScene'); } },
+          { label: '⚙  Upgrades',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'UpgradeScene'); } },
+          { label: '🗓  Quests',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'QuestsScene'); } },
+          { label: '⏳  Builders',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'BuilderQueueScene'); } },
+        ],
+      },
+      {
+        title: 'BASE & SOCIAL',
+        entries: [
+          { label: '🧠  Defender AI',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'DefenderAIScene'); } },
+          { label: '👥  Clan',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'ClanScene'); } },
+          { label: '🏆  Ranks',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'LeaderboardScene'); } },
+          { label: '📖  Codex',
+            onPress: () => { this.closeBurgerDrawer(); fadeToScene(this, 'CodexScene'); } },
+        ],
+      },
+      {
+        title: 'SYSTEM',
+        entries: [
+          { label: '❓  Help',
+            onPress: () => { this.closeBurgerDrawer(); openTutorial({ force: true }); } },
+          { label: '⚙️  Settings',
+            onPress: () => { this.closeBurgerDrawer(); openSettings(); } },
+          {
+            label: this.scale.isFullscreen ? '⤡  Exit fullscreen' : '⤢  Fullscreen',
+            onPress: () => {
+              this.closeBurgerDrawer();
+              // iOS Safari refuses this — silent no-op there.
+              if (this.scale.isFullscreen) this.scale.stopFullscreen();
+              else this.scale.startFullscreen();
+            },
+          },
+        ],
       },
     ];
-    if (entries[1]) entries[1].variant = 'primary';
     const btnH = 48;
     const btnW = W - 32;
     const startY = 110;
-    const gap = 8;
-    entries.forEach((e, i) => {
-      const y = startY + i * (btnH + gap) + btnH / 2;
+    const gap = 6;
+    const sectionGap = 18;
+    const headerH = 22;
+    let cursorY = startY;
+    // Quick layer flip lives above the sections — it's the
+    // most-used non-CTA action and shouldn't share a header.
+    {
+      const y = cursorY + btnH / 2;
       const btn = makeHiveButton(this, {
-        x: W / 2,
-        y,
-        width: btnW,
-        height: btnH,
-        label: e.label,
-        variant: e.variant ?? 'secondary',
-        fontSize: 15,
-        onPress: e.onPress,
+        x: W / 2, y, width: btnW, height: btnH,
+        label: flipLayer.label,
+        variant: 'secondary',
+        fontSize: 14,
+        onPress: flipLayer.onPress,
       });
       container.add(btn.container);
-    });
+      cursorY += btnH + sectionGap;
+    }
+    for (const section of sections) {
+      // Section header — uppercase tag-style label.
+      const header = crispText(this, 16, cursorY, section.title,
+        labelTextStyle(10, COLOR.textGold))
+        .setOrigin(0, 0);
+      container.add(header);
+      cursorY += headerH;
+      for (const e of section.entries) {
+        const y = cursorY + btnH / 2;
+        const btn = makeHiveButton(this, {
+          x: W / 2,
+          y,
+          width: btnW,
+          height: btnH,
+          label: e.label,
+          variant: e.variant ?? 'secondary',
+          fontSize: 15,
+          onPress: e.onPress,
+        });
+        container.add(btn.container);
+        cursorY += btnH + gap;
+      }
+      cursorY += sectionGap - gap;
+    }
 
     // Slide-in tween. Start off-screen to the left, ease in.
     container.setPosition(-W, 0);
@@ -4254,9 +4324,114 @@ export class HomeScene extends Phaser.Scene {
       this.boardContainer.removeAll(true);
       this.drawBoard();
       this.drawBuildings();
-      this.flashToast(`Placed ${kind}`);
+      // 5-second undo affordance. Server stamped placedAt on the
+      // placement; the matching /undo-placement endpoint enforces
+      // the window. We just have to surface the button + tear it
+      // down on timeout. Pulled the new id out of the response so
+      // the undo call hits the right row.
+      const newBuilding = res.base.buildings.find(
+        (b) => b.kind === kind &&
+               b.anchor.x === tx &&
+               b.anchor.y === ty &&
+               b.anchor.layer === this.layer,
+      );
+      if (newBuilding) {
+        this.showUndoPlacement(newBuilding.id, kind);
+      } else {
+        this.flashToast(`Placed ${kind}`);
+      }
     } catch (err) {
       this.flashToast((err as Error).message);
+    }
+  }
+
+  // 5-second "↶ Undo" banner anchored top-center. Counts down each
+  // second; tap calls /undo-placement which refunds the cost. On
+  // success we patch runtime state + re-render. On expiry we tear
+  // down the banner and just flash a "Placed X" toast like before.
+  private undoBanner: Phaser.GameObjects.Container | null = null;
+  private undoTimer: Phaser.Time.TimerEvent | null = null;
+  private showUndoPlacement(buildingId: string, kind: Types.BuildingKind): void {
+    if (this.undoBanner) {
+      this.undoBanner.destroy(true);
+      this.undoBanner = null;
+    }
+    if (this.undoTimer) {
+      this.undoTimer.destroy();
+      this.undoTimer = null;
+    }
+    const w = 280;
+    const h = 36;
+    const x = (this.scale.width - w) / 2;
+    const y = HUD_H + 4;
+    const panel = this.add.container(0, 0).setDepth(DEPTHS.toast);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1a2b1a, 0.96);
+    bg.lineStyle(2, COLOR.brassDeep, 1);
+    bg.fillRoundedRect(x, y, w, h, 10);
+    bg.strokeRoundedRect(x, y, w, h, 10);
+    const labelText = crispText(this, x + 12, y + h / 2,
+      `Placed ${kind}`,
+      bodyTextStyle(12, COLOR.textPrimary)).setOrigin(0, 0.5);
+    const undoBtn = crispText(this, x + w - 12, y + h / 2,
+      '↶ Undo (5s)',
+      labelTextStyle(11, COLOR.textGold))
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    panel.add([bg, labelText, undoBtn]);
+    this.undoBanner = panel;
+    let secondsLeft = 5;
+    undoBtn.on('pointerdown', () => { void this.commitUndoPlacement(buildingId); });
+    this.undoTimer = this.time.addEvent({
+      delay: 1000,
+      repeat: 4,
+      callback: () => {
+        secondsLeft--;
+        if (secondsLeft <= 0) {
+          this.tearDownUndoBanner();
+        } else {
+          undoBtn.setText(`↶ Undo (${secondsLeft}s)`);
+        }
+      },
+    });
+  }
+
+  private tearDownUndoBanner(): void {
+    if (this.undoBanner) {
+      this.undoBanner.destroy(true);
+      this.undoBanner = null;
+    }
+    if (this.undoTimer) {
+      this.undoTimer.destroy();
+      this.undoTimer = null;
+    }
+  }
+
+  private async commitUndoPlacement(buildingId: string): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    this.tearDownUndoBanner();
+    try {
+      const r = await runtime.api.undoPlacement(buildingId);
+      if (runtime.player) {
+        runtime.player.base = r.base;
+        runtime.player.player.sugar = r.player.sugar;
+        runtime.player.player.leafBits = r.player.leafBits;
+        runtime.player.player.aphidMilk = r.player.aphidMilk;
+      }
+      this.serverBase = r.base;
+      this.resources = {
+        sugar: r.player.sugar,
+        leafBits: r.player.leafBits,
+        aphidMilk: r.player.aphidMilk,
+      };
+      this.refreshResourcePills();
+      this.boardContainer.removeAll(true);
+      this.drawBoard();
+      this.drawBuildings();
+      this.flashToast(`Refunded ${r.refunded.sugar} sugar / ${r.refunded.leafBits} leaf`);
+    } catch (err) {
+      this.flashToast(`Undo failed: ${(err as Error).message}`);
     }
   }
 
