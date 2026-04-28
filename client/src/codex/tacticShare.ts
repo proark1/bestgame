@@ -28,7 +28,7 @@ export interface SharedTactic {
   unitKind: string;
   pointsTile: SharedTacticPoint[];
   modifier?: SharedTacticModifier;
-  spawnEdge: 'left' | 'top' | 'bottom';
+  spawnEdge: 'left' | 'top' | 'bottom' | 'right';
 }
 
 // Localstorage key + cap shared with RaidScene.handleSaveTactic and
@@ -52,7 +52,12 @@ const DEFENDER_ONLY_KINDS = new Set<string>(['NestSpider', 'MiniScarab']);
 const ALLOWED_KINDS: ReadonlySet<string> = new Set(
   (Object.keys(UNIT_CODEX) as string[]).filter((k) => !DEFENDER_ONLY_KINDS.has(k)),
 );
-const ALLOWED_EDGES = new Set<SharedTactic['spawnEdge']>(['left', 'top', 'bottom']);
+const ALLOWED_EDGES = new Set<SharedTactic['spawnEdge']>([
+  'left',
+  'top',
+  'bottom',
+  'right',
+]);
 const ALLOWED_MOD_KINDS = new Set<SharedTacticModifier['kind']>(['split', 'ambush', 'dig']);
 
 interface CompactTactic {
