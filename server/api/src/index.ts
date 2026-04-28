@@ -49,10 +49,12 @@ async function start(): Promise<void> {
 
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
-    // 22 MB — sized so /admin/api/audio/save can take a base64-encoded
-    // 5-minute mp3 (~6 MB binary → ~8 MB base64) with headroom. The
-    // sprite save route only needs ~3.5 MB; both share the global limit.
-    bodyLimit: 22_000_000,
+    // 3.5 MB — comfortably fits a 256 px WebP sprite (base64-encoded) plus
+    // envelope. /admin/api/save is the only route that needs this much.
+    // /admin/api/audio/save sets a higher route-level bodyLimit (22 MB)
+    // for music mp3s; we keep the global low to limit DoS surface area
+    // on every other endpoint.
+    bodyLimit: 3_500_000,
     // Trust the platform's proxy so rate-limit + logs see the real
     // client IP (Railway, Fly, Render all set X-Forwarded-For).
     trustProxy: true,

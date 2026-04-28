@@ -195,24 +195,31 @@ const TRACKS: Record<string, TrackPreset> = {
 // Idempotent — call from each scene's create(). Swapping to the same
 // track id is a no-op so the music streams across scene reloads of
 // the same scene.
+//
+// The generation counter (`trackGeneration`) prevents a race condition
+// when two setSceneTrack calls overlap. tryStartSample is async (it
+// fetches and decodes), and a second call can fire before the first
+// resolves; without the gen check we could end up with both a sample
+// AND the procedural fallback playing simultaneously.
+let trackGeneration = 0;
+
 export function setSceneTrack(trackId: string): void {
   const c = ensureCtx();
   if (!c || !busGain) return;
   if (active && activeTrackId(active) === trackId) return;
   const preset = TRACKS[trackId];
   if (!preset) return;
+  const gen = ++trackGeneration;
   stopTrack(0.5);
   // Try the ElevenLabs-generated sample first (`music-<scene>` in the
   // audio manifest). If that's absent the procedural pad covers the
   // gap so a fresh deploy without any music files still has bed
   // music.
-  void tryStartSample(trackId).then((started) => {
+  void tryStartSample(trackId, gen).then((started) => {
+    // Superseded: another setSceneTrack ran while we were fetching.
+    // Bail out — the newer call owns the active slot.
+    if (gen !== trackGeneration) return;
     if (started) return;
-    // tryStartSample resolves false either when no manifest entry
-    // exists or when the decode fails. In both cases we want the
-    // procedural fallback — and only when nothing has overtaken us
-    // (e.g. a quick scene swap firing two setSceneTrack() calls
-    // back-to-back).
     if (active) return;
     startTrack(preset);
   });
@@ -279,7 +286,23 @@ function startTrack(preset: TrackPreset): void {
 // fetched lazily on first need and cached for the session — admin
 // publishes via the Audio tab will only pick up after a reload,
 // which matches the existing audioAssets prewarm contract.
+//
+// Decoded AudioBuffers are uncompressed PCM (~10 MB per minute of
+// stereo @ 44.1kHz), so we cap the cache at SAMPLE_CACHE_MAX entries
+// and evict in insertion order (Map iteration is insertion-order in
+// JS). Today there are ~5 scenes that use music; the cap shields a
+// future deploy that adds more scenes from unbounded memory growth.
+const SAMPLE_CACHE_MAX = 4;
 const SAMPLE_BUFFER_CACHE = new Map<string, AudioBuffer | null>();
+function rememberSample(trackId: string, buf: AudioBuffer | null): void {
+  if (SAMPLE_BUFFER_CACHE.has(trackId)) {
+    SAMPLE_BUFFER_CACHE.delete(trackId);
+  } else if (SAMPLE_BUFFER_CACHE.size >= SAMPLE_CACHE_MAX) {
+    const oldest = SAMPLE_BUFFER_CACHE.keys().next().value;
+    if (typeof oldest === 'string') SAMPLE_BUFFER_CACHE.delete(oldest);
+  }
+  SAMPLE_BUFFER_CACHE.set(trackId, buf);
+}
 let manifestPromise: Promise<Record<string, { src: string; gain?: number }>> | null = null;
 
 async function loadMusicManifest(): Promise<Record<string, { src: string; gain?: number }>> {
@@ -303,7 +326,7 @@ async function loadMusicManifest(): Promise<Record<string, { src: string; gain?:
   return manifestPromise;
 }
 
-async function tryStartSample(trackId: string): Promise<boolean> {
+async function tryStartSample(trackId: string, gen: number): Promise<boolean> {
   const c = ctx;
   if (!c || !busGain) return false;
   const manifest = await loadMusicManifest();
@@ -315,20 +338,23 @@ async function tryStartSample(trackId: string): Promise<boolean> {
       const url = `/audio/${entry.src.replace(/^\/+/, '')}`;
       const res = await fetch(url);
       if (!res.ok) {
-        SAMPLE_BUFFER_CACHE.set(trackId, null);
+        rememberSample(trackId, null);
         return false;
       }
       const arr = await res.arrayBuffer();
       buffer = await c.decodeAudioData(arr);
-      SAMPLE_BUFFER_CACHE.set(trackId, buffer);
+      rememberSample(trackId, buffer);
     } catch {
-      SAMPLE_BUFFER_CACHE.set(trackId, null);
+      rememberSample(trackId, null);
       return false;
     }
   }
   if (!buffer) return false;
-  // Another setSceneTrack may have raced ahead while we were fetching
-  // — only start playback if no other track has been activated since.
+  // Generation guard: another setSceneTrack may have run while we were
+  // fetching/decoding. If so, the caller's "started?" check will see
+  // gen !== trackGeneration and bail out, but we also refuse to install
+  // ourselves into `active` so we never overwrite a newer track.
+  if (gen !== trackGeneration) return false;
   if (active) return false;
 
   const fadeGain = c.createGain();

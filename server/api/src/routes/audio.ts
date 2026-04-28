@@ -11,8 +11,11 @@
 //     whether to expose a duration knob in seconds (sfx) or
 //     milliseconds × scene-length (music).
 //
-// All write routes are 503 when ELEVENLABS_API_KEY is unset — generate
-// would fail anyway and we want a clear error in the UI.
+// /admin/api/audio/generate returns a 502 with a clear "key not
+// configured" message when ELEVENLABS_API_KEY is unset (via the
+// elevenlabs.ts client); the prompt-config + delete routes stay
+// usable without a key so the operator can curate prompts and clean
+// up old files even before the credential is set.
 
 import type { FastifyInstance } from 'fastify';
 import { existsSync } from 'node:fs';
@@ -69,9 +72,30 @@ interface AudioPromptEntry {
 
 type AudioPromptsFile = Record<string, AudioPromptEntry>;
 
+// Distinct error so the caller can refuse to overwrite a corrupted
+// prompts file. If we silently returned an empty object on a JSON
+// parse error, the next PUT would `writePrompts({})` and erase the
+// committed defaults — a quiet data-loss footgun.
+class AudioPromptsParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AudioPromptsParseError';
+  }
+}
+
 async function readPrompts(): Promise<AudioPromptsFile> {
+  let raw: string;
   try {
-    const raw = await readFile(PROMPTS_PATH, 'utf8');
+    raw = await readFile(PROMPTS_PATH, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // Genuinely missing file — first run, return an empty bucket so
+      // the admin can start adding entries.
+      return Object.create(null) as AudioPromptsFile;
+    }
+    throw err;
+  }
+  try {
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       // Strip any prototype-pollution attempts from the on-disk file.
@@ -95,10 +119,19 @@ async function readPrompts(): Promise<AudioPromptsFile> {
       }
       return out;
     }
-  } catch {
-    // missing / malformed → start from empty so the admin UI still loads
+    // Top-level shape isn't an object → treat as malformed.
+    throw new AudioPromptsParseError(
+      'audio-prompts.json must be a JSON object keyed by audio key',
+    );
+  } catch (err) {
+    if (err instanceof AudioPromptsParseError) throw err;
+    // SyntaxError from JSON.parse falls through here — surface it
+    // rather than silently returning {}, which would let the next PUT
+    // overwrite a recoverable file with an empty one.
+    throw new AudioPromptsParseError(
+      `audio-prompts.json is malformed: ${(err as Error).message}`,
+    );
   }
-  return Object.create(null) as AudioPromptsFile;
 }
 
 async function writePrompts(prompts: AudioPromptsFile): Promise<void> {
@@ -211,9 +244,19 @@ export function registerAdminAudio(app: FastifyInstance): void {
   // Combined status: prompt config, on-disk files, manifest, and the
   // ElevenLabs configuration flag so the UI can show a banner when the
   // key is missing.
-  app.get('/admin/api/audio/status', async () => {
-    const [prompts, files, manifest] = await Promise.all([
-      readPrompts(),
+  app.get('/admin/api/audio/status', async (_req, reply) => {
+    let prompts: AudioPromptsFile;
+    try {
+      prompts = await readPrompts();
+    } catch (err) {
+      // Surface a parse error explicitly rather than blanking the
+      // admin UI — the operator can SSH in and fix the JSON instead
+      // of staring at an empty grid wondering where everything went.
+      app.log.error({ err }, 'failed to read audio-prompts.json');
+      reply.code(500);
+      return { error: (err as Error).message };
+    }
+    const [files, manifest] = await Promise.all([
       listAudioFiles(),
       readManifest(),
     ]);
@@ -354,7 +397,11 @@ export function registerAdminAudio(app: FastifyInstance): void {
     },
   );
 
-  app.post<{ Body: SaveBody }>('/admin/api/audio/save', async (req, reply) => {
+  // Route-level bodyLimit: a 5-minute mp3 maxes around 6 MB binary →
+  // ~8 MB base64, plus JSON envelope. 22 MB has comfortable headroom
+  // and stays scoped to this single endpoint instead of widening the
+  // global DoS surface.
+  app.post<{ Body: SaveBody }>('/admin/api/audio/save', { bodyLimit: 22_000_000 }, async (req, reply) => {
     const body = req.body;
     if (!body || !body.key || !body.data) {
       reply.code(400);

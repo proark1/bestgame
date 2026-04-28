@@ -51,9 +51,24 @@ async function fetchAudio(url: string, body: unknown, apiKey: string): Promise<E
   });
   if (!res.ok) {
     // ElevenLabs returns JSON errors with { detail: { status, message } }
-    // — surface the message so the admin UI sees something useful.
+    // (or sometimes { detail: "string" }). Try to extract the message
+    // for a readable admin-UI toast; fall back to the raw body when the
+    // shape doesn't match.
     const text = await res.text();
-    throw new Error(`ElevenLabs ${res.status}: ${text.slice(0, 400)}`);
+    let pretty = text.slice(0, 400);
+    try {
+      const parsed = JSON.parse(text) as {
+        detail?: string | { status?: string; message?: string };
+      };
+      if (typeof parsed.detail === 'string') {
+        pretty = parsed.detail;
+      } else if (parsed.detail && typeof parsed.detail.message === 'string') {
+        pretty = parsed.detail.message;
+      }
+    } catch {
+      // not JSON — keep the truncated raw body
+    }
+    throw new Error(`ElevenLabs ${res.status}: ${pretty}`);
   }
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length === 0) throw new Error('ElevenLabs returned empty audio body');

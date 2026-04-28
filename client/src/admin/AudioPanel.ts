@@ -283,6 +283,11 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
     // Per-card state: the most recent base64 we got back from /generate,
     // not yet saved to disk. Cleared after a successful save.
     let pendingBase64: string | null = null;
+    // Track the object URL feeding the preview <audio> so we can revoke
+    // it before installing a new one. Without this, every regenerate
+    // leaks ~one mp3's worth of bytes that the GC can't collect until
+    // the page reloads.
+    let previewObjectUrl: string | null = null;
 
     const collectEntry = (): AudioPromptEntry => {
       const kind = kindSelect.value as AudioKind;
@@ -359,10 +364,15 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
           });
           pendingBase64 = res.audio.data;
           // Build a blob: URL so the <audio> element can preview the
-          // raw bytes without round-tripping through disk.
+          // raw bytes without round-tripping through disk. Revoke the
+          // previous URL first — otherwise repeat regenerations
+          // accumulate blobs in memory until the page reloads.
           const blob = base64ToBlob(res.audio.data, 'audio/mpeg');
-          const objectUrl = URL.createObjectURL(blob);
-          previewAudio.src = objectUrl;
+          if (previewObjectUrl) {
+            URL.revokeObjectURL(previewObjectUrl);
+          }
+          previewObjectUrl = URL.createObjectURL(blob);
+          previewAudio.src = previewObjectUrl;
           previewAudio.style.display = '';
           previewAudio.load();
           saveBtn.disabled = false;
@@ -426,10 +436,11 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
       })();
     });
 
-    // Long-press / right-click delete for the prompt itself — the
-    // common case is "remove this whole audio key from the panel",
-    // which also wants the prompt entry gone. Triggered via shift-
-    // click on Delete to avoid an extra button cluttering the row.
+    // Right-click delete for the prompt itself — the common case is
+    // "remove this whole audio key from the panel", which also wants
+    // the prompt entry gone. Bound to the contextmenu (right-click /
+    // long-press on touch) instead of an extra button so the row
+    // stays compact. The native context menu is suppressed.
     deleteBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       void (async () => {
@@ -461,6 +472,19 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
     );
     if (!key) return;
     const trimmed = key.trim();
+    // Mirror the server-side regex so the operator sees an error in
+    // the same modal flow instead of a 400 round-trip toast.
+    if (!/^[a-z0-9][a-z0-9-_]{1,63}$/i.test(trimmed)) {
+      opts.showStatus(
+        'Key must start with a letter or digit and contain only letters, digits, "-", or "_" (2–64 chars).',
+        'error',
+      );
+      return;
+    }
+    if (status && Object.prototype.hasOwnProperty.call(status.prompts, trimmed)) {
+      opts.showStatus(`Key "${trimmed}" already exists.`, 'error');
+      return;
+    }
     const isMusic = trimmed.startsWith('music-');
     const entry: AudioPromptEntry = {
       prompt: '',
@@ -519,9 +543,10 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function base64ToBlob(b64: string, mime: string): Blob {
-  const bin = atob(b64);
-  const len = bin.length;
-  const arr = new Uint8Array(len);
-  for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+  // Uint8Array.from with a callback is the fast path here — V8 / JSC
+  // both have native intrinsics for it, whereas a hand-rolled loop
+  // with charCodeAt allocates one tagged value per byte. Material
+  // for 5-minute mp3s, which can be several MB.
+  const arr = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new Blob([arr], { type: mime });
 }
