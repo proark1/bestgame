@@ -7,6 +7,7 @@ import { fadeInScene, fadeToScene } from '../ui/transitions.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { makeHiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { crispText } from '../ui/text.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { BUILDING_CODEX } from '../codex/codexData.js';
@@ -97,6 +98,21 @@ export class ArenaScene extends Phaser.Scene {
   // Pheromone trail drawing (same shape as RaidScene).
   private drawingPoints: Array<{ x: number; y: number }> = [];
   private isDrawing = false;
+  // Deck rail (added in batch 3) — picker for which unit kind the next
+  // drawn pheromone path will deploy. Defaults to SoldierAnt to
+  // preserve the pre-rail behaviour. Each card is the kind icon at
+  // the bottom of the screen, above the status card.
+  private selectedUnitKind: Types.UnitKind = 'SoldierAnt';
+  private deckRail!: Phaser.GameObjects.Container;
+  private deckCards: Array<{
+    kind: Types.UnitKind;
+    container: Phaser.GameObjects.Container;
+    bg: Phaser.GameObjects.Graphics;
+  }> = [];
+  // First-entry coachmark for the deck rail. Single-shot, persisted
+  // in localStorage; bumping the key replays for everyone.
+  private static readonly ARENA_COACHMARK_KEY = 'hive:coachmarks:arena:v1';
+  private arenaCoach: CoachmarkHandle | null = null;
 
   constructor() {
     super('ArenaScene');
@@ -131,6 +147,7 @@ export class ArenaScene extends Phaser.Scene {
     this.drawBoardFrame();
     this.drawBoard();
     this.drawStatusCard();
+    this.drawDeckRail();
 
     // Responsive scaling — same pattern as RaidScene. Board container
     // shrinks on narrow viewports, pointer math below unscales. The
@@ -151,9 +168,14 @@ export class ArenaScene extends Phaser.Scene {
       this.boardContainer.setPosition(xOffset, yOffset);
       this.layoutBoardFrame(xOffset, yOffset, scaledW, scaledH);
       this.layoutStatusCard(yOffset + scaledH);
+      this.layoutDeckRail(yOffset + scaledH);
     };
     applyLayout();
     this.scale.on('resize', applyLayout);
+    // Slight delay so the deck rail's getBounds() returns the
+    // post-layout values, not the (0, 0, 0, 0) zone the rail
+    // starts in. 120 ms is enough for one resize tick.
+    this.time.delayedCall(120, () => this.maybeShowFirstRunCoachmark());
     // Initial sim state must be constructed BEFORE drawStartingBuildings
     // tries to iterate this.state.buildings. The reserve flow in
     // connect() may later replace this.state with the host-snapshot
@@ -289,6 +311,113 @@ export class ArenaScene extends Phaser.Scene {
     const targetX = Math.round((this.scale.width - this.statusCardWidth) / 2);
     this.statusCard.setPosition(targetX, targetY);
     this.statusHint.setWordWrapWidth(this.statusCardWidth - 40);
+  }
+
+  // Mini unit-picker rail. Lives above the status card; each card is
+  // a 56×56 sprite tile that switches `selectedUnitKind`. Pre-rail,
+  // ArenaScene was hardcoded to SoldierAnt — see sendDrawPath. The
+  // roster is intentionally small (5 kinds covering the major roles)
+  // so the rail fits comfortably even on a phone-narrow viewport.
+  // RaidScene's full deck has count limits, role text, and modifier
+  // marker logic; ArenaScene doesn't need any of that — both arena
+  // players can deploy any roster unit any number of times.
+  private static readonly DECK_KINDS: ReadonlyArray<Types.UnitKind> = [
+    'SoldierAnt',
+    'WorkerAnt',
+    'FireAnt',
+    'Wasp',
+    'Termite',
+  ];
+  private drawDeckRail(): void {
+    const CARD_W = 56;
+    const CARD_H = 56;
+    const GAP = 8;
+    this.deckRail = this.add.container(0, 0).setDepth(DEPTHS.hud);
+    this.deckCards = [];
+    const kinds = ArenaScene.DECK_KINDS;
+    for (let i = 0; i < kinds.length; i++) {
+      const kind = kinds[i]!;
+      const card = this.add.container(i * (CARD_W + GAP), 0);
+      const bg = this.add.graphics();
+      const icon = this.add
+        .image(CARD_W / 2, CARD_H / 2, `unit-${kind}`)
+        .setDisplaySize(CARD_W - 12, CARD_H - 12);
+      card.add([bg, icon]);
+      card.setSize(CARD_W, CARD_H);
+      card.setInteractive(
+        new Phaser.Geom.Rectangle(0, 0, CARD_W, CARD_H),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      card.on('pointerdown', () => this.selectUnitKind(kind));
+      this.deckRail.add(card);
+      this.deckCards.push({ kind, container: card, bg });
+    }
+    this.refreshDeckSelection();
+  }
+
+  private selectUnitKind(kind: Types.UnitKind): void {
+    this.selectedUnitKind = kind;
+    this.refreshDeckSelection();
+    // Acknowledge the first-run coachmark on the player's first
+    // explicit pick — they've now demonstrated they understand the
+    // rail.
+    if (this.arenaCoach) {
+      this.arenaCoach.acknowledge();
+      this.arenaCoach = null;
+      try {
+        localStorage.setItem(ArenaScene.ARENA_COACHMARK_KEY, '1');
+      } catch {
+        /* private mode: skip persistence */
+      }
+    }
+  }
+
+  private maybeShowFirstRunCoachmark(): void {
+    let seen = false;
+    try {
+      seen = localStorage.getItem(ArenaScene.ARENA_COACHMARK_KEY) === '1';
+    } catch {
+      seen = true; // private mode: don't nag
+    }
+    if (seen) return;
+    if (this.deckCards.length === 0) return;
+    const firstCard = this.deckCards[0]!.container;
+    const r = firstCard.getBounds();
+    this.arenaCoach = showCoachmark({
+      scene: this,
+      target: { x: r.x, y: r.y, w: r.width, h: r.height },
+      prefer: 'above',
+      title: 'Pick what to deploy',
+      body:
+        'Tap a unit on this rail, then drag a path on the board. Both arena players share the same neutral base.',
+    });
+  }
+
+  private refreshDeckSelection(): void {
+    const CARD_W = 56;
+    const CARD_H = 56;
+    for (const card of this.deckCards) {
+      card.bg.clear();
+      const selected = card.kind === this.selectedUnitKind;
+      card.bg.fillStyle(selected ? 0x3a7f3a : 0x1a2b1a, 1);
+      card.bg.lineStyle(selected ? 3 : 2, selected ? 0xffd98a : 0x2c5a23, 1);
+      card.bg.fillRoundedRect(0, 0, CARD_W, CARD_H, 10);
+      card.bg.strokeRoundedRect(0, 0, CARD_W, CARD_H, 10);
+    }
+  }
+
+  private layoutDeckRail(boardBottom: number): void {
+    if (!this.deckRail) return;
+    const CARD_W = 56;
+    const GAP = 8;
+    const railW =
+      ArenaScene.DECK_KINDS.length * CARD_W +
+      (ArenaScene.DECK_KINDS.length - 1) * GAP;
+    const x = Math.round((this.scale.width - railW) / 2);
+    // Sits 8 px above the status card. If the viewport is too short
+    // we tuck the rail right under the board edge.
+    const y = Math.min(this.scale.height - 158, boardBottom - 70);
+    this.deckRail.setPosition(x, y);
   }
 
   private setStatus(message: string, hint: string, tone: 'normal' | 'warn' | 'error' = 'normal'): void {
@@ -457,7 +586,7 @@ export class ArenaScene extends Phaser.Scene {
       });
       this.arena?.sendDrawPath({
         polyline: tilePoints,
-        unitKind: 'SoldierAnt',
+        unitKind: this.selectedUnitKind,
         count: 5,
         spawnLayer: 0,
         intendedTick: this.latestServerTick + INPUT_DELAY_TICKS,
