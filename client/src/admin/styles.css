@@ -1786,7 +1786,7 @@ button {
 .audio-card-disabled {
   opacity: 0.7;
 }
-.audio-card-disabled .audio-card-disabled,
+.audio-card-disabled h3,
 .audio-card-disabled .audio-file-note {
   text-decoration: line-through;
 }

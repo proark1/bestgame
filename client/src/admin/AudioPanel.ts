@@ -167,14 +167,23 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
     head.append(fileNote);
     card.append(head);
 
+    const tooltipFor = (on: boolean): string =>
+      on
+        ? 'Click to disable — the game will fall back to synth/procedural'
+        : 'Click to enable — the saved sample will play in-game';
+    const applyToggleVisuals = (on: boolean): void => {
+      toggleLabel.textContent = on ? 'Enabled' : 'Disabled';
+      toggleWrap.title = tooltipFor(on);
+      card.classList.toggle('audio-card-disabled', !on);
+    };
+
     toggleInput.addEventListener('change', () => {
       const next = toggleInput.checked;
       // Optimistic — flip the UI immediately, roll back on error so
       // the operator always sees the truthful state.
       const prev = !next;
       toggleInput.disabled = true;
-      toggleLabel.textContent = next ? 'Enabled' : 'Disabled';
-      card.classList.toggle('audio-card-disabled', !next);
+      applyToggleVisuals(next);
       void (async () => {
         try {
           await setAudioEnabled(key, next);
@@ -187,8 +196,7 @@ export function renderAudioPanel(opts: AudioPanelOptions): HTMLElement {
           );
         } catch (err) {
           toggleInput.checked = prev;
-          toggleLabel.textContent = prev ? 'Enabled' : 'Disabled';
-          card.classList.toggle('audio-card-disabled', !prev);
+          applyToggleVisuals(prev);
           opts.showStatus((err as Error).message, 'error');
         } finally {
           toggleInput.disabled = false;

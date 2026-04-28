@@ -175,12 +175,40 @@ async function writeManifest(entries: ManifestEntry[]): Promise<void> {
   await writeFile(MANIFEST_PATH, JSON.stringify(entries, null, 2) + '\n', 'utf8');
 }
 
+// Serialise manifest read-modify-write cycles. Without this, two
+// concurrent toggles (or a save racing with a toggle) can both read
+// the same baseline manifest, each apply their own change, and the
+// later writer wins — silently dropping the earlier change. Promise-
+// chain mutex is enough since the route handlers are the only callers
+// and Node is single-threaded; the chain just enforces "next write
+// waits for the current one to finish" without touching the disk.
+let manifestWriteChain: Promise<void> = Promise.resolve();
+
+async function withManifestLock<T>(work: () => Promise<T>): Promise<T> {
+  const next = manifestWriteChain.then(work, work);
+  // Don't propagate the result through the chain — every chained call
+  // gets its own copy of the work function. Just record completion so
+  // the next caller can sequence after us.
+  manifestWriteChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 // Make the served manifest reflect the prompt entry's enabled flag.
 // Adds or replaces the entry when the file exists on disk and the
 // prompt is enabled (default); removes it when disabled or when the
 // audio file isn't on disk yet. Idempotent — only writes when the
 // manifest actually changes so we don't churn fastify-static's mtimes.
 async function reconcileManifestForKey(
+  key: string,
+  entry: AudioPromptEntry,
+): Promise<void> {
+  return withManifestLock(() => reconcileManifestForKeyInner(key, entry));
+}
+
+async function reconcileManifestForKeyInner(
   key: string,
   entry: AudioPromptEntry,
 ): Promise<void> {
@@ -365,11 +393,19 @@ export function registerAdminAudio(app: FastifyInstance): void {
       if (typeof e.label === 'string' && e.label.trim() !== '') {
         sanitized.label = e.label.trim().slice(0, 120);
       }
-      if (typeof e.enabled === 'boolean') {
-        sanitized.enabled = e.enabled;
-      }
 
       const prompts = await readPrompts();
+      const existing = prompts[safeKey];
+      // Carry forward `enabled` from the existing entry when the body
+      // doesn't include it. The admin UI's prompt-save and generate
+      // flows omit `enabled` (the toggle owns it), so blindly replacing
+      // would silently re-enable a deliberately-disabled key on every
+      // prompt edit.
+      if (typeof e.enabled === 'boolean') {
+        sanitized.enabled = e.enabled;
+      } else if (existing && typeof existing.enabled === 'boolean') {
+        sanitized.enabled = existing.enabled;
+      }
       // Object.defineProperty avoids __proto__ shenanigans even though
       // the key has already passed the regex.
       Object.defineProperty(prompts, safeKey, {
@@ -591,11 +627,13 @@ export function registerAdminAudio(app: FastifyInstance): void {
         }
       }
     }
-    const manifest = await readManifest();
-    const next = manifest.filter((e) => e.key !== safeKey);
-    if (next.length !== manifest.length) {
-      await writeManifest(next);
-    }
+    await withManifestLock(async () => {
+      const manifest = await readManifest();
+      const next = manifest.filter((e) => e.key !== safeKey);
+      if (next.length !== manifest.length) {
+        await writeManifest(next);
+      }
+    });
     return { ok: true, removed };
   });
 
