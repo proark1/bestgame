@@ -38,6 +38,12 @@ const HUD_H = 56;
 const DECK_CARD_H = 96;
 const DECK_CARD_W = 108;
 const DECK_GRID_GAP = 12;
+// Below this viewport width we collapse to the phone layout: hide
+// the layer badges + LOOTABLE preview + "vs Opponent" text, drop
+// the deck-tray hint line, and the metadata strip shrinks. Single
+// source of truth so HUD / deck / opponent banner / lootable
+// banner all flip on the same threshold.
+const NARROW_WIDTH = 600;
 const TICK_HZ = 30;
 const RAID_SECONDS = 90;
 const SPAWN_ZONE_W = TILE * 2;
@@ -832,7 +838,7 @@ export class RaidScene extends Phaser.Scene {
     // see the live loot counter on the right anyway.
     if (
       (lootable.sugar > 0 || lootable.leafBits > 0) &&
-      this.scale.width >= 600
+      this.scale.width >= NARROW_WIDTH
     ) {
       this.add
         .text(
@@ -1056,6 +1062,11 @@ export class RaidScene extends Phaser.Scene {
         // before the new one starts so rapid taps don't pile up.
         spr.setInteractive({ useHandCursor: true });
         spr.on('pointerdown', () => {
+          // Don't flash the label on a building that's already
+          // dead — its sprite is faded to 0.18 alpha (see destroy
+          // tween in the build-update loop) and a fresh full-alpha
+          // role tag floating above looks broken.
+          if (b.hp <= 0) return;
           roleLabel.setVisible(true);
           roleLabel.setAlpha(1);
           this.tweens.killTweensOf(roleLabel);
@@ -2176,6 +2187,11 @@ export class RaidScene extends Phaser.Scene {
     scale: number;
     trayHeight: number;
     showHint: boolean;
+    // Pixel offset from the tray top to the first card row. Equals
+    // the metadata strip height (50 narrow / 72 wide) — exposed so
+    // layout() and the grid offset stay in sync without each
+    // hardcoding the same constant.
+    headerHeight: number;
   } {
     // Minimum scale that keeps a card tap-friendly. Below this we
     // wrap to another row rather than shrinking cards further.
@@ -2188,7 +2204,7 @@ export class RaidScene extends Phaser.Scene {
     // power-blurb hint line from the tray entirely (the deck cards
     // are tiny, the title says enough). Saves ~22 px of height
     // which goes back into the playable board.
-    const isNarrow = this.scale.width < 600;
+    const isNarrow = this.scale.width < NARROW_WIDTH;
     const scaleFor = (cols: number): number =>
       Math.min(
         1,
@@ -2205,11 +2221,18 @@ export class RaidScene extends Phaser.Scene {
     const rowHeight = DECK_CARD_H * scale;
     // Metadata strip above the cards: 50 px = title row + divider.
     // Plus the optional hint line (22 px) on wider viewports.
-    const stripH = isNarrow ? 50 : 72;
+    const headerHeight = isNarrow ? 50 : 72;
     const trayHeight = Math.ceil(
-      stripH + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 14,
+      headerHeight + rows * rowHeight + (rows - 1) * DECK_GRID_GAP + 14,
     );
-    return { rows, cols, scale, trayHeight, showHint: !isNarrow };
+    return {
+      rows,
+      cols,
+      scale,
+      trayHeight,
+      showHint: !isNarrow,
+      headerHeight,
+    };
   }
 
   // Spawn the right visual for a unit. Three conditions must all be
@@ -2860,7 +2883,7 @@ export class RaidScene extends Phaser.Scene {
       // wide viewports, hidden on phone where it would overlap
       // the timer column. Fits within MODIFIER_BAR_H so the
       // modifier toolbar still sits comfortably below it.
-      const isNarrow = this.scale.width < 600;
+      const isNarrow = this.scale.width < NARROW_WIDTH;
       if (!isNarrow) {
         this.add
           .text(
@@ -3405,7 +3428,9 @@ export class RaidScene extends Phaser.Scene {
     // layer badges hide entirely — they're a power-user readout
     // and used to cram against the timer to produce stray "10" /
     // "0" floaters once the unicode glyphs failed to render.
-    const isNarrow = this.scale.width < 600;
+    // Reuse deckLayout.showHint as the narrow-viewport flag —
+    // both surfaces flip on the same NARROW_WIDTH threshold.
+    const isNarrow = !deckLayout.showHint;
     this.starsText.setX(this.scale.width - 16);
     this.lootText.setX(this.scale.width - 16);
     this.timerText.setX(this.scale.width / 2);
@@ -3483,7 +3508,7 @@ export class RaidScene extends Phaser.Scene {
     // Card grid starts just below the metadata strip — matches the
     // stripH constant in deckLayoutMetrics so trayHeight always
     // accounts for the same offset (50 narrow / 72 wide).
-    const gridTop = trayTop + (deckLayout.showHint ? 72 : 50);
+    const gridTop = trayTop + deckLayout.headerHeight;
     for (let row = 0; row < deckLayout.rows; row++) {
       const rowStartIndex = row * deckLayout.cols;
       const rowCount = Math.min(
