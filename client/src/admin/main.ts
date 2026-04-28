@@ -1673,6 +1673,10 @@ function drawUsersTable(container: HTMLElement): void {
         <th>Email</th>
         <th>Password</th>
         <th>Linked player</th>
+        <th>Sugar</th>
+        <th>Leaf</th>
+        <th>Milk</th>
+        <th>Trophies</th>
         <th>Last login</th>
         <th></th>
       </tr>
@@ -1721,6 +1725,41 @@ function userRow(u: AdminUser): HTMLTableRowElement {
   const playerCell = document.createElement('td');
   playerCell.textContent = u.displayName ?? '—';
 
+  // Resource inputs. Pre-filled with the current values so the
+  // admin can see what the player has and edit in place. Disabled
+  // when no players row is linked yet — the server returns 400
+  // in that case anyway, so blocking here is a clearer affordance.
+  const noPlayer = u.playerId === null;
+  const mkResourceInput = (
+    value: number | null,
+    placeholder: string,
+  ): HTMLInputElement => {
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '1';
+    input.style.width = '88px';
+    input.placeholder = placeholder;
+    input.value = value === null ? '' : String(value);
+    input.disabled = noPlayer;
+    if (noPlayer) {
+      input.title = 'No player row linked — user must sign in once first';
+    }
+    return input;
+  };
+  const sugarCell = document.createElement('td');
+  const sugarInput = mkResourceInput(u.sugar, '—');
+  sugarCell.append(sugarInput);
+  const leafCell = document.createElement('td');
+  const leafInput = mkResourceInput(u.leafBits, '—');
+  leafCell.append(leafInput);
+  const milkCell = document.createElement('td');
+  const milkInput = mkResourceInput(u.aphidMilk, '—');
+  milkCell.append(milkInput);
+  const trophyCell = document.createElement('td');
+  const trophyInput = mkResourceInput(u.trophies, '—');
+  trophyCell.append(trophyInput);
+
   const lastCell = document.createElement('td');
   lastCell.textContent = u.lastLoginAt
     ? new Date(u.lastLoginAt).toLocaleString()
@@ -1729,12 +1768,31 @@ function userRow(u: AdminUser): HTMLTableRowElement {
   const actionsCell = document.createElement('td');
   actionsCell.className = 'admin-users-actions';
   const saveBtn = button('Save', 'btn', () =>
-    void onSaveUser(u.id, usernameInput, emailInput, pwInput),
+    void onSaveUser(u.id, {
+      username: usernameInput,
+      email: emailInput,
+      password: pwInput,
+      sugar: sugarInput,
+      leaf: leafInput,
+      milk: milkInput,
+      trophies: trophyInput,
+    }),
   );
   const deleteBtn = button('Delete', 'btn danger', () => void onDeleteUser(u));
   actionsCell.append(saveBtn, deleteBtn);
 
-  tr.append(usernameCell, emailCell, pwCell, playerCell, lastCell, actionsCell);
+  tr.append(
+    usernameCell,
+    emailCell,
+    pwCell,
+    playerCell,
+    sugarCell,
+    leafCell,
+    milkCell,
+    trophyCell,
+    lastCell,
+    actionsCell,
+  );
   return tr;
 }
 
@@ -1759,27 +1817,66 @@ async function onAddUserSubmit(form: HTMLFormElement): Promise<void> {
 
 async function onSaveUser(
   id: string,
-  usernameInput: HTMLInputElement,
-  emailInput: HTMLInputElement,
-  pwInput: HTMLInputElement,
+  inputs: {
+    username: HTMLInputElement;
+    email: HTMLInputElement;
+    password: HTMLInputElement;
+    sugar: HTMLInputElement;
+    leaf: HTMLInputElement;
+    milk: HTMLInputElement;
+    trophies: HTMLInputElement;
+  },
 ): Promise<void> {
   // Only send fields that actually changed. Username and email are
   // compared to the table's current row; password is only sent when
   // the admin types something, matching the "leave blank to keep"
-  // hint on the input.
+  // hint on the input. Resource inputs compare numerically so a
+  // leading zero or extra whitespace doesn't trigger a no-op write.
   const existing = usersPanelState.users.find((u) => u.id === id);
   if (!existing) return;
-  const patch: { username?: string; email?: string | null; password?: string } = {};
-  if (usernameInput.value !== existing.username) {
-    patch.username = usernameInput.value;
+  const patch: {
+    username?: string;
+    email?: string | null;
+    password?: string;
+    sugar?: number;
+    leafBits?: number;
+    aphidMilk?: number;
+    trophies?: number;
+  } = {};
+  if (inputs.username.value !== existing.username) {
+    patch.username = inputs.username.value;
   }
-  const newEmail = emailInput.value.trim();
+  const newEmail = inputs.email.value.trim();
   if (newEmail !== (existing.email ?? '')) {
     patch.email = newEmail === '' ? null : newEmail;
   }
-  if (pwInput.value.length > 0) {
-    patch.password = pwInput.value;
+  if (inputs.password.value.length > 0) {
+    patch.password = inputs.password.value;
   }
+  // Resource diff. Empty string means "unchanged" — we don't
+  // interpret it as zero, which would silently nuke a player's
+  // wallet on save. NaN / non-finite from a malformed input
+  // similarly skipped; the server will 400 anything else.
+  const resourceField = (
+    raw: string,
+    current: number | null,
+  ): number | undefined => {
+    const trimmed = raw.trim();
+    if (trimmed === '') return undefined;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return undefined;
+    if (current !== null && n === current) return undefined;
+    return n;
+  };
+  const sugar = resourceField(inputs.sugar.value, existing.sugar);
+  if (sugar !== undefined) patch.sugar = sugar;
+  const leaf = resourceField(inputs.leaf.value, existing.leafBits);
+  if (leaf !== undefined) patch.leafBits = leaf;
+  const milk = resourceField(inputs.milk.value, existing.aphidMilk);
+  if (milk !== undefined) patch.aphidMilk = milk;
+  const trophies = resourceField(inputs.trophies.value, existing.trophies);
+  if (trophies !== undefined) patch.trophies = trophies;
+
   if (Object.keys(patch).length === 0) {
     statusToast('Nothing changed', 'info');
     return;

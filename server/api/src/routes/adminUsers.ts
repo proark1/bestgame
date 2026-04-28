@@ -35,7 +35,30 @@ interface UpdateUserBody {
   username?: string;
   email?: string | null;
   password?: string;
+  // Player-side fields. When the user has a linked players row,
+  // setting any of these issues an UPDATE on `players` for that
+  // row in the same transaction. Each is optional + nullable
+  // (server treats undefined as "leave alone"). Bigints arrive
+  // as JSON numbers — server clamps to non-negative integers.
+  sugar?: number;
+  leafBits?: number;
+  aphidMilk?: number;
+  trophies?: number;
 }
+
+// Whitelist of player-table columns the admin can edit through
+// this endpoint, paired with the camelCase request keys. Keeps
+// the SQL fragment construction immune to new fields landing in
+// UpdateUserBody — we only ever read off this map.
+const PLAYER_RESOURCE_COLUMNS: Array<{
+  key: 'sugar' | 'leafBits' | 'aphidMilk' | 'trophies';
+  column: string;
+}> = [
+  { key: 'sugar', column: 'sugar' },
+  { key: 'leafBits', column: 'leaf_bits' },
+  { key: 'aphidMilk', column: 'aphid_milk' },
+  { key: 'trophies', column: 'trophies' },
+];
 
 interface UserRow {
   id: string;
@@ -45,6 +68,24 @@ interface UserRow {
   last_login_at: Date | null;
   player_id: string | null;
   display_name: string | null;
+  // Joined from players via a correlated subquery in every SELECT
+  // / RETURNING below. Null when no players row is linked yet
+  // (user signed up but never logged in to mint a session).
+  sugar: string | number | null;
+  leaf_bits: string | number | null;
+  aphid_milk: string | number | null;
+  trophies: number | null;
+}
+
+// pg returns BIGINT as string by default; coerce to number safely
+// for display. Resource caps are well under 2^53 so this can't
+// lose precision in practice. Returns null when the join didn't
+// match a players row.
+function bigintOrNull(v: string | number | null): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return v;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function serializeUser(r: UserRow): {
@@ -55,6 +96,10 @@ function serializeUser(r: UserRow): {
   lastLoginAt: string | null;
   playerId: string | null;
   displayName: string | null;
+  sugar: number | null;
+  leafBits: number | null;
+  aphidMilk: number | null;
+  trophies: number | null;
 } {
   return {
     id: r.id,
@@ -64,6 +109,10 @@ function serializeUser(r: UserRow): {
     lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
     playerId: r.player_id,
     displayName: r.display_name,
+    sugar: bigintOrNull(r.sugar),
+    leafBits: bigintOrNull(r.leaf_bits),
+    aphidMilk: bigintOrNull(r.aphid_milk),
+    trophies: r.trophies,
   };
 }
 
@@ -135,7 +184,8 @@ export function registerAdminUsers(app: FastifyInstance): void {
     const rows = await pool.query<UserRow>(
       `SELECT u.id, u.username, u.email::text AS email,
               u.created_at, u.last_login_at,
-              p.id AS player_id, p.display_name
+              p.id AS player_id, p.display_name,
+              p.sugar, p.leaf_bits, p.aphid_milk, p.trophies
          FROM users u
          LEFT JOIN players p ON p.user_id = u.id
          ${where}
@@ -211,6 +261,12 @@ export function registerAdminUsers(app: FastifyInstance): void {
           lastLoginAt: null,
           playerId: null,
           displayName: null,
+          // Newly-created user has no players row yet — resources
+          // are null until they sign in once.
+          sugar: null,
+          leafBits: null,
+          aphidMilk: null,
+          trophies: null,
         },
       };
     } catch (err) {
@@ -283,38 +339,125 @@ export function registerAdminUsers(app: FastifyInstance): void {
         sets.push(`password_salt = $${params.length}`);
       }
 
-      if (sets.length === 0) {
+      // Player-row mutations (resources + trophies). Collect them
+      // separately and apply in the same transaction as the user
+      // update so a partial failure rolls everything back. Each
+      // value is clamped to a non-negative integer; floats and
+      // negatives are rejected as 400.
+      const playerSets: string[] = [];
+      const playerParams: number[] = [];
+      for (const { key, column } of PLAYER_RESOURCE_COLUMNS) {
+        const raw = body[key];
+        if (raw === undefined) continue;
+        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || !Number.isInteger(raw)) {
+          reply.code(400);
+          return { error: `${key} must be a non-negative integer`, field: key };
+        }
+        playerParams.push(raw);
+        playerSets.push(`${column} = $${playerParams.length}`);
+      }
+
+      if (sets.length === 0 && playerSets.length === 0) {
         reply.code(400);
         return { error: 'no fields to update' };
       }
 
-      params.push(req.params.id);
-      const idPlaceholder = `$${params.length}`;
       try {
-        // RETURNING fills in the joined player fields via a correlated
-        // scalar subquery so one round-trip covers both the mutation
-        // and the UI-facing row shape. The client still calls
-        // /users after every successful save to refresh the full
-        // table, so optimising this path is more about keeping the
-        // route's contract honest (always returns a fully-populated
-        // row) than latency.
-        const upd = await pool.query<UserRow>(
-          `UPDATE users SET ${sets.join(', ')}
-            WHERE id = ${idPlaceholder}
-          RETURNING id, username, email::text AS email,
-                    created_at, last_login_at,
-                    (SELECT id FROM players WHERE user_id = users.id LIMIT 1)
-                      AS player_id,
-                    (SELECT display_name FROM players WHERE user_id = users.id LIMIT 1)
-                      AS display_name`,
-          params,
-        );
-        if (upd.rows.length === 0) {
-          reply.code(404);
-          return { error: 'user not found' };
+        // Single transaction so a half-applied edit (user OK,
+        // player UPDATE failed) can never strand the row.
+        await pool.query('BEGIN');
+
+        // Hold the populated row for the response. When only
+        // player-side fields changed we still need to fetch the
+        // user row by id so the route returns the same shape.
+        let userRow: UserRow | null = null;
+        if (sets.length > 0) {
+          const userParams = [...params, req.params.id];
+          const userIdPlaceholder = `$${userParams.length}`;
+          const upd = await pool.query<UserRow>(
+            `UPDATE users SET ${sets.join(', ')}
+              WHERE id = ${userIdPlaceholder}
+            RETURNING id, username, email::text AS email,
+                      created_at, last_login_at,
+                      (SELECT id FROM players WHERE user_id = users.id LIMIT 1)
+                        AS player_id,
+                      (SELECT display_name FROM players WHERE user_id = users.id LIMIT 1)
+                        AS display_name,
+                      (SELECT sugar FROM players WHERE user_id = users.id LIMIT 1) AS sugar,
+                      (SELECT leaf_bits FROM players WHERE user_id = users.id LIMIT 1) AS leaf_bits,
+                      (SELECT aphid_milk FROM players WHERE user_id = users.id LIMIT 1) AS aphid_milk,
+                      (SELECT trophies FROM players WHERE user_id = users.id LIMIT 1) AS trophies`,
+            userParams,
+          );
+          if (upd.rows.length === 0) {
+            await pool.query('ROLLBACK');
+            reply.code(404);
+            return { error: 'user not found' };
+          }
+          userRow = upd.rows[0]!;
         }
-        return { user: serializeUser(upd.rows[0]!) };
+
+        if (playerSets.length > 0) {
+          // Update by user_id rather than player_id so the admin
+          // doesn't need to know the players.id — the FK link is
+          // enough. UPDATE is a no-op when no players row exists
+          // yet for this user (guests pre-link); we surface a 400
+          // in that case so the admin gets a clear "no player"
+          // error instead of silent.
+          const userIdParam = playerParams.length + 1;
+          const playerUpd = await pool.query<{ id: string }>(
+            `UPDATE players SET ${playerSets.join(', ')}
+              WHERE user_id = $${userIdParam}
+            RETURNING id`,
+            [...playerParams, req.params.id],
+          );
+          if (playerUpd.rowCount === 0) {
+            await pool.query('ROLLBACK');
+            reply.code(400);
+            return {
+              error:
+                'no player row linked to this user — sign in once first',
+              code: 'no-player',
+            };
+          }
+          // If only player-side fields changed, the user row wasn't
+          // queried above. Fetch it now so the response shape is
+          // consistent regardless of which fields were edited.
+          if (userRow === null) {
+            const ur = await pool.query<UserRow>(
+              `SELECT id, username, email::text AS email,
+                      created_at, last_login_at,
+                      (SELECT id FROM players WHERE user_id = users.id LIMIT 1)
+                        AS player_id,
+                      (SELECT display_name FROM players WHERE user_id = users.id LIMIT 1)
+                        AS display_name,
+                      (SELECT sugar FROM players WHERE user_id = users.id LIMIT 1) AS sugar,
+                      (SELECT leaf_bits FROM players WHERE user_id = users.id LIMIT 1) AS leaf_bits,
+                      (SELECT aphid_milk FROM players WHERE user_id = users.id LIMIT 1) AS aphid_milk,
+                      (SELECT trophies FROM players WHERE user_id = users.id LIMIT 1) AS trophies
+                 FROM users WHERE id = $1`,
+              [req.params.id],
+            );
+            if (ur.rows.length === 0) {
+              await pool.query('ROLLBACK');
+              reply.code(404);
+              return { error: 'user not found' };
+            }
+            userRow = ur.rows[0]!;
+          }
+        }
+
+        await pool.query('COMMIT');
+        return { user: serializeUser(userRow!) };
       } catch (err) {
+        // Best-effort rollback; if the transaction already
+        // unwound (constraint violation auto-aborts in postgres)
+        // the second ROLLBACK is a no-op.
+        try {
+          await pool.query('ROLLBACK');
+        } catch {
+          /* swallow */
+        }
         const code = (err as { code?: string }).code;
         const msg = (err as Error).message;
         if (code === '23505' || /unique/i.test(msg)) {

@@ -48,6 +48,15 @@ export interface PreviewScene {
 //   queen-<id>           — Queen picker + HomeScene identity chip
 export const PREVIEW_SCENES: ReadonlyArray<PreviewScene> = [
   {
+    id: 'landing',
+    label: 'Landing page',
+    summary:
+      'Marketing landing page (/) — hero banner, story rail, build / raid / climb pillars, ' +
+      'colony cast, queen-skin promo. The iframe loads / instead of /play.html so this preview ' +
+      'reflects the same surface a first-time visitor sees.',
+    assetKeys: ['ui-logo', 'landing-hero', 'ui-discover-banner'],
+  },
+  {
     id: 'boot',
     label: 'Boot splash',
     summary:
@@ -322,8 +331,13 @@ function buildLivePreview(scene: PreviewScene): LivePreviewHandle {
   const buildSrc = (): string => {
     // Cache-buster ensures scene changes + sprite reloads are visible.
     // Timestamp + scene.id combo means every scene change gets a fresh load.
-    // Use /play.html (the game) not / (the landing page).
+    // The 'landing' scene is the marketing page (/index.html); every
+    // other id targets /play.html with a previewScene hint so
+    // BootScene.ts can deep-link into the named scene.
     const bust = `${scene.id}-${Date.now()}`;
+    if (scene.id === 'landing') {
+      return `/?previewBust=${bust}`;
+    }
     return `/play.html?previewScene=${encodeURIComponent(scene.id)}&previewBust=${bust}`;
   };
   iframe.src = buildSrc();
