@@ -3553,14 +3553,40 @@ export class RaidScene extends Phaser.Scene {
       if (this.tutorialMode && this.state.outcome === 'attackerWin' && stars >= 1) {
         const cur = runtime.player?.player.tutorialStage ?? 0;
         const next = Math.max(cur, 10);
-        runtime.api
-          .setTutorialStage(next)
-          .then(() => {
-            if (runtime.player) {
-              runtime.player.player.tutorialStage = next;
+        // Optimistic update + local persistence: bump the in-memory
+        // player record AND stash a localStorage marker BEFORE the
+        // network call. That way HomeScene's tutorial-banner gate
+        // suppresses the banner immediately on next mount even if
+        // the network request 503s. The localStorage marker also
+        // survives across sessions, so a player who closed the app
+        // mid-flight doesn't see the banner reappear when they
+        // reload (the home banner reads it on mount).
+        if (runtime.player) {
+          runtime.player.player.tutorialStage = next;
+        }
+        try {
+          localStorage.setItem('hive.tutorial.completed', '1');
+        } catch {
+          /* private mode: best-effort */
+        }
+        // Background retry — three attempts with exponential
+        // backoff (250ms / 750ms / 2.25s). On final failure the
+        // local marker still suppresses the banner; the next
+        // /player/me round-trip will reconcile when the network
+        // recovers.
+        const submitWithRetry = async (attempts = 0): Promise<void> => {
+          try {
+            await runtime.api.setTutorialStage(next);
+          } catch (err) {
+            if (attempts < 2) {
+              const delay = 250 * Math.pow(3, attempts);
+              this.time.delayedCall(delay, () => void submitWithRetry(attempts + 1));
+            } else {
+              console.warn('tutorial stage submit failed after retries:', err);
             }
-          })
-          .catch((err) => console.warn('tutorial stage submit failed:', err));
+          }
+        };
+        void submitWithRetry();
       }
     } catch (err) {
       // Showing an error would steal focus from the result screen;

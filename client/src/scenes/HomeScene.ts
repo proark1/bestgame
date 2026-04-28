@@ -2998,8 +2998,21 @@ export class HomeScene extends Phaser.Scene {
     // off into RaidScene with the tutorialMission flag set so the
     // raid runs against the scripted under-defended TUTORIAL_BASE
     // (guaranteed first-win onboarding, top-10 audit #8).
+    //
+    // Local-marker gate: RaidScene stamps `hive.tutorial.completed`
+    // in localStorage as soon as the tutorial raid wins, BEFORE
+    // the network round-trip lands. Honouring it here means a
+    // transient /player/tutorial 5xx can't cause the banner to
+    // re-appear on the next home mount. The server eventually
+    // catches up via the retry loop in RaidScene.
+    let locallyCompleted = false;
+    try {
+      locallyCompleted = localStorage.getItem('hive.tutorial.completed') === '1';
+    } catch {
+      /* private mode: trust server stage */
+    }
     const stage = ps.tutorialStage ?? 0;
-    if (stage >= 5 && stage < 10) {
+    if (!locallyCompleted && stage >= 5 && stage < 10) {
       topY = this.drawFirstRaidBanner(topY);
     }
 

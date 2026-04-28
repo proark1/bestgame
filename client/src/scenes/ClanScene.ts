@@ -646,14 +646,17 @@ export class ClanScene extends Phaser.Scene {
         this.repaintChatPane();
       },
       () => {
-        // Stream errored — close it and fall back to faster polling
-        // for the rest of this scene lifetime.
+        // Stream errored — close it and fall back to the legacy
+        // polling cadence (5s) for the rest of this scene's lifetime.
+        // Deliberately matches the pre-SSE interval so a transient
+        // SSE failure can't make server load worse than it was
+        // before this PR.
         if (this.chatStream) {
           this.chatStream.close();
           this.chatStream = null;
         }
         if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
-        this.pollTimer = window.setInterval(() => void this.pollMessages(), 3000);
+        this.pollTimer = window.setInterval(() => void this.pollMessages(), 5000);
       },
     );
     // Slow fallback poll: catches any messages SSE missed (mobile
