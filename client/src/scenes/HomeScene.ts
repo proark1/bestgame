@@ -788,18 +788,26 @@ export class HomeScene extends Phaser.Scene {
     const cy = HUD_H / 2;
 
     // Optional admin-flipped wordmark image — kept for branded skins.
-    // The default top-left slot is now owned by the player profile
-    // card (drawAccountChip), Clash-of-Clans-style.
-    if (tier !== 'phone' && isUiOverrideActive(this, 'ui-logo')) {
-      const logo = this.add.image(tier === 'wide' ? 24 : 16, cy, 'ui-logo')
-        .setOrigin(0, 0.5)
+    // When the logo is on, it owns the top-left HUD strip (slightly
+    // taller than the bar, anchored to the top-left corner) and the
+    // account / level disc drops below it instead of fighting for the
+    // same row. Without the override the level disc takes the slot.
+    const logoActive = tier !== 'phone' && isUiOverrideActive(this, 'ui-logo');
+    if (logoActive) {
+      // Bigger than the HUD itself so the wordmark reads from across
+      // the screen — the bottom of the logo bleeds a few pixels into
+      // the board area where the user-level disc + trophy chip sit
+      // beneath it (drawAccountChip handles the vertical offset).
+      const logoH = Math.round(HUD_H * 1.4);
+      const logoX = tier === 'wide' ? 24 : 16;
+      const logo = this.add.image(logoX, 8, 'ui-logo')
+        .setOrigin(0, 0)
         .setDepth(DEPTHS.hud);
       const source = logo.texture.getSourceImage();
       const srcW = 'naturalWidth' in source ? source.naturalWidth : source.width;
       const srcH = 'naturalHeight' in source ? source.naturalHeight : source.height;
-      const targetH = HUD_H - 16;
-      const scale = targetH / Math.max(1, srcH);
-      logo.setDisplaySize(srcW * scale, targetH);
+      const scale = logoH / Math.max(1, srcH);
+      logo.setDisplaySize(srcW * scale, logoH);
       logo.setInteractive({ useHandCursor: true });
       logo.on('pointerdown', () => openTutorial({ force: true }));
     }
@@ -807,8 +815,9 @@ export class HomeScene extends Phaser.Scene {
     // Player profile card — Clash-of-Clans-style level + name combo
     // pinned to the top-left. Replaces the previous "HIVE WARS"
     // wordmark + bare username chip with one card that reads as
-    // "your colony at a glance".
-    this.drawAccountChip(tier);
+    // "your colony at a glance". Drops below the wordmark when the
+    // logo override is active so the two stack vertically.
+    this.drawAccountChip(tier, logoActive);
 
     // Resource readouts — gold sugar, green leaf, silver milk.
     // CoC-style vertical stack pinned to the top-right corner. Each
@@ -1309,17 +1318,24 @@ export class HomeScene extends Phaser.Scene {
   // the player can still open the account menu (login / claim /
   // logout) by tapping the disc. Username is surfaced inside the
   // account modal once opened.
-  private drawAccountChip(tier: 'wide' | 'narrow' | 'phone'): void {
-    const cy = HUD_H / 2;
+  private drawAccountChip(
+    tier: 'wide' | 'narrow' | 'phone',
+    logoActive = false,
+  ): void {
     const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
     const trophies = runtime?.player?.player.trophies ?? 0;
     const level = this.currentQueenLevel();
     const burgerSlot = this.isMobileLayout() ? 40 + SPACING.sm : 0;
 
     // Level disc — bright brass with the level number, mirrors CoC's
-    // experience badge in the corner.
+    // experience badge in the corner. When the logo override is on we
+    // park the disc directly below the wordmark instead of inside the
+    // HUD bar, so the user sees [LOGO] / [LEVEL+TROPHY] stacked.
     const discSize = tier === 'phone' ? 36 : 44;
     const discX = burgerSlot + SPACING.sm + discSize / 2;
+    const cy = logoActive
+      ? Math.round(HUD_H * 1.4) + 16 + discSize / 2
+      : HUD_H / 2;
     const discBg = this.add.graphics().setDepth(DEPTHS.hud);
     drawPill(discBg, discX - discSize / 2, cy - discSize / 2, discSize, discSize, {
       brass: true,

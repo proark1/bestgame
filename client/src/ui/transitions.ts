@@ -21,6 +21,21 @@ export function fadeInScene(
   scene: Phaser.Scene,
   duration: number = DEFAULT_DURATION,
 ): void {
+  // Phaser keeps a single instance per scene key and reuses it on
+  // every start. The in-flight flag below is set on `fadeToScene`
+  // and lives on the scene instance — without clearing it here, a
+  // navigation that left this scene with the flag still raised
+  // would short-circuit every subsequent fadeToScene() once the
+  // player returns. Symptom: "second click on a menu item does
+  // nothing until I reload."
+  const sceneAny = scene as unknown as Record<string, unknown>;
+  sceneAny[IN_FLIGHT_KEY] = false;
+  // Same idea for the modal-active flag: a previous visit might
+  // have shut down with a modal mid-close, leaving wireBoardTap
+  // gated against any board interaction. Reset on every scene
+  // entry so the new visit starts from a clean state.
+  scene.data.set('modalActive', false);
+  scene.data.set('modalClosedAt', 0);
   scene.cameras.main.fadeIn(duration, 0, 0, 0);
 }
 
@@ -33,6 +48,14 @@ export function fadeToScene(
   const sceneAny = scene as unknown as Record<string, unknown>;
   if (sceneAny[IN_FLIGHT_KEY]) return;
   sceneAny[IN_FLIGHT_KEY] = true;
+  // Defence in depth: clear the flag on shutdown too, so a scene
+  // that's started by some other path (this.scene.start with no
+  // fadeInScene) still resets the latch the next time we navigate
+  // away from it. fadeInScene above is the primary clear point;
+  // this catches the rest.
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+    sceneAny[IN_FLIGHT_KEY] = false;
+  });
   scene.cameras.main.fadeOut(DEFAULT_DURATION, 0, 0, 0);
   scene.cameras.main.once(
     Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
