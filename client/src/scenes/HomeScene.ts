@@ -36,6 +36,8 @@ function markHomeCoachmarksDone(): void {
 }
 import { openBuildingInfoModal, ROTATABLE_KINDS } from '../ui/buildingInfoModal.js';
 import { fadeInScene, fadeToScene } from '../ui/transitions.js';
+import { spawnFloatNumber } from '../ui/floatNumber.js';
+import { getSettings, setSettings } from '../ui/audio.js';
 import { formatCountdown } from '../ui/sceneFrame.js';
 import { makeHiveButton, type HiveButton } from '../ui/button.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
@@ -63,6 +65,58 @@ const HUD_H = 56;
 // Buildings that have separate horizontal + vertical sprite variants.
 // When rotated, we swap to the V variant instead of spinning the H sprite.
 const KINDS_WITH_V_VARIANTS: ReadonlySet<Types.BuildingKind> = new Set(['LeafWall', 'ThornHedge']);
+
+// Build-menu category buckets. Drives the tab strip above the picker
+// slots. "all" is implicit (the default first tab). Walls includes
+// V-variants implicitly because the catalog only exposes the H key.
+const BUILDING_CATEGORY: Partial<Record<Types.BuildingKind, 'producer' | 'defence' | 'storage' | 'wall'>> = {
+  // Producers — anything that ticks resource pendingHarvest.
+  DewCollector: 'producer',
+  LarvaNursery: 'producer',
+  AphidFarm: 'producer',
+  // Storage — caps + dedicated banks.
+  SugarVault: 'storage',
+  LeafSilo: 'storage',
+  MilkPot: 'storage',
+  // Walls (and corner / V variants pick the same key).
+  LeafWall: 'wall',
+  ThornHedge: 'wall',
+  // Defences — turrets, traps, defender spawners, bunkers.
+  MushroomTurret: 'defence',
+  PebbleBunker: 'defence',
+  DungeonTrap: 'defence',
+  AcidSpitter: 'defence',
+  SporeTower: 'defence',
+  RootSnare: 'defence',
+  HiddenStinger: 'defence',
+  SpiderNest: 'defence',
+  // QueenChamber + TunnelJunction stay uncategorised — they show in
+  // "All" but not in any narrow filter (special / colony chrome).
+};
+
+// localStorage key for player-pinned building kinds. Schema: a JSON
+// array of BuildingKind strings. Bumped when the schema breaks.
+const PINNED_KEY = 'hive:pinnedBuildings:v1';
+
+function loadPinnedKinds(): Set<Types.BuildingKind> {
+  try {
+    const raw = localStorage.getItem(PINNED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((s): s is Types.BuildingKind => typeof s === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistPinnedKinds(set: Set<Types.BuildingKind>): void {
+  try {
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* private mode — non-fatal, pins just don't persist */
+  }
+}
 
 // Walls have hand-tuned horizontal + vertical sprites. When a wall is
 // rotated, instead of spinning the H sprite (whose weave bands then
@@ -927,6 +981,11 @@ export class HomeScene extends Phaser.Scene {
     // here (not in the corner stack) because it's lookup, not action.
     this.drawCodexChip(rightEdge, pillY + PILL_H / 2 + 4, tier);
 
+    // Quick-toggles row — sfx mute + fullscreen, pinned right under
+    // the codex chip on the same right edge. One tap, no menu hunt.
+    // Both toggles persist via the existing settings / scale APIs.
+    this.drawHudQuickToggles(rightEdge, pillY + PILL_H + 12, tier);
+
     // Mobile burger. Replaces the full-width footer with a slide-in
     // drawer so phone viewports hand back the ~140 px the 2-row
     // footer was eating to the play field. Sits at the far right of
@@ -1310,6 +1369,65 @@ export class HomeScene extends Phaser.Scene {
       .on('pointerdown', () => fadeToScene(this, 'CodexScene'));
     void pill;
     void glyph;
+  }
+
+  // Sfx + fullscreen quick-toggles. Sit just below the codex chip on
+  // the same right edge so a single tap from anywhere on the home
+  // screen mutes audio or enters fullscreen — without making the
+  // player hunt for Settings inside the burger drawer.
+  private drawHudQuickToggles(
+    rightEdgeX: number,
+    cy: number,
+    tier: 'wide' | 'narrow' | 'phone',
+  ): void {
+    const size = tier === 'phone' ? 28 : 32;
+    const gap = 6;
+    let cursorX = rightEdgeX - size / 2;
+    const drawOne = (
+      glyph: () => string,
+      onPress: () => void,
+    ): void => {
+      const ix = cursorX;
+      const bg = this.add.graphics().setDepth(DEPTHS.hud);
+      const txt = crispText(
+        this,
+        ix,
+        cy,
+        glyph(),
+        labelTextStyle(tier === 'phone' ? 14 : 16, COLOR.textGold),
+      ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+      const paint = (): void => {
+        bg.clear();
+        bg.fillStyle(0x1a2b1a, 0.9);
+        bg.lineStyle(1, COLOR.brassDeep, 1);
+        bg.fillCircle(ix, cy, size / 2);
+        bg.strokeCircle(ix, cy, size / 2);
+      };
+      paint();
+      this.add
+        .zone(ix, cy, size, size)
+        .setOrigin(0.5, 0.5)
+        .setInteractive({ useHandCursor: true })
+        .setDepth(DEPTHS.hud)
+        .on('pointerdown', () => {
+          onPress();
+          txt.setText(glyph());
+          paint();
+        });
+      cursorX -= size + gap;
+    };
+
+    drawOne(
+      () => (getSettings().muted ? '🔇' : '🔊'),
+      () => setSettings({ muted: !getSettings().muted }),
+    );
+    drawOne(
+      () => (this.scale.isFullscreen ? '⤡' : '⤢'),
+      () => {
+        if (this.scale.isFullscreen) this.scale.stopFullscreen();
+        else this.scale.startFullscreen();
+      },
+    );
   }
 
   // Icon-only profile card — Clash-of-Clans style. A brass level
@@ -1883,6 +2001,27 @@ export class HomeScene extends Phaser.Scene {
         aphidMilk: res.player.aphidMilk,
       };
       this.refreshResourcePills();
+      // Sell the wallet change visually — float a chip from each
+      // ready producer to the matching pill so the harvest reads as
+      // physical and not just a counter snap. Done BEFORE the board
+      // repaint below so the chips' source coords map to where the
+      // building actually rendered.
+      const pillTargets = this.resourcePillTargets();
+      for (const b of res.base.buildings) {
+        const prevPending = this.serverBase?.buildings.find((x) => x.id === b.id)?.pendingHarvest;
+        if (!prevPending) continue;
+        const cx = b.anchor.x * TILE + (b.footprint.w * TILE) / 2 + this.boardContainer.x;
+        const cy = b.anchor.y * TILE + this.boardContainer.y;
+        if ((prevPending.sugar | 0) > 0 && pillTargets.sugar) {
+          spawnFloatNumber({ scene: this, x: cx, y: cy, amount: prevPending.sugar | 0, kind: 'sugar', toX: pillTargets.sugar.x, toY: pillTargets.sugar.y });
+        }
+        if ((prevPending.leafBits | 0) > 0 && pillTargets.leaf) {
+          spawnFloatNumber({ scene: this, x: cx, y: cy, amount: prevPending.leafBits | 0, kind: 'leaf', toX: pillTargets.leaf.x, toY: pillTargets.leaf.y });
+        }
+        if ((prevPending.aphidMilk | 0) > 0 && pillTargets.milk) {
+          spawnFloatNumber({ scene: this, x: cx, y: cy, amount: prevPending.aphidMilk | 0, kind: 'milk', toX: pillTargets.milk.x, toY: pillTargets.milk.y });
+        }
+      }
       // Re-render so the cleared pendingHarvest fields stop chips.
       this.boardContainer.removeAll(true);
       this.drawBoard();
@@ -1906,6 +2045,25 @@ export class HomeScene extends Phaser.Scene {
     } catch (err) {
       this.flashToast(`Harvest failed: ${(err as Error).message}`);
     }
+  }
+
+  // Screen coords of the sugar / leaf / milk pill targets so floating
+  // resource chips know where to drift toward. Reads from the live
+  // text gameobjects so it stays correct after a HUD reflow.
+  private resourcePillTargets(): {
+    sugar: { x: number; y: number } | null;
+    leaf: { x: number; y: number } | null;
+    milk: { x: number; y: number } | null;
+  } {
+    const fromText = (
+      t: Phaser.GameObjects.Text | undefined,
+    ): { x: number; y: number } | null =>
+      t && t.active ? { x: t.x - t.width / 2, y: t.y } : null;
+    return {
+      sugar: fromText(this.sugarText),
+      leaf: fromText(this.leafText),
+      milk: fromText(this.milkText),
+    };
   }
 
   private collectAllButton: HiveButton | null = null;
@@ -2078,21 +2236,46 @@ export class HomeScene extends Phaser.Scene {
     this.hideBuildingHover();
     const codex = BUILDING_CODEX[b.kind];
     const name = codex?.name ?? b.kind.replace(/([A-Z])/g, ' $1').trim();
-    const label = `${name}  ·  Lv ${b.level}`;
-    const text = crispText(this, 0, 0, label, labelTextStyle(11, COLOR.textGold))
-      .setOrigin(0.5, 0.5);
-    const padX = 8;
-    const padY = 4;
-    const w = text.width + padX * 2;
-    const h = text.height + padY * 2;
+    // Headline: name + level. Sub-line: a kind-specific stat the
+    // player actually cares about (production rate for producers,
+    // hp for everything else). Read off live runtime data so an
+    // upgraded turret reflects the new HP without a sprite refresh.
+    const headline = `${name}  ·  Lv ${b.level}`;
+    const lines: string[] = [headline];
+    const inc = INCOME_PER_SECOND[b.kind];
+    if (inc) {
+      const mult = Math.max(1, b.level);
+      const rate: string[] = [];
+      if (inc.sugar) rate.push(`+${(inc.sugar * mult).toFixed(0)} sugar/s`);
+      if (inc.leafBits) rate.push(`+${(inc.leafBits * mult).toFixed(0)} leaf/s`);
+      if (inc.aphidMilk) rate.push(`+${(inc.aphidMilk * mult).toFixed(2)} milk/s`);
+      if (rate.length) lines.push(rate.join('  ·  '));
+    }
+    const hpMax = b.hpMax ?? b.hp;
+    if (hpMax > 0) {
+      const hpPct = Math.max(0, Math.min(100, Math.round((b.hp / hpMax) * 100)));
+      lines.push(`HP ${b.hp}/${hpMax} (${hpPct}%)`);
+    }
+    const padX = 10;
+    const padY = 6;
+    const lineH = 14;
+    const headTxt = crispText(this, 0, 0, headline, labelTextStyle(11, COLOR.textGold))
+      .setOrigin(0.5, 0);
+    const subTxts: Phaser.GameObjects.Text[] = lines.slice(1).map((s, i) =>
+      crispText(this, 0, lineH * (i + 1), s, labelTextStyle(10, COLOR.textPrimary))
+        .setOrigin(0.5, 0),
+    );
+    const widest = Math.max(headTxt.width, ...subTxts.map((t) => t.width));
+    const w = widest + padX * 2;
+    const h = padY * 2 + lineH + lineH * subTxts.length;
     const bg = this.add.graphics();
-    bg.fillStyle(0x000000, 0.78);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 4);
+    bg.fillStyle(0x000000, 0.82);
+    bg.fillRoundedRect(-w / 2, -padY, w, h, 5);
     bg.lineStyle(1, COLOR.brassDeep, 0.9);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 4);
+    bg.strokeRoundedRect(-w / 2, -padY, w, h, 5);
     const cx = spr.x;
-    const cy = spr.y - spr.displayHeight / 2 - h / 2 - 6;
-    const container = this.add.container(cx, cy, [bg, text]);
+    const cy = spr.y - spr.displayHeight / 2 - h - 4;
+    const container = this.add.container(cx, cy, [bg, headTxt, ...subTxts]);
     container.setDepth(DEPTHS.boardOverlay + 5);
     this.boardContainer.add(container);
     this.buildingHoverTip = { id: b.id, container };
@@ -4078,8 +4261,76 @@ export class HomeScene extends Phaser.Scene {
     // the snapshot staying slightly stale between clicks is fine.
     const qLevel = this.currentQueenLevel();
     const counts = this.countBuildingsByKind();
+    const pinned = loadPinnedKinds();
 
-    // Horizontal strip: all slots laid out in one row inside a
+    // Category tab strip — sits between the header and the slot
+    // strip. "All" / "Pinned" / "Producers" / "Defences" / "Walls" /
+    // "Storage". Tapping a tab re-renders the strip below with the
+    // matching subset; pinned kinds always sort to the front.
+    type CatId = 'all' | 'pinned' | 'producer' | 'defence' | 'wall' | 'storage';
+    const catLabels: Array<{ id: CatId; label: string }> = [
+      { id: 'all', label: 'All' },
+      { id: 'pinned', label: '★ Pinned' },
+      { id: 'producer', label: 'Producers' },
+      { id: 'defence', label: 'Defences' },
+      { id: 'wall', label: 'Walls' },
+      { id: 'storage', label: 'Storage' },
+    ];
+    let activeCat: CatId = 'all';
+    const tabH = isWide ? 22 : 26;
+    const tabGap = 6;
+    const tabPadX = 10;
+    const tabsTop = oy + headerH - tabH - 4;
+    const tabsContainer = this.add.container(0, 0).setDepth(206);
+    container.add(tabsContainer);
+    const tabBgs: Map<CatId, Phaser.GameObjects.Graphics> = new Map();
+    let tabCursorX = ox + 16;
+    for (const t of catLabels) {
+      const txtTmp = crispText(this, 0, 0, t.label, labelTextStyle(10, COLOR.textGold));
+      const tw = Math.max(48, txtTmp.width + tabPadX * 2);
+      txtTmp.destroy();
+      const tabBg = this.add.graphics();
+      tabBgs.set(t.id, tabBg);
+      const tabLabel = crispText(
+        this,
+        tabCursorX + tw / 2,
+        tabsTop + tabH / 2,
+        t.label,
+        labelTextStyle(10, COLOR.textGold),
+      ).setOrigin(0.5, 0.5);
+      const tabZone = this.add
+        .zone(tabCursorX, tabsTop, tw, tabH)
+        .setOrigin(0, 0)
+        .setInteractive({ useHandCursor: true });
+      tabZone.on('pointerdown', () => {
+        if (activeCat === t.id) return;
+        activeCat = t.id;
+        repaintTabs();
+        renderSlots();
+      });
+      tabsContainer.add([tabBg, tabLabel, tabZone]);
+      // Capture for repaint — uses a closure over (tabBg, tabCursorX, tw).
+      const xx = tabCursorX;
+      const ww = tw;
+      tabBg.setData('paint', () => {
+        tabBg.clear();
+        const isActive = activeCat === t.id;
+        tabBg.fillStyle(isActive ? 0x3a7f3a : 0x1a2b1a, 1);
+        tabBg.lineStyle(1, isActive ? 0xffd98a : COLOR.brassDeep, 1);
+        tabBg.fillRoundedRect(xx, tabsTop, ww, tabH, 6);
+        tabBg.strokeRoundedRect(xx, tabsTop, ww, tabH, 6);
+      });
+      tabCursorX += tw + tabGap;
+    }
+    const repaintTabs = (): void => {
+      for (const [, bg] of tabBgs) {
+        const paint = bg.getData('paint') as undefined | (() => void);
+        paint?.();
+      }
+    };
+    repaintTabs();
+
+    // Horizontal strip: filtered slots laid out in one row inside a
     // container that gets masked to the modal interior. Pointer
     // drag + mouse wheel scroll the row when it overflows.
     const stripPadX = 16;
@@ -4097,9 +4348,8 @@ export class HomeScene extends Phaser.Scene {
     this.pickerMaskShape = maskShape;
 
     let scrollX = 0;
-    const totalContentW = kinds.length * (slotW + slotGap) - slotGap;
     const viewportW = W - stripPadX * 2;
-    const maxScroll = Math.max(0, totalContentW - viewportW);
+    let maxScroll = 0;
     const setScroll = (raw: number): void => {
       scrollX = Math.max(0, Math.min(maxScroll, raw));
       stripContainer.setX(-scrollX);
@@ -4152,7 +4402,46 @@ export class HomeScene extends Phaser.Scene {
       },
     );
 
-    kinds.forEach((kind, i) => {
+    const renderSlots = (): void => {
+      // Wipe the previous render — pinned toggle / tab change reuse
+      // this same function instead of destroying + reopening the
+      // whole picker.
+      stripContainer.removeAll(true);
+      const filtered = kinds.filter((k) => {
+        if (activeCat === 'all') return true;
+        if (activeCat === 'pinned') return pinned.has(k);
+        return BUILDING_CATEGORY[k] === activeCat;
+      });
+      // Pinned kinds float to the front of every tab so the player's
+      // most-used buildings are one tap from any context.
+      filtered.sort((a, b) => {
+        const ap = pinned.has(a) ? 0 : 1;
+        const bp = pinned.has(b) ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return 0;
+      });
+      const totalContentW = Math.max(0, filtered.length * (slotW + slotGap) - slotGap);
+      maxScroll = Math.max(0, totalContentW - viewportW);
+      setScroll(0);
+
+      if (filtered.length === 0) {
+        const empty = crispText(
+          this,
+          ox + W / 2,
+          stripTop + stripH / 2,
+          activeCat === 'pinned' ? 'No pinned buildings yet — tap ★ on a slot to pin it.' : 'No buildings in this category.',
+          labelTextStyle(11, COLOR.textPrimary),
+        ).setOrigin(0.5, 0.5);
+        stripContainer.add(empty);
+        return;
+      }
+
+      filtered.forEach((kind, i) => {
+        renderOneSlot(kind, i);
+      });
+    };
+
+    const renderOneSlot = (kind: Types.BuildingKind, i: number): void => {
       const cx = ox + stripPadX + i * (slotW + slotGap) + slotW / 2;
       const cy = stripTop + stripH / 2;
       const cost = this.catalog[kind]!;
@@ -4278,7 +4567,39 @@ export class HomeScene extends Phaser.Scene {
         void this.commitPlacement(kind, tx, ty);
       });
       stripContainer.add(hit);
-    });
+
+      // Pin star — top-right of the slot. Toggles localStorage and
+      // re-renders the strip so the pinned kind floats to the front
+      // of the current tab. Star renders gold when pinned, faint
+      // grey when not.
+      const isPinned = pinned.has(kind);
+      const star = crispText(
+        this,
+        cx + slotW / 2 - 14,
+        cy - slotH / 2 + 6,
+        isPinned ? '★' : '☆',
+        labelTextStyle(14, isPinned ? COLOR.textGold : '#7d8a6e'),
+      )
+        .setOrigin(0.5, 0)
+        .setInteractive({ useHandCursor: true });
+      star.on('pointerdown', (
+        _p: Phaser.Input.Pointer,
+        _lx: number,
+        _ly: number,
+        e: Phaser.Types.Input.EventData,
+      ) => {
+        // Stop propagation so the slot's tap-to-place doesn't also
+        // fire when the player toggles a pin.
+        e?.stopPropagation?.();
+        if (pinned.has(kind)) pinned.delete(kind);
+        else pinned.add(kind);
+        persistPinnedKinds(pinned);
+        renderSlots();
+      });
+      stripContainer.add(star);
+    };
+
+    renderSlots();
 
     this.pickerContainer = container;
   }
@@ -4336,6 +4657,24 @@ export class HomeScene extends Phaser.Scene {
       // Placement may change the production curve and storage cap
       // (e.g. placed a Vault → cap rose), so refresh pill rates too.
       this.refreshResourcePills();
+      // Float the cost off the placement tile back to the matching
+      // pill so the player sees the wallet *spend* as a physical
+      // motion. Cheap, motion-only — no extra round-trips.
+      const cost = this.catalog[kind];
+      if (cost) {
+        const targets = this.resourcePillTargets();
+        const sx = tx * TILE + TILE / 2 + this.boardContainer.x;
+        const sy = ty * TILE + TILE / 2 + this.boardContainer.y;
+        if (cost.sugar > 0 && targets.sugar) {
+          spawnFloatNumber({ scene: this, x: sx, y: sy, amount: -cost.sugar, kind: 'sugar', toX: targets.sugar.x, toY: targets.sugar.y });
+        }
+        if (cost.leafBits > 0 && targets.leaf) {
+          spawnFloatNumber({ scene: this, x: sx, y: sy, amount: -cost.leafBits, kind: 'leaf', toX: targets.leaf.x, toY: targets.leaf.y });
+        }
+        if (cost.aphidMilk > 0 && targets.milk) {
+          spawnFloatNumber({ scene: this, x: sx, y: sy, amount: -cost.aphidMilk, kind: 'milk', toX: targets.milk.x, toY: targets.milk.y });
+        }
+      }
       // Re-render buildings.
       this.boardContainer.removeAll(true);
       this.drawBoard();
@@ -4442,6 +4781,20 @@ export class HomeScene extends Phaser.Scene {
         aphidMilk: r.player.aphidMilk,
       };
       this.refreshResourcePills();
+      // Float the refund FROM the pills outward so it reads as a
+      // wallet payback (mirror of the placement spend animation).
+      const targets = this.resourcePillTargets();
+      const cx = this.scale.width / 2;
+      const cy = this.scale.height / 2;
+      if (r.refunded.sugar > 0 && targets.sugar) {
+        spawnFloatNumber({ scene: this, x: targets.sugar.x, y: targets.sugar.y, amount: r.refunded.sugar, kind: 'sugar', toX: cx, toY: cy });
+      }
+      if (r.refunded.leafBits > 0 && targets.leaf) {
+        spawnFloatNumber({ scene: this, x: targets.leaf.x, y: targets.leaf.y, amount: r.refunded.leafBits, kind: 'leaf', toX: cx, toY: cy });
+      }
+      if (r.refunded.aphidMilk > 0 && targets.milk) {
+        spawnFloatNumber({ scene: this, x: targets.milk.x, y: targets.milk.y, amount: r.refunded.aphidMilk, kind: 'milk', toX: cx, toY: cy });
+      }
       this.boardContainer.removeAll(true);
       this.drawBoard();
       this.drawBuildings();

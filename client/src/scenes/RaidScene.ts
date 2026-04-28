@@ -13,6 +13,7 @@ import {
 import { shareOutcome as shareOutcomeTransport } from '../net/share.js';
 import { installSceneClickDebug } from '../ui/clickDebug.js';
 import { drawPanel, drawPill } from '../ui/panel.js';
+import { drawEmptyState } from '../ui/emptyState.js';
 import { COLOR, DEPTHS, bodyTextStyle, displayTextStyle, labelTextStyle } from '../ui/theme.js';
 import { showCoachmark, type CoachmarkHandle } from '../ui/coachmark.js';
 import { haptic } from '../ui/haptics.js';
@@ -181,6 +182,60 @@ function persistSavedTactics(list: SavedTactic[]): void {
     // Quota or private mode — non-fatal, tactics just won't persist
     // across sessions.
   }
+}
+
+// Saved deck loadouts — a one-tap "selected unit + armed modifier"
+// preset. Distinct from SavedTactic (which carries the polyline)
+// because paths are situational but a player's preferred opening
+// (e.g. "Termite + Dig" or "Wasp + Split") is a stable habit. Stored
+// separately so an existing path-tactic schema check can stay strict.
+interface DeckPreset {
+  name: string;
+  unitKind: Types.UnitKind;
+  modifier: Types.PathModifierKind | 'none';
+  heroKind?: Types.HeroKind;
+}
+
+const DECK_PRESETS_KEY = 'hive:deckPresets:v1';
+const DECK_PRESETS_LIMIT = 8;
+
+function loadDeckPresets(): DeckPreset[] {
+  try {
+    const raw = localStorage.getItem(DECK_PRESETS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    const valid: DeckPreset[] = [];
+    for (const candidate of arr) {
+      if (typeof candidate !== 'object' || candidate === null) continue;
+      const c = candidate as Partial<DeckPreset>;
+      if (typeof c.name !== 'string') continue;
+      if (typeof c.unitKind !== 'string') continue;
+      // Single source of truth — MODIFIER_KINDS is also what the
+      // modifier-bar render iterates, so a future modifier kind only
+      // has to be added in one place to be both rendered AND
+      // accepted by saved-preset validation.
+      const modifier = MODIFIER_KINDS.find((k) => k === c.modifier);
+      if (!modifier) continue;
+      const out: DeckPreset = {
+        name: c.name,
+        unitKind: c.unitKind as Types.UnitKind,
+        modifier,
+      };
+      if (typeof c.heroKind === 'string') out.heroKind = c.heroKind as Types.HeroKind;
+      valid.push(out);
+      if (valid.length >= DECK_PRESETS_LIMIT) break;
+    }
+    return valid;
+  } catch {
+    return [];
+  }
+}
+
+function persistDeckPresets(list: DeckPreset[]): void {
+  try {
+    localStorage.setItem(DECK_PRESETS_KEY, JSON.stringify(list.slice(0, DECK_PRESETS_LIMIT)));
+  } catch { /* private mode — non-fatal */ }
 }
 
 const MODIFIER_GLYPH: Record<Types.PathModifierKind | 'none', string> = {
@@ -493,6 +548,13 @@ export class RaidScene extends Phaser.Scene {
     | 'dig'
     | 'done' = 'done';
   private activeCoachmark: CoachmarkHandle | null = null;
+  // Pheromone-path demo: an animated finger glyph + trail line that
+  // traces a sample path during the 'spawn' coachmark step. Pinned to
+  // the scene root so it sits above the dim overlay; lifecycle owned
+  // by start/tearDownPathDemo so the finger never lingers past the
+  // step that needed it.
+  private pathDemoNodes: Phaser.GameObjects.GameObject[] = [];
+  private pathDemoTimer: Phaser.Time.TimerEvent | null = null;
 
   // UI widgets.
   private timerText!: Phaser.GameObjects.Text;
@@ -709,7 +771,10 @@ export class RaidScene extends Phaser.Scene {
     this.trailEmitter.setDepth(DEPTHS.trail);
     this.boardContainer.add(this.trailEmitter);
 
-    this.events.once('shutdown', () => this.scale.off('resize', this.layout, this));
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.layout, this);
+      this.tearDownPathDemo();
+    });
     this.scale.on('resize', this.layout, this);
     this.layout();
 
@@ -1465,6 +1530,11 @@ export class RaidScene extends Phaser.Scene {
         title: 'Draw a path',
         body: 'Drag from a glowing edge into the base. Your swarm walks the trail you draw.',
       });
+      // Animated finger demo — a single 👆 glyph + dotted trail
+      // tweens from the spawn edge into the base on a loop, showing
+      // the gesture instead of just describing it. Cleared on
+      // advance / shutdown via tearDownPathDemo().
+      this.startPathDemo();
     } else if (
       this.coachmarkStep === 'split' ||
       this.coachmarkStep === 'ambush' ||
@@ -1504,6 +1574,10 @@ export class RaidScene extends Phaser.Scene {
       this.activeCoachmark.acknowledge();
       this.activeCoachmark = null;
     }
+    // The 'spawn' demo finger lives outside the coachmark handle —
+    // tear it down explicitly when its step is satisfied or the
+    // glyph keeps tracing forever.
+    if (satisfied === 'spawn') this.tearDownPathDemo();
     let next: typeof this.coachmarkStep;
     if (satisfied === 'deck') {
       next = 'spawn';
@@ -1521,12 +1595,102 @@ export class RaidScene extends Phaser.Scene {
     this.time.delayedCall(420, () => this.runCoachmarkStep());
   }
 
+  // Animated finger glyph + dotted trail traces a sample path from
+  // the left spawn edge into the base on a loop. Pure decoration —
+  // the actual `advanceCoachmark('spawn')` still runs when the
+  // PLAYER draws their own first path, not when the demo finishes.
+  private startPathDemo(): void {
+    this.tearDownPathDemo();
+    const scaleX = this.boardContainer.scaleX || 1;
+    const startX = this.boardContainer.x + TILE * 1 * scaleX;
+    const startY = this.boardContainer.y + TILE * 6 * scaleX;
+    const endX = this.boardContainer.x + TILE * 9 * scaleX;
+    const endY = this.boardContainer.y + TILE * 6 * scaleX;
+    const trail = this.add.graphics().setDepth(DEPTHS.boardOverlay + 50);
+    const finger = this.add
+      .text(startX, startY, '👆', {
+        fontFamily: 'system-ui, -apple-system, "Segoe UI Emoji", sans-serif',
+        fontSize: '28px',
+      })
+      .setOrigin(0.5, 0.2)
+      .setDepth(DEPTHS.boardOverlay + 51);
+    this.pathDemoNodes.push(trail, finger);
+
+    let progress = 0;
+    const replay = (): void => {
+      progress = 0;
+      trail.clear();
+      finger.setAlpha(0).setPosition(startX, startY);
+      this.tweens.add({
+        targets: finger,
+        alpha: 1,
+        duration: 200,
+        ease: 'Cubic.easeOut',
+      });
+      this.tweens.add({
+        targets: { p: 0 },
+        p: 1,
+        duration: 1400,
+        ease: 'Sine.easeInOut',
+        onUpdate: (tween) => {
+          progress = tween.getValue() ?? 0;
+          const cx = startX + (endX - startX) * progress;
+          const cy = startY + (endY - startY) * progress;
+          finger.setPosition(cx, cy);
+          trail.clear();
+          trail.lineStyle(4, 0xffd98a, 0.9);
+          trail.beginPath();
+          trail.moveTo(startX, startY);
+          trail.lineTo(cx, cy);
+          trail.strokePath();
+          // Dotted overlay so the trail reads as drawn-not-baked.
+          trail.fillStyle(0xfff2d2, 1);
+          for (let i = 0; i < 6; i++) {
+            const t = i / 6;
+            if (t > progress) break;
+            trail.fillCircle(startX + (endX - startX) * t, startY + (endY - startY) * t, 2);
+          }
+        },
+        onComplete: () => {
+          this.tweens.add({
+            targets: finger,
+            alpha: 0,
+            duration: 280,
+            ease: 'Cubic.easeIn',
+            onComplete: () => {
+              trail.clear();
+            },
+          });
+        },
+      });
+    };
+    replay();
+    this.pathDemoTimer = this.time.addEvent({
+      delay: 2200,
+      loop: true,
+      callback: replay,
+    });
+  }
+
+  private tearDownPathDemo(): void {
+    if (this.pathDemoTimer) {
+      this.pathDemoTimer.remove(false);
+      this.pathDemoTimer = null;
+    }
+    for (const node of this.pathDemoNodes) {
+      this.tweens.killTweensOf(node);
+      node.destroy();
+    }
+    this.pathDemoNodes = [];
+  }
+
   private completeCoachmarkDrill(): void {
     this.coachmarkStep = 'done';
     if (this.activeCoachmark) {
       this.activeCoachmark.complete();
       this.activeCoachmark = null;
     }
+    this.tearDownPathDemo();
     markRaidCoachmarksDone();
   }
 
@@ -1622,10 +1786,215 @@ export class RaidScene extends Phaser.Scene {
     tacContainer.on('pointerdown', () => this.toggleTacticsPanel());
     this.paintActionButton(tacBg, false);
     this.modifierBar.add(tacContainer);
+    cursorX += MOD_ACTION_BTN_W + MOD_ACTION_GAP;
+
+    // 📌 Loadouts — save / recall (unit + modifier) presets without
+    // committing to a path. Lets a player one-tap-select e.g.
+    // "Termite + Dig" without re-arming the modifier and re-tapping
+    // the deck card every raid.
+    const loadoutContainer = this.add.container(cursorX + MOD_ACTION_GAP, 0);
+    const loadoutBg = this.add.graphics();
+    const loadoutLabel = this.add
+      .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '📌 Loadouts', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '13px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5);
+    loadoutContainer.add([loadoutBg, loadoutLabel]);
+    loadoutContainer.setSize(MOD_ACTION_BTN_W, MOD_BTN_H);
+    loadoutContainer.setInteractive(
+      new Phaser.Geom.Rectangle(0, 0, MOD_ACTION_BTN_W, MOD_BTN_H),
+      Phaser.Geom.Rectangle.Contains,
+    );
+    loadoutContainer.on('pointerdown', () => this.toggleLoadoutsPanel());
+    this.paintActionButton(loadoutBg, false);
+    this.modifierBar.add(loadoutContainer);
 
     this.refreshModifierBar();
     this.refreshSaveTacticEnabled();
     this.refreshRedoEnabled();
+  }
+
+  // ---------- Deck loadouts panel ----------
+
+  private loadoutsPanel: Phaser.GameObjects.Container | null = null;
+
+  private toggleLoadoutsPanel(): void {
+    if (this.loadoutsPanel) {
+      this.closeLoadoutsPanel();
+    } else {
+      this.openLoadoutsPanel();
+    }
+  }
+
+  private closeLoadoutsPanel(): void {
+    if (this.loadoutsPanel) {
+      this.loadoutsPanel.destroy(true);
+      this.loadoutsPanel = null;
+    }
+  }
+
+  private openLoadoutsPanel(): void {
+    // Closing the tactics panel keeps only one floating sub-panel
+    // open at a time so they don't stack on top of each other.
+    if (this.tacticsPanel) this.closeTacticsPanel();
+    const list = loadDeckPresets();
+    const w = Math.min(this.scale.width - 32, 360);
+    const h = Math.min(this.scale.height - HUD_H - 80, 320);
+    const panel = this.add.container(this.scale.width / 2, HUD_H + 60).setDepth(80);
+    const bg = this.add.graphics();
+    drawPanel(bg, -w / 2, 0, w, h, {
+      topColor: 0x172117,
+      botColor: 0x0a120b,
+      stroke: COLOR.brassDeep,
+      strokeWidth: 3,
+      highlight: COLOR.brass,
+      highlightAlpha: 0.18,
+      radius: 14,
+      shadowOffset: 5,
+      shadowAlpha: 0.4,
+    });
+    panel.add(bg);
+    const title = this.add
+      .text(0, 14, 'Deck Loadouts', displayTextStyle(15, '#ffd98a', 3))
+      .setOrigin(0.5, 0);
+    panel.add(title);
+    const closeBtn = this.add
+      .text(w / 2 - 18, 14, '✕', {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '16px',
+        color: '#c3e8b0',
+      })
+      .setOrigin(0.5, 0)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => this.closeLoadoutsPanel());
+    panel.add(closeBtn);
+
+    // Save-current row sits at the top of the panel — single tap
+    // captures (selected unit + armed modifier + active hero) into
+    // the preset list. Auto-named so the player can hit save without
+    // typing on mobile.
+    const saveRow = this.add
+      .text(0, 38, '+ Save current selection', labelTextStyle(12, '#ffd98a'))
+      .setOrigin(0.5, 0)
+      .setInteractive({ useHandCursor: true });
+    saveRow.on('pointerdown', () => {
+      this.handleSaveLoadout();
+      this.closeLoadoutsPanel();
+      this.openLoadoutsPanel();
+    });
+    panel.add(saveRow);
+
+    if (list.length === 0) {
+      const handle = drawEmptyState({
+        scene: this,
+        x: -w / 2 + 16,
+        y: 70,
+        width: w - 32,
+        glyph: '📌',
+        title: 'No loadouts saved',
+        body: 'Pick a unit and arm a modifier, then tap "Save current selection" above.',
+      });
+      panel.add(handle.container);
+    } else {
+      const rowH = 38;
+      const startY = 68;
+      for (let i = 0; i < list.length; i++) {
+        const p = list[i]!;
+        const rowY = startY + i * (rowH + 4);
+        const row = this.add.container(0, rowY);
+        const rowBg = this.add.graphics();
+        rowBg.fillStyle(0x1a2b1a, 1);
+        rowBg.lineStyle(1, COLOR.brassDeep, 1);
+        rowBg.fillRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        rowBg.strokeRoundedRect(-w / 2 + 12, 0, w - 24, rowH, 8);
+        const text = this.add
+          .text(-w / 2 + 22, rowH / 2, p.name, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '12px',
+            color: '#e6f5d2',
+          })
+          .setOrigin(0, 0.5);
+        const meta = `${p.unitKind}${p.modifier !== 'none' ? ' · ' + MODIFIER_GLYPH[p.modifier] : ''}`;
+        const metaText = this.add
+          .text(w / 2 - 92, rowH / 2, meta, {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '11px',
+            color: '#9fc79a',
+          })
+          .setOrigin(0, 0.5);
+        const useBtn = this.add
+          .text(w / 2 - 24, rowH / 2, '▶', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '14px',
+            color: '#ffd98a',
+          })
+          .setOrigin(0.5, 0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            this.applyLoadout(p);
+            this.closeLoadoutsPanel();
+          });
+        const delBtn = this.add
+          .text(w / 2 - 50, rowH / 2, '🗑', {
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '13px',
+            color: '#d98080',
+          })
+          .setOrigin(0.5, 0.5)
+          .setInteractive({ useHandCursor: true })
+          .on('pointerdown', () => {
+            const next = loadDeckPresets().filter((q) => q.name !== p.name);
+            persistDeckPresets(next);
+            this.closeLoadoutsPanel();
+            this.openLoadoutsPanel();
+          });
+        row.add([rowBg, text, metaText, delBtn, useBtn]);
+        panel.add(row);
+      }
+    }
+    this.loadoutsPanel = panel;
+  }
+
+  // Capture the current (selected card → unitKind + heroKind) and
+  // armed modifier into the saved-presets list. Auto-name from the
+  // unit + modifier so the player doesn't have to type on mobile.
+  private handleSaveLoadout(): void {
+    const entry = this.currentDeckEntry();
+    const list = loadDeckPresets();
+    const baseName = `${entry.label}${this.currentModifierMode !== 'none' ? ' ' + MODIFIER_LABEL[this.currentModifierMode] : ''}`;
+    let name = baseName;
+    let suffix = 2;
+    while (list.some((p) => p.name === name)) {
+      name = `${baseName} (${suffix++})`;
+    }
+    const preset: DeckPreset = {
+      name,
+      unitKind: entry.kind,
+      modifier: this.currentModifierMode,
+    };
+    if (entry.heroKind) preset.heroKind = entry.heroKind;
+    list.unshift(preset);
+    persistDeckPresets(list);
+    this.deckHintText.setText(`Saved loadout "${name}".`);
+  }
+
+  // Apply a saved preset: select the matching deck card and arm the
+  // modifier. Non-destructive — no path is drawn yet, the player
+  // still has to drag.
+  private applyLoadout(p: DeckPreset): void {
+    const idx = this.deckEntries.findIndex(
+      (e) => e.kind === p.unitKind && (e.heroKind ?? null) === (p.heroKind ?? null),
+    );
+    if (idx >= 0) {
+      this.selectDeckIndex(idx);
+    } else {
+      this.deckHintText.setText(`No ${p.unitKind} in this deck — pick another loadout.`);
+      return;
+    }
+    this.setModifierMode(p.modifier);
+    this.deckHintText.setText(`Loaded "${p.name}". Drag to deploy.`);
   }
 
   private paintActionButton(bg: Phaser.GameObjects.Graphics, pressed: boolean): void {
@@ -1850,16 +2219,19 @@ export class RaidScene extends Phaser.Scene {
       .on('pointerdown', () => this.closeTacticsPanel());
     panel.add(closeBtn);
     if (list.length === 0) {
-      const empty = this.add
-        .text(0, 60, 'Draw a path, then hit ★ Save to bank a tactic.', {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '12px',
-          color: '#9fc79a',
-          align: 'center',
-          wordWrap: { width: w - 40 },
-        })
-        .setOrigin(0.5, 0);
-      panel.add(empty);
+      // Illustrated empty state instead of plain dim text — same
+      // shape used elsewhere (drawEmptyState helper). Renders into
+      // the tactic panel's own coordinate space (-w/2 origin).
+      const handle = drawEmptyState({
+        scene: this,
+        x: -w / 2 + 16,
+        y: 50,
+        width: w - 32,
+        glyph: '⑂',
+        title: 'No saved tactics yet',
+        body: 'Draw a path on the battlefield, then hit ★ Save to bank it.',
+      });
+      panel.add(handle.container);
     } else {
       const rowH = 38;
       for (let i = 0; i < list.length; i++) {
