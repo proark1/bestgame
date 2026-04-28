@@ -11,6 +11,7 @@ import { registerRaid } from './routes/raid.js';
 import { registerMatchmaking } from './routes/matchmaking.js';
 import { registerAdmin } from './routes/admin.js';
 import { registerAdminUsers } from './routes/adminUsers.js';
+import { registerAdminAudio } from './routes/audio.js';
 import { registerAdminHook } from './auth/adminAuth.js';
 import { registerAuth } from './routes/auth.js';
 import { registerPlayer } from './routes/player.js';
@@ -50,6 +51,9 @@ async function start(): Promise<void> {
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     // 3.5 MB — comfortably fits a 256 px WebP sprite (base64-encoded) plus
     // envelope. /admin/api/save is the only route that needs this much.
+    // /admin/api/audio/save sets a higher route-level bodyLimit (22 MB)
+    // for music mp3s; we keep the global low to limit DoS surface area
+    // on every other endpoint.
     bodyLimit: 3_500_000,
     // Trust the platform's proxy so rate-limit + logs see the real
     // client IP (Railway, Fly, Render all set X-Forwarded-For).
@@ -155,6 +159,7 @@ async function start(): Promise<void> {
   registerAdminHook(app);
   registerAdmin(app);
   registerAdminUsers(app);
+  registerAdminAudio(app);
 
   // Game JSON API lives under /api/*.
   await app.register(
