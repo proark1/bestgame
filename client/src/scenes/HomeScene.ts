@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { Types } from '@hive/shared';
 import type { HiveRuntime } from '../main.js';
+import type { BuilderEntry } from '../net/Api.js';
 import { crispText } from '../ui/text.js';
 import { openAccountModal, openAccountInfoModal } from '../ui/accountModal.js';
 import { openTutorial, shouldShowTutorial } from '../ui/tutorialModal.js';
@@ -238,6 +239,21 @@ export class HomeScene extends Phaser.Scene {
     // Kick off catalog fetch (non-blocking) — it's cached per scene
     // enter. If it fails, the picker shows a network error.
     void this.loadCatalog();
+    // Builder queue: fetch once now so the upgrade-in-progress
+    // chips paint over any building currently being upgraded, then
+    // refresh every 5 s so the countdown text stays close to live.
+    void this.refreshBuilderEntries();
+    this.builderRefreshTimer = this.time.addEvent({
+      delay: 5000,
+      loop: true,
+      callback: () => void this.refreshBuilderEntries(),
+    });
+    this.events.once('shutdown', () => {
+      if (this.builderRefreshTimer) {
+        this.builderRefreshTimer.remove(false);
+        this.builderRefreshTimer = null;
+      }
+    });
 
     this.scale.on('resize', this.handleResize, this);
     this.handleResize();
@@ -1509,6 +1525,10 @@ export class HomeScene extends Phaser.Scene {
     // sees the live layout.
     this.drawEmptyTileHints();
     this.drawHarvestIndicators();
+    // Re-render upgrade badges with each building rebuild so a
+    // newly-enqueued / completed job swaps its chip without
+    // waiting for the 5 s refresh tick.
+    this.drawUpgradeIndicators();
   }
 
   // Per-building floating coin chip rendered on top of any producer
@@ -1518,6 +1538,94 @@ export class HomeScene extends Phaser.Scene {
   // the wallet. Chips are recreated whenever the base snapshot
   // changes — drawBuildings is the canonical re-render hook.
   private harvestChips: Phaser.GameObjects.Container[] = [];
+
+  // Active in-progress builder jobs (one per building being upgraded
+  // / placed). Refreshed on scene create + every 5 s while the
+  // scene is open, so the badge labels under each building stay
+  // accurate without hammering the API. Cleared on shutdown.
+  private builderEntries: BuilderEntry[] = [];
+  private upgradeChips: Phaser.GameObjects.Container[] = [];
+  private builderRefreshTimer: Phaser.Time.TimerEvent | null = null;
+
+  // Pull the live builder queue from the server. Called once on
+  // scene create + on a 5 s ticker so the per-building badge text
+  // stays close to real-time. Failures are non-fatal (no badges
+  // is fine) so the scene never crashes on offline.
+  private async refreshBuilderEntries(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime) return;
+    try {
+      const r = await runtime.api.getBuilder();
+      if (!this.scene.isActive()) return;
+      this.builderEntries = r.entries;
+      this.drawUpgradeIndicators();
+    } catch {
+      /* swallow — offline or API blip */
+    }
+  }
+
+  private drawUpgradeIndicators(): void {
+    for (const c of this.upgradeChips) c.destroy();
+    this.upgradeChips = [];
+    if (!this.serverBase || this.builderEntries.length === 0) return;
+    const now = Date.now();
+    const entriesById = new Map<string, BuilderEntry>();
+    for (const e of this.builderEntries) {
+      if (e.targetKind !== 'building') continue;
+      entriesById.set(e.targetId, e);
+    }
+    if (entriesById.size === 0) return;
+
+    for (const b of this.serverBase.buildings) {
+      const entry = entriesById.get(b.id);
+      if (!entry) continue;
+      const spansBoth = (b.spans?.length ?? 0) > 1;
+      const onThisLayer = spansBoth || b.anchor.layer === this.layer;
+      if (!onThisLayer) continue;
+
+      // Anchor the badge over the building's top-right corner so
+      // it never collides with the harvest chip (top-center) on
+      // the same building.
+      const cx = b.anchor.x * TILE + b.footprint.w * TILE - 8;
+      const cy = b.anchor.y * TILE + 6;
+      const chip = this.add.container(cx, cy).setDepth(DEPTHS.boardOverlay);
+
+      // Round amber background with hammer glyph + countdown text.
+      // Hammer 🔨 is a single-codepoint emoji that rasterises on
+      // every modern OS; falls back to "↑" if the platform's
+      // emoji set fails (rare).
+      const bg = this.add.graphics();
+      bg.fillStyle(0xf4a623, 0.95);
+      bg.fillRoundedRect(-32, -10, 64, 22, 11);
+      bg.lineStyle(2, 0x6e3c0a, 1);
+      bg.strokeRoundedRect(-32, -10, 64, 22, 11);
+
+      const endsAt = new Date(entry.endsAt).getTime();
+      const secondsLeft = Math.max(0, Math.round((endsAt - now) / 1000));
+      const label = secondsLeft > 0 ? formatCountdown(secondsLeft) : 'done';
+      const text = crispText(
+        this,
+        4,
+        0,
+        `🔨 ${label}`,
+        labelTextStyle(10, '#1f1208'),
+      ).setOrigin(0.5, 0.5);
+
+      chip.add([bg, text]);
+      // Subtle bob so the chip reads as "active" without competing
+      // with the harvest chip's stronger pulse.
+      this.tweens.add({
+        targets: chip,
+        y: cy - 2,
+        duration: 1100,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      this.boardContainer.add(chip);
+      this.upgradeChips.push(chip);
+    }
+  }
 
   private drawHarvestIndicators(): void {
     for (const c of this.harvestChips) c.destroy();
@@ -3567,6 +3675,10 @@ export class HomeScene extends Phaser.Scene {
   }
 
   private pickerContainer: Phaser.GameObjects.Container | null = null;
+  // Off-display-list graphics used as the building-strip's geometry
+  // mask; tracked here so closePicker can destroy it (the scene's
+  // automatic teardown only walks display-list children).
+  private pickerMaskShape: Phaser.GameObjects.Graphics | null = null;
 
   // Queen Chamber level determines the tier index into per-kind
   // quotas. Reads from the server-backed base snapshot so a freshly
@@ -3599,21 +3711,21 @@ export class HomeScene extends Phaser.Scene {
       this.flashToast('Loading catalog…');
       return;
     }
-    // Size the modal to the content. Grid is cols × rows; height
-    // follows the row count so adding new building kinds never spills
-    // off the bottom.
-    const cols = 4;
-    // Slot height grew slightly so each tile fits a one-line role
-    // description ("Splash mortar", "Anti-air", etc.) on top of the
-    // existing icon + name + cap + cost rows. Without this hint the
-    // player has to memorize what every kind does before opening the
-    // build menu.
-    const slotH = 144;
-    const rows = Math.ceil(kinds.length / cols);
+    // Layout: header / title / subtitle stay on top; building tiles
+    // sit in a single HORIZONTAL row below, scrollable when the row
+    // overflows the modal width. The previous 4-column grid grew
+    // with the building roster and started overflowing the viewport
+    // (Milk Pot was getting clipped on tall phones). A scrollable
+    // strip cap-bounds the modal height regardless of how many
+    // kinds the catalog returns.
+    const slotW = 116;
+    const slotH = 140;
+    const slotGap = 10;
+    const headerH = 86;
+    const footerH = 28;
+    const stripH = slotH + 16;
     const W = Math.min(640, this.scale.width - 32);
-    const naturalH = 86 + rows * (slotH + 12) + 32;
-    const maxH = this.scale.height - 80;
-    const H = Math.min(naturalH, maxH);
+    const H = Math.min(this.scale.height - 80, headerH + stripH + footerH);
     const ox = (this.scale.width - W) / 2;
     const oy = (this.scale.height - H) / 2;
 
@@ -3713,12 +3825,82 @@ export class HomeScene extends Phaser.Scene {
     const qLevel = this.currentQueenLevel();
     const counts = this.countBuildingsByKind();
 
-    const slotW = (W - 48) / cols;
+    // Horizontal strip: all slots laid out in one row inside a
+    // container that gets masked to the modal interior. Pointer
+    // drag + mouse wheel scroll the row when it overflows.
+    const stripPadX = 16;
+    const stripTop = oy + headerH;
+    const stripBottom = stripTop + stripH;
+    const stripContainer = this.add.container(0, 0).setDepth(204);
+    container.add(stripContainer);
+
+    // Mask so the strip clips to the modal's interior rect.
+    const maskShape = this.make.graphics({ x: 0, y: 0 });
+    maskShape.fillStyle(0xffffff, 1);
+    maskShape.fillRect(ox + stripPadX, stripTop, W - stripPadX * 2, stripH);
+    const mask = maskShape.createGeometryMask();
+    stripContainer.setMask(mask);
+    this.pickerMaskShape = maskShape;
+
+    let scrollX = 0;
+    const totalContentW = kinds.length * (slotW + slotGap) - slotGap;
+    const viewportW = W - stripPadX * 2;
+    const maxScroll = Math.max(0, totalContentW - viewportW);
+    const setScroll = (raw: number): void => {
+      scrollX = Math.max(0, Math.min(maxScroll, raw));
+      stripContainer.setX(-scrollX);
+    };
+
+    // Drag + wheel scroll. Backdrop owns "tap outside to close",
+    // cardZone swallows taps in the modal padding — we wire the
+    // strip-area hit zone for the scroll gestures so a slot tap
+    // still lands on the slot's own hit zone (depth 205, above
+    // this zone at 203).
+    const stripHit = this.add
+      .zone(ox + stripPadX, stripTop, viewportW, stripH)
+      .setOrigin(0, 0)
+      .setDepth(203)
+      .setInteractive();
+    container.add(stripHit);
+    let dragStartX = 0;
+    let dragStartScroll = 0;
+    let dragging = false;
+    let dragMoved = false;
+    stripHit.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      dragging = true;
+      dragMoved = false;
+      dragStartX = p.x;
+      dragStartScroll = scrollX;
+    });
+    stripHit.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!dragging || !p.isDown) return;
+      const dx = p.x - dragStartX;
+      if (Math.abs(dx) > 4) dragMoved = true;
+      setScroll(dragStartScroll - dx);
+    });
+    stripHit.on('pointerup', () => {
+      dragging = false;
+    });
+    stripHit.on('pointerupoutside', () => {
+      dragging = false;
+    });
+    stripHit.on(
+      'wheel',
+      (
+        _p: Phaser.Input.Pointer,
+        _objs: unknown[],
+        dx: number,
+        dy: number,
+      ) => {
+        // Trackpad horizontals come through dx; mouse wheel comes
+        // through dy. Either should scroll the strip.
+        setScroll(scrollX + (dx !== 0 ? dx : dy));
+      },
+    );
+
     kinds.forEach((kind, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const cx = ox + 24 + col * slotW + slotW / 2;
-      const cy = oy + 92 + row * (slotH + 12) + slotH / 2;
+      const cx = ox + stripPadX + i * (slotW + slotGap) + slotW / 2;
+      const cy = stripTop + stripH / 2;
       const cost = this.catalog[kind]!;
       const canAfford =
         this.resources.sugar >= cost.sugar &&
@@ -3746,7 +3928,11 @@ export class HomeScene extends Phaser.Scene {
             : null;
       const placeable = denyReason === null;
 
-      const slotBg = this.add.graphics().setDepth(203);
+      // All slot graphics live inside stripContainer so they scroll
+      // and get masked together. Depths within the container don't
+      // need to fight the outer modal — the mask is on the
+      // container, not the children.
+      const slotBg = this.add.graphics();
       drawPanel(slotBg, cx - slotW / 2 + 4, cy - slotH / 2, slotW - 8, slotH - 8, {
         topColor: placeable ? 0x203725 : 0x342121,
         botColor: placeable ? 0x122016 : 0x1f1212,
@@ -3758,82 +3944,86 @@ export class HomeScene extends Phaser.Scene {
         shadowOffset: 3,
         shadowAlpha: 0.25,
       });
-      container.add(slotBg);
+      stripContainer.add(slotBg);
 
       const icon = this.add
-        .image(cx, cy - 24, `building-${kind}`)
-        .setDisplaySize(44, 44)
-        .setDepth(204)
+        .image(cx, cy - 28, `building-${kind}`)
+        .setDisplaySize(40, 40)
         .setAlpha(placeable ? 1 : 0.5);
-      container.add(icon);
+      stripContainer.add(icon);
 
       const nameText = crispText(
         this,
         cx,
-        cy + 4,
+        cy + 0,
         kind.replace(/([A-Z])/g, ' $1').trim(),
         bodyTextStyle(11, placeable ? COLOR.textPrimary : '#d7aaaa'),
-      )
-        .setOrigin(0.5)
-        .setDepth(204);
-      container.add(nameText);
+      ).setOrigin(0.5);
+      stripContainer.add(nameText);
 
-      // Role description — one-line hint pulled from BUILDING_CODEX
-      // ("Splash mortar", "Anti-air turret", etc.) so the player can
-      // tell what a kind does without dropping into the codex first.
-      // Fallback empty string if the kind isn't in the codex (forward-
-      // compat with new kinds).
       const role = BUILDING_CODEX[kind]?.role ?? '';
       if (role) {
         const roleText = crispText(
           this,
           cx,
-          cy + 24,
+          cy + 18,
           role,
           labelTextStyle(9, placeable ? '#9fc79a' : '#a8807a'),
-        )
-          .setOrigin(0.5)
-          .setDepth(204);
-        container.add(roleText);
+        ).setOrigin(0.5);
+        stripContainer.add(roleText);
       }
 
-      // Count/cap badge shows right next to the name so the player can
-      // see the "2/3 turrets" state at a glance.
       const capText = crispText(
         this,
         cx,
-        cy + 44,
+        cy + 36,
         `Slots ${current}/${cap}`,
         labelTextStyle(10, capOk ? '#c3e8b0' : '#d98080'),
-      )
-        .setOrigin(0.5)
-        .setDepth(204);
-      container.add(capText);
+      ).setOrigin(0.5);
+      stripContainer.add(capText);
 
       const costText = crispText(
         this,
         cx,
-        cy + 60,
+        cy + 52,
         `S ${cost.sugar}  L ${cost.leafBits}`,
         labelTextStyle(10, canAfford ? '#c3e8b0' : '#d98080'),
-      )
-        .setOrigin(0.5)
-        .setDepth(204);
-      container.add(costText);
+      ).setOrigin(0.5);
+      stripContainer.add(costText);
 
+      // Slot hit zone sits ABOVE the strip-scroll hit zone (depth
+      // 205 vs 203) so a tap on the slot lands here, not on the
+      // pan handler. Drag still scrolls — see dragMoved guard
+      // below: a drag that moved more than 4 px cancels the click
+      // so the user never accidentally builds while panning.
       const hit = this.add
         .zone(cx, cy, slotW - 8, slotH - 8)
         .setOrigin(0.5)
-        .setDepth(205)
         .setInteractive({ useHandCursor: placeable });
-      hit.on('pointerdown', () => {
+      hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        // Mirror the strip drag detector — the slot zone catches
+        // pointerdown first, so seed the same start state.
+        dragStartX = p.x;
+        dragStartScroll = scrollX;
+        dragMoved = false;
+      });
+      hit.on('pointermove', (p: Phaser.Input.Pointer) => {
+        if (!p.isDown) return;
+        const dx = p.x - dragStartX;
+        if (Math.abs(dx) > 4) {
+          dragMoved = true;
+          setScroll(dragStartScroll - dx);
+        }
+      });
+      hit.on('pointerup', () => {
+        if (dragMoved) return;
         if (!placeable) {
           this.flashToast(denyReason!);
           return;
         }
         void this.commitPlacement(kind, tx, ty);
       });
-      container.add(hit);
+      stripContainer.add(hit);
     });
 
     this.pickerContainer = container;
@@ -3843,6 +4033,13 @@ export class HomeScene extends Phaser.Scene {
     if (this.pickerContainer) {
       this.pickerContainer.destroy(true);
       this.pickerContainer = null;
+      // The mask graphics is created via make.graphics() so it
+      // sits outside the scene's display list — destroy it here
+      // explicitly. Without this it would leak across opens.
+      if (this.pickerMaskShape) {
+        this.pickerMaskShape.destroy();
+        this.pickerMaskShape = null;
+      }
       // Stamp the grace window so a pointerup that arrives just after
       // this call can't open a new picker on the closing tap's tile.
       this.pickerClosedAtMs = this.time.now;

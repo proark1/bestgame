@@ -293,6 +293,14 @@ export interface AdminUser {
   lastLoginAt: string | null;
   playerId: string | null;
   displayName: string | null;
+  // Joined from the linked players row. Null when no player has
+  // been minted yet (user signed up but never logged in). The
+  // admin UI surfaces these as inline number inputs and lets the
+  // operator overwrite them via PUT /admin/api/users/:id.
+  sugar: number | null;
+  leafBits: number | null;
+  aphidMilk: number | null;
+  trophies: number | null;
 }
 export interface AdminUsersResponse {
   users: AdminUser[];
@@ -327,7 +335,18 @@ export async function createUser(args: {
 
 export async function updateUser(
   id: string,
-  args: { username?: string; email?: string | null; password?: string },
+  args: {
+    username?: string;
+    email?: string | null;
+    password?: string;
+    // Player-side fields, applied to the user's linked players row.
+    // The server returns 400 if no players row is linked yet (the
+    // user has never logged in to mint one).
+    sugar?: number;
+    leafBits?: number;
+    aphidMilk?: number;
+    trophies?: number;
+  },
 ): Promise<{ user: AdminUser }> {
   return req<{ user: AdminUser }>(`/admin/api/users/${encodeURIComponent(id)}`, {
     method: 'PUT',
