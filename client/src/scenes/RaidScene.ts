@@ -211,16 +211,16 @@ function loadDeckPresets(): DeckPreset[] {
       const c = candidate as Partial<DeckPreset>;
       if (typeof c.name !== 'string') continue;
       if (typeof c.unitKind !== 'string') continue;
-      if (
-        c.modifier !== 'none' &&
-        c.modifier !== 'split' &&
-        c.modifier !== 'ambush' &&
-        c.modifier !== 'dig'
-      ) continue;
+      // Single source of truth — MODIFIER_KINDS is also what the
+      // modifier-bar render iterates, so a future modifier kind only
+      // has to be added in one place to be both rendered AND
+      // accepted by saved-preset validation.
+      const modifier = MODIFIER_KINDS.find((k) => k === c.modifier);
+      if (!modifier) continue;
       const out: DeckPreset = {
         name: c.name,
         unitKind: c.unitKind as Types.UnitKind,
-        modifier: c.modifier,
+        modifier,
       };
       if (typeof c.heroKind === 'string') out.heroKind = c.heroKind as Types.HeroKind;
       valid.push(out);
