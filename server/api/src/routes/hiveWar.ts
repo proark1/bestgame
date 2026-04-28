@@ -127,7 +127,16 @@ async function finalizeSeason(
     }
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    // A failed ROLLBACK is its own incident class — usually a dropped
+    // connection or already-aborted TX — so log it separately rather
+    // than swallowing silently. The original error is still the
+    // primary signal.
+    await client.query('ROLLBACK').catch((rollbackErr) => {
+      log.error(
+        { rollbackErr, seasonId },
+        'finalizeSeason rollback also failed',
+      );
+    });
     log.error({ err, seasonId }, 'finalizeSeason failed');
   } finally {
     client.release();
