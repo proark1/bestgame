@@ -308,12 +308,9 @@ export function registerWars(app: FastifyInstance): void {
         [w.id, isA, body.stars],
       );
 
-      // Live war ticker — post a system chat message into the
-      // attacker's clan chat so clanmates see the result land in
-      // ~1.5s via the SSE stream. NULL player_id marks the row as
-      // a system message so the client can render it differently
-      // (italic + 🛡 prefix). Best-effort inside the same tx so a
-      // chat-table outage rolls back the attack too.
+      // Resolve attacker + defender display names inside the tx
+      // so they reflect the same snapshot the war row was written
+      // against (renames mid-attack are rare but possible).
       const attName = await client.query<{ display_name: string }>(
         'SELECT display_name FROM players WHERE id = $1',
         [attackerId],
@@ -322,22 +319,32 @@ export function registerWars(app: FastifyInstance): void {
         'SELECT display_name FROM players WHERE id = $1',
         [body.defenderPlayerId],
       );
+
+      await client.query('COMMIT');
+
+      // Live war ticker — post a system chat message AFTER the war
+      // commit so a chat-table outage (e.g. older schema with NOT
+      // NULL player_id) can't poison the in-flight tx. PostgreSQL
+      // aborts the entire transaction on any error inside it, so
+      // the previous in-tx INSERT-with-.catch pattern would still
+      // make the COMMIT fail downstream. Soft-failing only works
+      // outside the tx — best-effort against the pool, log + move
+      // on. Worst case: war attack landed, ticker line is missing.
       const attDisplay = attName.rows[0]?.display_name ?? 'Someone';
       const defDisplay = defName.rows[0]?.display_name ?? 'an enemy hive';
       const stars = body.stars;
       const starGlyphs = stars > 0 ? '★'.repeat(stars) : '—';
       const tickerMsg = `🛡 ${attDisplay} attacked ${defDisplay} (${starGlyphs})`;
-      await client.query(
-        `INSERT INTO clan_messages (clan_id, player_id, content)
-         VALUES ($1, NULL, $2)`,
-        [attackerClan, tickerMsg],
-      ).catch((err) => {
-        // Soft-fail: a missing nullable player_id (older schema) shouldn't
-        // block the war attack from being recorded. Log + move on.
+      try {
+        await pool.query(
+          `INSERT INTO clan_messages (clan_id, player_id, content)
+           VALUES ($1, NULL, $2)`,
+          [attackerClan, tickerMsg],
+        );
+      } catch (err) {
         app.log.warn({ err }, 'clan war ticker post failed');
-      });
+      }
 
-      await client.query('COMMIT');
       return { ok: true, warId: w.id };
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);

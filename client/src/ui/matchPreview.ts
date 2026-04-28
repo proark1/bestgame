@@ -15,8 +15,6 @@ import type { MatchResponse } from '../net/Api.js';
 import { fadeToScene } from './transitions.js';
 import type Phaser from 'phaser';
 
-const TILE_PX = 8; // each grid tile in the preview = 8 css px
-
 export async function openMatchPreview(
   scene: Phaser.Scene,
   runtime: HiveRuntime,
@@ -162,8 +160,6 @@ function drawBaseThumb(host: HTMLElement, base: Types.Base): void {
       ${isQueen ? 'box-shadow: 0 0 6px rgba(255, 200, 80, 0.9);' : ''}
     `;
     host.append(tile);
-    void cellH;
-    void TILE_PX;
   }
 }
 

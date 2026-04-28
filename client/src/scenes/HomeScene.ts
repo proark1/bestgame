@@ -3518,6 +3518,9 @@ export class HomeScene extends Phaser.Scene {
   private onlineNowText: Phaser.GameObjects.Text | null = null;
   private onlineNowBg: Phaser.GameObjects.Graphics | null = null;
   private onlineNowTimer: number | null = null;
+  // One-shot guard so paintOnlineChip's shutdown handler is bound
+  // exactly once per scene lifecycle, not once per layout refresh.
+  private onlineNowShutdownBound = false;
 
   private drawCornerActionStacks(): void {
     for (const btn of this.cornerActionButtons) btn.destroy();
@@ -3680,12 +3683,22 @@ export class HomeScene extends Phaser.Scene {
     this.onlineNowTimer = window.setInterval(() => {
       void this.refreshOnlineCount();
     }, 30_000);
-    this.events.once('shutdown', () => {
-      if (this.onlineNowTimer !== null) {
-        window.clearInterval(this.onlineNowTimer);
-        this.onlineNowTimer = null;
-      }
-    });
+    // Register the shutdown handler ONCE per scene lifecycle (not on
+    // every paintOnlineChip call). paintOnlineChip is invoked from
+    // drawFooter, which runs both on create and after layout
+    // refreshes — without this guard each refresh leaks another
+    // listener that survives until shutdown. The handler reads the
+    // live `onlineNowTimer` field at call time, so registering it
+    // before any timer exists is safe.
+    if (!this.onlineNowShutdownBound) {
+      this.onlineNowShutdownBound = true;
+      this.events.once('shutdown', () => {
+        if (this.onlineNowTimer !== null) {
+          window.clearInterval(this.onlineNowTimer);
+          this.onlineNowTimer = null;
+        }
+      });
+    }
   }
 
   private async refreshOnlineCount(): Promise<void> {

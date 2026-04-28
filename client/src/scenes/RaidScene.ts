@@ -2826,15 +2826,24 @@ export class RaidScene extends Phaser.Scene {
       // Position-tracking: each render frame, the existing unit
       // sync sets hero.x/y. Mirror those onto aura + banner so the
       // hero's identity moves with it without modifying the sync
-      // loop. preUpdate fires once per frame.
-      this.events.on('postupdate', () => {
+      // loop. postupdate fires once per frame.
+      //
+      // CRITICAL: store the listener ref so destroy() can OFF it.
+      // Earlier versions registered an anonymous fn here and never
+      // removed it, so each hero spawn leaked a per-frame closure
+      // that survived the unit's death (and accumulated across
+      // rebooted scenes).
+      const onPostUpdate = (): void => {
         if (!hero.active) return;
         aura.setPosition(hero.x, hero.y + 8);
         banner.setPosition(hero.x, hero.y - HERO_SIZE * 0.7);
-      });
-      // Tear down trailing decoration when the hero sprite is
-      // destroyed (death or end-of-raid cleanup).
+      };
+      this.events.on('postupdate', onPostUpdate);
+      // Tear down trailing decoration AND remove the postupdate
+      // hook when the hero sprite is destroyed (death or end-of-
+      // raid cleanup).
       hero.once('destroy', () => {
+        this.events.off('postupdate', onPostUpdate);
         aura.destroy();
         banner.destroy();
       });
