@@ -318,9 +318,29 @@ export class RaidHistoryScene extends Phaser.Scene {
       onPress: () => { void this.watchReplay(r, runtime); },
     });
     this.rowContainer.add(watchBtn.container);
-    if (canRevenge) {
-      const revengeBtn = makeHiveButton(this, {
+    // Intel — defender-only quick view. Skips the in-engine replay
+    // and opens an after-action card with a path heatmap + first-
+    // killed buildings ranked. Attackers don't need this; they
+    // already saw their own raid live.
+    if (!isAttacker) {
+      const intelBtn = makeHiveButton(this, {
         x: originX + 112 + 50 + 96 + 12,
+        y: btnY,
+        width: 96,
+        height: 30,
+        label: '🔍 Intel',
+        variant: 'secondary',
+        fontSize: 12,
+        onPress: () => { void this.openIntel(r, runtime); },
+      });
+      this.rowContainer.add(intelBtn.container);
+    }
+    if (canRevenge) {
+      // Push revenge further right when intel is also present so
+      // the three buttons don't overlap.
+      const revengeX = originX + 112 + 50 + 96 + 12 + (isAttacker ? 0 : 96 + 12);
+      const revengeBtn = makeHiveButton(this, {
+        x: revengeX,
         y: btnY,
         width: 110,
         height: 30,
@@ -332,6 +352,33 @@ export class RaidHistoryScene extends Phaser.Scene {
       this.rowContainer.add(revengeBtn.container);
     }
     return y + rowH + 8;
+  }
+
+  // Defender-only: fetch the same /replay/:id payload the Watch
+  // button uses, then jump into PostRaidIntelScene instead of
+  // RaidScene. The intel scene re-runs the sim against the saved
+  // baseSnapshot + inputs to recover the building destruction
+  // order, then renders a path heatmap on top of the surviving
+  // base layout.
+  private async openIntel(
+    r: RaidHistoryEntry,
+    runtime: HiveRuntime,
+  ): Promise<void> {
+    try {
+      const full = await runtime.api.replay(r.id);
+      this.registry.set('replayContext', {
+        id: full.replay.id,
+        seed: full.replay.seed,
+        baseSnapshot: full.replay.baseSnapshot,
+        inputs: full.replay.inputs,
+        replayName: full.replay.replayName,
+        attackerName: full.replay.attackerName,
+        defenderName: full.replay.defenderName,
+      });
+      fadeToScene(this, 'PostRaidIntelScene');
+    } catch (err) {
+      this.loadingText?.setText?.(`Intel unavailable: ${(err as Error).message}`);
+    }
   }
 
   // Hand off the row's raid id to /replay/:id, then jump into RaidScene

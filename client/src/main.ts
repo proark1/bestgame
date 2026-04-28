@@ -27,6 +27,7 @@ import { ProgressionScene } from './scenes/ProgressionScene.js';
 import { ClanBaseTourScene } from './scenes/ClanBaseTourScene.js';
 import { HiveWarScene } from './scenes/HiveWarScene.js';
 import { PrologueScene } from './scenes/PrologueScene.js';
+import { PostRaidIntelScene } from './scenes/PostRaidIntelScene.js';
 import { AuthClient } from './net/Auth.js';
 import { Api, type PlayerMeResponse } from './net/Api.js';
 import { MAX_DEVICE_PIXEL_RATIO } from './ui/text.js';
@@ -242,6 +243,7 @@ async function main(): Promise<void> {
       new ClanBaseTourScene(),
       new HiveWarScene(),
       new PrologueScene(),
+      new PostRaidIntelScene(),
     ],
   });
   // Runtime is attached to the game registry so scenes can pull it
