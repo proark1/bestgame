@@ -23,6 +23,14 @@
     "gain": 0.6,
     "label": "Resource earned"
   },
+  "harvest": {
+    "prompt": "satisfying resource harvest chime, sparkling cascade of coins and crystals, three quick rising bell tones with a soft glittering shimmer on top, joyful pickup feedback, dry, no reverb tail, mobile-strategy game friendly",
+    "kind": "sfx",
+    "durationSeconds": 0.7,
+    "promptInfluence": 0.7,
+    "gain": 0.6,
+    "label": "Harvest collect"
+  },
   "upgrade": {
     "prompt": "magical building upgrade chime, ascending warm sparkle, soft bells with a gentle shimmer rising, fantasy strategy game",
     "kind": "sfx",

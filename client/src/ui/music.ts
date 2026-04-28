@@ -220,8 +220,11 @@ export function setSceneTrack(trackId: string): void {
     // Bail out — the newer call owns the active slot.
     if (gen !== trackGeneration) return;
     if (started) return;
-    if (active) return;
-    startTrack(preset);
+    // No real music sample published for this scene — stay silent
+    // rather than firing the procedural sine pad. Players read the
+    // pad as a strange drone, not as music; once the admin generates
+    // an mp3 via the Audio panel, the sample path takes over.
+    void preset;
   });
 }
 
