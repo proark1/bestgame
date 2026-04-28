@@ -894,6 +894,13 @@ export class HomeScene extends Phaser.Scene {
       logo.setDisplaySize(targetH * aspect, targetH);
       logo.setInteractive({ useHandCursor: true });
       logo.on('pointerdown', () => openTutorial({ force: true }));
+      // Stash the painted height so drawAccountChip can stack the
+      // level disc directly under the wordmark without re-deriving
+      // the aspect-ratio math (the previous estimator dropped the
+      // aspect term and misaligned non-square logos).
+      this.logoBottomY = SPACING.sm + targetH;
+    } else {
+      this.logoBottomY = null;
     }
 
     // Player profile card — Clash-of-Clans-style level + name combo
@@ -1434,19 +1441,13 @@ export class HomeScene extends Phaser.Scene {
   private computeLeftColumnCenterX(tier: 'wide' | 'narrow' | 'phone'): number {
     if (tier === 'phone' || this.isMobileLayout()) return SPACING.md;
     const colW = this.computeLeftColumnWidth(tier);
-    return Math.max(SPACING.md + colW / 2, colW / 2);
+    return colW / 2;
   }
 
-  // Mirror of the logo-sizing math in drawHud so drawAccountChip can
-  // anchor the level disc directly under the wordmark without keeping
-  // a stateful reference. Returns the y where the logo's bottom edge
-  // lands (origin: 0.5, 0).
-  private estimateLogoBottomY(tier: 'wide' | 'narrow' | 'phone'): number {
-    const colW = this.computeLeftColumnWidth(tier);
-    const targetW = Math.min(colW * 0.88, HUD_H * 3);
-    const targetH = Math.min(targetW, HUD_H * 3);
-    return SPACING.sm + targetH;
-  }
+  // Captured by drawHud when the logo override is active so the level
+  // disc / trophy stack can anchor directly under the painted wordmark
+  // (we can't re-derive the height without the texture's aspect ratio).
+  private logoBottomY: number | null = null;
 
   // Icon-only profile card — Clash-of-Clans style. A brass level
   // disc sits in the top-left corner with a compact trophy chip
@@ -1476,8 +1477,8 @@ export class HomeScene extends Phaser.Scene {
     const discX = tier === 'phone' || this.isMobileLayout()
       ? burgerSlot + SPACING.sm + discSize / 2
       : this.computeLeftColumnCenterX(tier);
-    const cy = logoActive
-      ? this.estimateLogoBottomY(tier) + 14 + discSize / 2
+    const cy = logoActive && this.logoBottomY !== null
+      ? this.logoBottomY + 14 + discSize / 2
       : HUD_H / 2;
     const discBg = this.add.graphics().setDepth(DEPTHS.hud);
     drawPill(discBg, discX - discSize / 2, cy - discSize / 2, discSize, discSize, {

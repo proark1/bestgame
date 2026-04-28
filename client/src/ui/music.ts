@@ -69,30 +69,17 @@ let ctx: AudioContext | null = null;
 let busGain: GainNode | null = null;
 let active: ActiveTrack | null = null;
 
-interface ProceduralTrack {
-  type: 'procedural';
-  scene: TrackPreset;
-  voices: OscillatorNode[];
-  voiceGains: GainNode[];
-  // Wall-clock when the chord progression last advanced; used by
-  // the cross-fade scheduler to decide when the next chord is due.
-  startedAt: number;
-}
-
 // When the admin has generated a music track via the ElevenLabs Audio
 // tab, the file lives at /audio/music-<scene>.mp3 and an entry shows
-// up in /audio/manifest.json. We prefer that over the procedural
-// fallback so a real composition replaces the synth pad on the next
-// scene swap. Played as a looped buffer source through the same
-// busGain so the volume slider keeps working.
-interface SampleTrack {
-  type: 'sample';
+// up in /audio/manifest.json. Played as a looped buffer source through
+// the shared busGain so the volume slider keeps working. Without an
+// admin-published sample the scene stays silent — we no longer fall
+// back to a procedural sine pad.
+interface ActiveTrack {
   trackId: string;
   source: AudioBufferSourceNode;
   fadeGain: GainNode;
 }
-
-type ActiveTrack = ProceduralTrack | SampleTrack;
 
 function ensureCtx(): AudioContext | null {
   if (ctx) return ctx;
@@ -125,70 +112,18 @@ function applySettingsToActiveTrack(): void {
   busGain.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.08);
 }
 
-// ---- Track presets -------------------------------------------------------
-// Each preset is a small chord progression with a tempo. Voice
-// frequencies are computed from the root note + intervals; LFO
-// shapes the chord cadence. Tuned so adjacent scenes feel related
-// (same root family) but distinct enough that the player notices
-// the music changing on transition.
+// ---- Scene track allowlist ----------------------------------------------
+// Scenes opt in by name; setSceneTrack rejects anything else so a typo
+// can't accidentally fetch a non-existent music file. Adding a new
+// scene means appending its id here and (optionally) generating a
+// matching `music-<id>` mp3 via the admin Audio panel.
 
-interface ChordSpec {
-  // Multiplier on root frequency for each voice. Three-voice triads
-  // (root + third + fifth) read as full pads without a fourth voice
-  // muddying the low end.
-  ratios: number[];
-}
-
-interface TrackPreset {
-  // Identifier used by setSceneTrack to decide whether a swap is
-  // needed (same id = leave the current track running).
-  id: string;
-  rootHz: number;
-  chords: ChordSpec[];
-  // Seconds per chord. Long enough to feel like an underscore, not a
-  // melodic phrase.
-  chordHoldSec: number;
-}
-
-const TRACK_HOME: TrackPreset = {
-  id: 'home',
-  rootHz: 174.61, // F3 — warm, neutral
-  chords: [
-    { ratios: [1, 1.25, 1.5] },     // major triad (root, M3, P5)
-    { ratios: [0.89, 1.12, 1.5] },  // sub-tonic, P4, P5 — gentle drift
-    { ratios: [1, 1.2, 1.5] },      // minor triad (root, m3, P5)
-  ],
-  chordHoldSec: 18,
-};
-
-const TRACK_RAID: TrackPreset = {
-  id: 'raid',
-  rootHz: 196.0, // G3 — slightly tense
-  chords: [
-    { ratios: [1, 1.2, 1.5] },        // minor triad
-    { ratios: [1, 1.2, 1.6] },        // minor + dim 5th
-    { ratios: [0.94, 1.18, 1.5] },    // tritone hint
-  ],
-  chordHoldSec: 12,
-};
-
-const TRACK_CLAN: TrackPreset = {
-  id: 'clan',
-  rootHz: 164.81, // E3 — soft, social
-  chords: [
-    { ratios: [1, 1.25, 1.5] },
-    { ratios: [1.12, 1.33, 1.68] },   // step up — feels conversational
-    { ratios: [1, 1.25, 1.5] },
-  ],
-  chordHoldSec: 24,
-};
-
-const TRACKS: Record<string, TrackPreset> = {
-  home: TRACK_HOME,
-  raid: TRACK_RAID,
-  arena: TRACK_RAID, // arena reuses raid's tense palette
-  clan: TRACK_CLAN,
-};
+const VALID_TRACKS: ReadonlySet<string> = new Set([
+  'home',
+  'raid',
+  'arena',
+  'clan',
+]);
 
 // ---- Public API ----------------------------------------------------------
 
@@ -206,30 +141,14 @@ let trackGeneration = 0;
 export function setSceneTrack(trackId: string): void {
   const c = ensureCtx();
   if (!c || !busGain) return;
-  if (active && activeTrackId(active) === trackId) return;
-  const preset = TRACKS[trackId];
-  if (!preset) return;
+  if (active && active.trackId === trackId) return;
+  if (!VALID_TRACKS.has(trackId)) return;
   const gen = ++trackGeneration;
   stopTrack(0.5);
-  // Try the ElevenLabs-generated sample first (`music-<scene>` in the
-  // audio manifest). If that's absent the procedural pad covers the
-  // gap so a fresh deploy without any music files still has bed
-  // music.
-  void tryStartSample(trackId, gen).then((started) => {
-    // Superseded: another setSceneTrack ran while we were fetching.
-    // Bail out — the newer call owns the active slot.
-    if (gen !== trackGeneration) return;
-    if (started) return;
-    // No real music sample published for this scene — stay silent
-    // rather than firing the procedural sine pad. Players read the
-    // pad as a strange drone, not as music; once the admin generates
-    // an mp3 via the Audio panel, the sample path takes over.
-    void preset;
-  });
-}
-
-function activeTrackId(t: ActiveTrack): string {
-  return t.type === 'procedural' ? t.scene.id : t.trackId;
+  // Start the ElevenLabs-generated sample if one is published for this
+  // scene (`music-<scene>` in the audio manifest). If not, the scene
+  // stays silent until the admin generates an mp3 via the Audio panel.
+  void tryStartSample(trackId, gen);
 }
 
 export function stopMusic(): void {
@@ -245,44 +164,6 @@ export function resumeMusic(): void {
 }
 
 // ---- Internals -----------------------------------------------------------
-
-function startTrack(preset: TrackPreset): void {
-  const c = ensureCtx();
-  if (!c || !busGain) return;
-  const now = c.currentTime;
-  const voices: OscillatorNode[] = [];
-  const voiceGains: GainNode[] = [];
-  // Three voice pad: each voice is a sine + slight detune so
-  // overtones beat softly. Beating creates the "pad" feel that a
-  // single oscillator can't.
-  const initial = preset.chords[0]!;
-  for (let i = 0; i < 3; i++) {
-    const osc = c.createOscillator();
-    osc.type = 'sine';
-    const ratio = initial.ratios[i] ?? 1;
-    osc.frequency.value = preset.rootHz * ratio;
-    // Per-voice gain — middle voice loudest so the chord reads as
-    // unison rather than wide harmony.
-    const g = c.createGain();
-    g.gain.value = i === 1 ? 0.5 : 0.32;
-    osc.connect(g);
-    g.connect(busGain);
-    osc.start(now);
-    voices.push(osc);
-    voiceGains.push(g);
-  }
-  active = {
-    type: 'procedural',
-    scene: preset,
-    voices,
-    voiceGains,
-    startedAt: now,
-  };
-  // Schedule the chord progression cross-fade loop. Each call
-  // advances one chord and schedules the next via setTimeout — one
-  // timer at a time so a fast scene-swap doesn't leak callbacks.
-  scheduleNextChord(preset, 0);
-}
 
 // ElevenLabs-generated music sample loop. Cached per scene so a
 // scene-swap-and-back doesn't re-fetch the file. The manifest is
@@ -372,54 +253,18 @@ async function tryStartSample(trackId: string, gen: number): Promise<boolean> {
   source.loop = true;
   source.connect(fadeGain);
   source.start(c.currentTime);
-  active = { type: 'sample', trackId, source, fadeGain };
+  active = { trackId, source, fadeGain };
   return true;
 }
 
 function stopTrack(fadeSec: number): void {
   if (!ctx || !active) return;
   const now = ctx.currentTime;
-  if (active.type === 'procedural') {
-    for (const g of active.voiceGains) {
-      g.gain.cancelScheduledValues(now);
-      g.gain.linearRampToValueAtTime(0, now + fadeSec);
-    }
-    // Stop oscillators after the fade so the gain ramp completes.
-    const stopAt = now + fadeSec + 0.05;
-    for (const o of active.voices) {
-      try { o.stop(stopAt); } catch { /* already stopped */ }
-    }
-  } else {
-    active.fadeGain.gain.cancelScheduledValues(now);
-    active.fadeGain.gain.linearRampToValueAtTime(0, now + fadeSec);
-    const stopAt = now + fadeSec + 0.05;
-    try { active.source.stop(stopAt); } catch { /* already stopped */ }
-  }
+  active.fadeGain.gain.cancelScheduledValues(now);
+  active.fadeGain.gain.linearRampToValueAtTime(0, now + fadeSec);
+  const stopAt = now + fadeSec + 0.05;
+  try { active.source.stop(stopAt); } catch { /* already stopped */ }
   active = null;
-}
-
-let chordTimer: number | null = null;
-function scheduleNextChord(preset: TrackPreset, chordIdx: number): void {
-  if (chordTimer !== null) {
-    clearTimeout(chordTimer);
-    chordTimer = null;
-  }
-  const c = ctx;
-  if (!c || !active || active.type !== 'procedural') return;
-  const chord = preset.chords[chordIdx % preset.chords.length]!;
-  // Cross-fade each voice's frequency over 4s so chord changes feel
-  // like organic drift, not a step.
-  const now = c.currentTime;
-  for (let i = 0; i < active.voices.length; i++) {
-    const ratio = chord.ratios[i] ?? 1;
-    const target = preset.rootHz * ratio;
-    active.voices[i]!.frequency.cancelScheduledValues(now);
-    active.voices[i]!.frequency.linearRampToValueAtTime(target, now + 4);
-  }
-  chordTimer = window.setTimeout(
-    () => scheduleNextChord(preset, chordIdx + 1),
-    preset.chordHoldSec * 1000,
-  );
 }
 
 // Pause music when the tab is hidden so the AudioContext doesn't
