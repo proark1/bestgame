@@ -4722,29 +4722,49 @@ export class HomeScene extends Phaser.Scene {
       stripContainer.setX(-scrollX);
     };
 
-    // Drag + wheel scroll. Backdrop owns "tap outside to close",
-    // cardZone swallows taps in the modal padding — we wire the
-    // strip-area hit zone for the scroll gestures so a slot tap
-    // still lands on the slot's own hit zone above it.
+    // Single hit zone for the whole strip area. Tap-to-place,
+    // tap-to-pin, drag-to-scroll and wheel-to-scroll all fan out from
+    // here. Earlier revisions added a separate interactive zone per
+    // slot AND a separate interactive star per pin, then tried to
+    // out-depth `stripHit` so the slot/star events would fire first
+    // — but Phaser's input dispatch inside Containers is brittle when
+    // multiple interactives overlap (see the harvest-chip comment near
+    // line 2010 for the same caveat). Routing every gesture through
+    // a single zone here removes the depth race entirely: pointerup
+    // resolves which slot or pin star was tapped from the pointer
+    // position and runs the matching action.
     //
-    // CRITICAL: Phaser sorts input hit-testing inside a Container by
-    // child insertion order, not by `setDepth()`. So even though the
-    // slot hit zones live at depth 205 and this zone at depth 203,
-    // whichever was added LAST to `container` ends up topmost. We
-    // therefore add stripHit FIRST and `bringToTop(stripContainer)`
-    // afterwards so slot taps reach commitPlacement instead of being
-    // swallowed by the scroll handler.
+    // `renderedSlots` is rebuilt every renderSlots() call (tab change,
+    // pin toggle) so the hit-test data stays in sync with what the
+    // player sees on screen.
+    interface SlotHit {
+      cx: number;
+      cy: number;
+      halfW: number;
+      halfH: number;
+      pinCx: number;
+      pinCy: number;
+      pinHalfW: number;
+      pinHalfH: number;
+      kind: Types.BuildingKind;
+      placeable: boolean;
+      denyReason: string | null;
+    }
+    let renderedSlots: SlotHit[] = [];
     const stripHit = this.add
       .zone(ox + stripPadX, stripTop, viewportW, stripH)
       .setOrigin(0, 0)
-      .setDepth(203)
+      .setDepth(DEPTHS.pickerStripScroll)
       .setInteractive();
     container.add(stripHit);
-    container.bringToTop(stripContainer);
     let dragStartX = 0;
     let dragStartScroll = 0;
     let dragging = false;
     let dragMoved = false;
+    // 10 px is generous enough for finger jitter on touch (4 px was
+    // killing legitimate taps once the user's thumb settled) but tight
+    // enough that an actual scroll gesture still cancels the place.
+    const DRAG_THRESHOLD_PX = 10;
     stripHit.on('pointerdown', (p: Phaser.Input.Pointer) => {
       dragging = true;
       dragMoved = false;
@@ -4754,11 +4774,45 @@ export class HomeScene extends Phaser.Scene {
     stripHit.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!dragging || !p.isDown) return;
       const dx = p.x - dragStartX;
-      if (Math.abs(dx) > 4) dragMoved = true;
-      setScroll(dragStartScroll - dx);
+      if (Math.abs(dx) > DRAG_THRESHOLD_PX) dragMoved = true;
+      if (dragMoved) setScroll(dragStartScroll - dx);
     });
-    stripHit.on('pointerup', () => {
+    const handleStripTap = (p: Phaser.Input.Pointer): void => {
+      // Convert the pointer's world x into stripContainer-local x.
+      // stripContainer is offset by setX(-scrollX), so local = world + scrollX.
+      const localX = p.x + scrollX;
+      const localY = p.y;
+      for (const s of renderedSlots) {
+        // Pin-star bounds are checked first — the star sits inside the
+        // slot's footprint, so a slot-bounds check would always win.
+        if (
+          Math.abs(localX - s.pinCx) <= s.pinHalfW &&
+          Math.abs(localY - s.pinCy) <= s.pinHalfH
+        ) {
+          if (pinned.has(s.kind)) pinned.delete(s.kind);
+          else pinned.add(s.kind);
+          persistPinnedKinds(pinned);
+          renderSlots();
+          return;
+        }
+        if (
+          Math.abs(localX - s.cx) <= s.halfW &&
+          Math.abs(localY - s.cy) <= s.halfH
+        ) {
+          if (!s.placeable) {
+            this.flashToast(s.denyReason!);
+            return;
+          }
+          void this.commitPlacement(s.kind, tx, ty);
+          return;
+        }
+      }
+    };
+    stripHit.on('pointerup', (p: Phaser.Input.Pointer) => {
+      const wasDrag = dragMoved;
       dragging = false;
+      if (wasDrag) return;
+      handleStripTap(p);
     });
     stripHit.on('pointerupoutside', () => {
       dragging = false;
@@ -4780,8 +4834,9 @@ export class HomeScene extends Phaser.Scene {
     const renderSlots = (): void => {
       // Wipe the previous render — pinned toggle / tab change reuse
       // this same function instead of destroying + reopening the
-      // whole picker.
+      // whole picker. Hit-test data is rebuilt to match.
       stripContainer.removeAll(true);
+      renderedSlots = [];
       const filtered = kinds.filter((k) => {
         if (activeCat === 'all') return true;
         if (activeCat === 'pinned') return pinned.has(k);
@@ -4909,71 +4964,38 @@ export class HomeScene extends Phaser.Scene {
       ).setOrigin(0.5);
       stripContainer.add(costText);
 
-      // Slot hit zone sits ABOVE the strip-scroll hit zone (depth
-      // 205 vs 203) so a tap on the slot lands here, not on the
-      // pan handler. Drag still scrolls — see dragMoved guard
-      // below: a drag that moved more than 4 px cancels the click
-      // so the user never accidentally builds while panning.
-      const hit = this.add
-        .zone(cx, cy, slotW - 8, slotH - 8)
-        .setOrigin(0.5)
-        .setDepth(DEPTHS.pickerSlotHit)
-        .setInteractive({ useHandCursor: placeable });
-      hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
-        // Mirror the strip drag detector — the slot zone catches
-        // pointerdown first, so seed the same start state.
-        dragStartX = p.x;
-        dragStartScroll = scrollX;
-        dragMoved = false;
-      });
-      hit.on('pointermove', (p: Phaser.Input.Pointer) => {
-        if (!p.isDown) return;
-        const dx = p.x - dragStartX;
-        if (Math.abs(dx) > 4) {
-          dragMoved = true;
-          setScroll(dragStartScroll - dx);
-        }
-      });
-      hit.on('pointerup', () => {
-        if (dragMoved) return;
-        if (!placeable) {
-          this.flashToast(denyReason!);
-          return;
-        }
-        void this.commitPlacement(kind, tx, ty);
-      });
-      stripContainer.add(hit);
-
-      // Pin star — top-right of the slot. Toggles localStorage and
-      // re-renders the strip so the pinned kind floats to the front
-      // of the current tab. Star renders gold when pinned, faint
-      // grey when not.
+      // Pin star — top-right of the slot. Drawn here, but the tap is
+      // detected by stripHit's pointerup via renderedSlots (see the
+      // SlotHit registration below) so we don't have to fight Phaser's
+      // container input dispatch with a separate interactive zone.
       const isPinned = pinned.has(kind);
+      const starX = cx + slotW / 2 - 14;
+      const starY = cy - slotH / 2 + 6;
       const star = crispText(
         this,
-        cx + slotW / 2 - 14,
-        cy - slotH / 2 + 6,
+        starX,
+        starY,
         isPinned ? '★' : '☆',
         labelTextStyle(14, isPinned ? COLOR.textGold : '#7d8a6e'),
-      )
-        .setOrigin(0.5, 0)
-        .setDepth(DEPTHS.pickerSlotControl)
-        .setInteractive({ useHandCursor: true });
-      star.on('pointerdown', (
-        _p: Phaser.Input.Pointer,
-        _lx: number,
-        _ly: number,
-        e: Phaser.Types.Input.EventData,
-      ) => {
-        // Stop propagation so the slot's tap-to-place doesn't also
-        // fire when the player toggles a pin.
-        e?.stopPropagation?.();
-        if (pinned.has(kind)) pinned.delete(kind);
-        else pinned.add(kind);
-        persistPinnedKinds(pinned);
-        renderSlots();
-      });
+      ).setOrigin(0.5, 0);
       stripContainer.add(star);
+
+      // Hit-test geometry for stripHit's pointerup. The pin star uses
+      // a slightly oversized box so a slightly off-target tap on the
+      // small glyph still toggles the pin instead of placing.
+      renderedSlots.push({
+        cx,
+        cy,
+        halfW: (slotW - 8) / 2,
+        halfH: (slotH - 8) / 2,
+        pinCx: starX,
+        pinCy: starY + 8,
+        pinHalfW: 14,
+        pinHalfH: 14,
+        kind,
+        placeable,
+        denyReason,
+      });
     };
 
     renderSlots();
