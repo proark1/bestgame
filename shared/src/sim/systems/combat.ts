@@ -386,6 +386,10 @@ export function combatSystem(
       // makes both sides authoritative without a second branch.
       if (u.owner === b.owner) continue;
       if (beh?.antiAirOnly && !unitStatsFor(u).canFly) continue;
+      // groundOnly: ground-mounted traps (DungeonTrap, RootSnare)
+      // can't catch flyers. Mirror of antiAirOnly so Bee-faction
+      // flight is the genuine counter to early-tier defender traps.
+      if (beh?.groundOnly && unitStatsFor(u).canFly) continue;
       const reachable =
         u.layer === b.layer || (b.spans && b.spans.includes(u.layer));
       if (!reachable) continue;
@@ -432,6 +436,9 @@ export function combatSystem(
         // for SporeTower + splash variant; AcidSpitter has no
         // antiAirOnly, so this just stays permissive).
         if (beh.antiAirOnly && !unitStatsFor(u).canFly) continue;
+        // Same gate for ground-only buildings — splash from a trap
+        // doesn't suddenly snare a passing flyer.
+        if (beh.groundOnly && unitStatsFor(u).canFly) continue;
         const d2 = dist2(u.x, u.y, primary.x, primary.y);
         if (d2 <= splashSq) {
           u.hp = sub(u.hp, effectiveDamage);

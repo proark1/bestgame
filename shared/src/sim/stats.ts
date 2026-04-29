@@ -527,15 +527,24 @@ export interface BuildingBehavior {
   // lay a burn back onto the attacker. Same shape as UnitBehavior.
   reflectBurnTicks?: number;
   reflectBurnDamagePerTick?: number; // Fixed HP per tick
+  // Ground-only: building cannot acquire flying targets. Mirror of
+  // antiAirOnly. Used for trap-class buildings (DungeonTrap,
+  // RootSnare) so the Bee faction's flight identity actually
+  // counters traps the way the design implies.
+  groundOnly?: boolean;
 }
 
 export const BUILDING_BEHAVIOR: Partial<Record<BuildingKind, BuildingBehavior>> = {
   AcidSpitter: { splashRadius: fromFloat(1.4) },
   SporeTower: { antiAirOnly: true },
   HiddenStinger: { stealth: true },
+  // Ground traps. Floor-mounted, so flyers (the Bee faction's
+  // signature movement) bypass them entirely.
+  DungeonTrap: { groundOnly: true },
   RootSnare: {
     rootTicks: 60, // 2 seconds
     singleUse: true,
+    groundOnly: true,
   },
   SpiderNest: {
     spawnIntervalTicks: 120, // ~4 seconds
