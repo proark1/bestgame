@@ -28,7 +28,15 @@ export type UnitKind =
   | 'MiniScarab'
   // Defender-side unit spawned by SpiderNest during a raid. Not in the
   // player's deployable roster — the combat system owns its lifecycle.
-  | 'NestSpider';
+  | 'NestSpider'
+  // Bee-faction MVP. First non-Ant attacker units; faction tag is purely
+  // codex/visual today (sim treats them as ordinary units), but the
+  // type-union slot lets us evolve faction-asymmetric mechanics
+  // (e.g. swarm bonuses, hive-aura passives) without a new union edit.
+  // HoneyBee: cheap fast flyer, mid damage, no anti-armor.
+  // HiveDrone: heavy flying tank, slow, high HP, splash on landing.
+  | 'HoneyBee'
+  | 'HiveDrone';
 
 // A live unit inside a running sim. Positions are Fixed (Q16.16) in world
 // sub-tile coordinates; the grid is 16x12 tiles so values stay small.
@@ -123,6 +131,11 @@ export interface Unit {
   // so the buff doesn't re-apply each tick. The bonus also
   // outlives the hero — leaving the radius doesn't shrink HP.
   auraHpBonusApplied?: number;
+  // Spider faction signature: latched once the unit's first attack
+  // resolves. Bonus is applied at attack time then this flag
+  // suppresses it for the rest of the unit's lifetime. Optional so
+  // pre-existing replays without the field deserialise unchanged.
+  firstHitFired?: boolean;
 }
 
 export interface UnitStats {
@@ -134,3 +147,16 @@ export interface UnitStats {
   canFly: boolean;
   canDig: boolean;
 }
+
+// Per-unit active ability scaffold. Heroes own auras (passive radial
+// buffs); regular units have no on-tap ability today. This type is the
+// landing zone — once a sim system wires the `triggerAbility` SimInput
+// (see pheromone.ts), kinds listed here become tap-to-fire.
+//
+// The names here are the design-locked verbs; balance numbers live in
+// UNIT_ABILITIES (shared/src/sim/stats.ts) once any ability ships.
+export type UnitAbilityKind =
+  | 'detonate'        // BombBeetle: burst-damage to all in radius, kills self
+  | 'webThrow'        // WebSetter: roots a target tile for N ticks
+  | 'leap'            // Jumper: skip past one wall tile
+  | 'igniteRing';     // FireAnt: lay a burn pool on current tile

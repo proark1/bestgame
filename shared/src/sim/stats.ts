@@ -196,6 +196,32 @@ export const UNIT_STATS: Record<UnitKind, UnitStats> = {
     canFly: false,
     canDig: false,
   },
+  // Bee-faction MVP. HoneyBee is a fast cheap flyer — fills the early
+  // Bee curve like SoldierAnt does for Ants but with flight, trading
+  // HP for path freedom. Tuned just under Wasp on damage so Bee
+  // strategies still favor swarm volume over single-bee finishes.
+  HoneyBee: {
+    hpMax: fromInt(22),
+    speed: fromFloat(0.11),
+    attackRange: fromFloat(0.7),
+    attackDamage: fromInt(4),
+    attackCooldownTicks: 22,
+    canFly: true,
+    canDig: false,
+  },
+  // Heavy flying tank — slow, high HP, melee. Acts as the Bee equivalent
+  // of HoneyTank with a flight bypass. No anti-armor splash today; the
+  // ability scaffold (UnitAbilityKind detonate) is the future hook for a
+  // rotor-blade splash on death.
+  HiveDrone: {
+    hpMax: fromInt(95),
+    speed: fromFloat(0.05),
+    attackRange: fromFloat(0.8),
+    attackDamage: fromInt(9),
+    attackCooldownTicks: 34,
+    canFly: true,
+    canDig: false,
+  },
 };
 
 // Extended per-unit behavior flags that don't fit neatly into UnitStats.
@@ -211,6 +237,11 @@ export interface UnitBehavior {
   // Termite: multiplier applied when the target is a building. 200 =
   // 2× damage. Applied on top of the per-level stat percent.
   vsBuildingPercent?: number;
+  // Beetle faction signature: damage multiplier applied ONLY when the
+  // target is a wall (LeafWall / ThornHedge). 125 = +25% damage.
+  // Stacks multiplicatively with vsBuildingPercent so a future
+  // hybrid kind (e.g. a Termite-Beetle) compounds correctly.
+  vsWallPercent?: number;
   // Scarab: kind + count of units spawned at death. Spawned unit is
   // owner=0 (attacker-side) for a Scarab death.
   deathSpawnKind?: UnitKind;
@@ -219,6 +250,19 @@ export interface UnitBehavior {
   // upgrade catalog. Used for MiniScarab (not directly summonable) and
   // NestSpider (defender AI, never in the attacker's hand).
   hiddenFromRoster?: boolean;
+  // Detonate-on-death: when this unit's hp drops to 0, apply splash
+  // damage to enemies in radius. Mirrors building splash (AcidSpitter)
+  // for unit deaths. Applied once per death — combat tags the corpse
+  // with `detonated` so a re-cull pass can't double-fire. BombBeetle
+  // is the canonical case (kamikaze sapper).
+  detonateRadius?: Fixed;     // Fixed tiles
+  detonateDamage?: Fixed;     // Fixed HP
+  // Spider faction signature: bonus damage on the unit's FIRST
+  // attack ever (not per-target). 150 = +50% on the first hit.
+  // Rewards positioning — the player chooses where the first
+  // strike lands. Combat sets u.firstHitFired the tick the bonus
+  // fires so it can't apply again over the unit's lifetime.
+  firstHitBonusPercent?: number;
 }
 
 export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
@@ -226,18 +270,44 @@ export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
     burnTicks: 90, // 3 seconds at 30 Hz
     burnDamagePerTick: fromInt(1),
   },
+  // BombBeetle keeps its 25-dmg attack pattern. New: when killed, it
+  // detonates — splash to enemies within ~1.5 tiles. The on-death
+  // handler in combat.ts iterates state.units and state.buildings
+  // once per detonation, so list order stays the same and the gate
+  // is deterministic.
+  BombBeetle: {
+    detonateRadius: fromFloat(1.5),
+    detonateDamage: fromInt(35),
+    vsWallPercent: 125, // Beetle faction signature: +25% vs walls
+  },
+  // Beetle faction signature: +25% damage when the target is a wall
+  // (LeafWall / ThornHedge). Cements the "Beetles break walls"
+  // identity. Spread across every Beetle-faction kind so the
+  // mechanic reads as a faction rule, not a one-unit tag.
+  ShieldBeetle: { vsWallPercent: 125 },
+  Roller: { vsWallPercent: 125 },
+  Mantis: { vsWallPercent: 125 },
   Termite: {
     vsBuildingPercent: 200,
   },
   Scarab: {
     deathSpawnKind: 'MiniScarab',
     deathSpawnCount: 2,
+    vsWallPercent: 125,
   },
   MiniScarab: {
     hiddenFromRoster: true,
+    vsWallPercent: 125,
   },
+  // Spider faction signature: +50% damage on the unit's FIRST hit.
+  // One-shot bonus, fires once per unit lifetime. Pairs with the
+  // ambush path modifier — pause to set up, then crit on contact.
+  Jumper: { firstHitBonusPercent: 150 },
+  WebSetter: { firstHitBonusPercent: 150 },
+  Ambusher: { firstHitBonusPercent: 150 },
   NestSpider: {
     hiddenFromRoster: true,
+    firstHitBonusPercent: 150,
   },
 };
 
@@ -470,15 +540,24 @@ export interface BuildingBehavior {
   // lay a burn back onto the attacker. Same shape as UnitBehavior.
   reflectBurnTicks?: number;
   reflectBurnDamagePerTick?: number; // Fixed HP per tick
+  // Ground-only: building cannot acquire flying targets. Mirror of
+  // antiAirOnly. Used for trap-class buildings (DungeonTrap,
+  // RootSnare) so the Bee faction's flight identity actually
+  // counters traps the way the design implies.
+  groundOnly?: boolean;
 }
 
 export const BUILDING_BEHAVIOR: Partial<Record<BuildingKind, BuildingBehavior>> = {
   AcidSpitter: { splashRadius: fromFloat(1.4) },
   SporeTower: { antiAirOnly: true },
   HiddenStinger: { stealth: true },
+  // Ground traps. Floor-mounted, so flyers (the Bee faction's
+  // signature movement) bypass them entirely.
+  DungeonTrap: { groundOnly: true },
   RootSnare: {
     rootTicks: 60, // 2 seconds
     singleUse: true,
+    groundOnly: true,
   },
   SpiderNest: {
     spawnIntervalTicks: 120, // ~4 seconds

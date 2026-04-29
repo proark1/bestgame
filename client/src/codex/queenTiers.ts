@@ -16,7 +16,7 @@ export const QUEEN_UNLOCKS_BY_TIER: Record<
 > = {
   2: {
     buildings: ['PebbleBunker', 'DungeonTrap', 'TunnelJunction', 'AcidSpitter', 'SporeTower'],
-    units: ['FireAnt'],
+    units: ['FireAnt', 'HoneyBee'],
   },
   3: {
     buildings: ['RootSnare', 'HiddenStinger'],
@@ -24,7 +24,7 @@ export const QUEEN_UNLOCKS_BY_TIER: Record<
   },
   4: {
     buildings: ['SpiderNest', 'ThornHedge', 'AphidFarm'],
-    units: ['Mantis'],
+    units: ['Mantis', 'HiveDrone'],
   },
   5: {
     buildings: [],
@@ -41,6 +41,8 @@ export const QUEEN_TIER_UNIT_LABELS: Partial<Record<Types.UnitKind, string>> = {
   Dragonfly: 'Dragonfly',
   Mantis: 'Mantis',
   Scarab: 'Scarab',
+  HoneyBee: 'Honey Bee',
+  HiveDrone: 'Hive Drone',
 };
 
 export const QUEEN_TIER_BUILDING_LABELS: Partial<Record<Types.BuildingKind, string>> = {

@@ -152,6 +152,11 @@ export const UNIT_UNLOCK_QUEEN_LEVEL: Partial<Record<Types.UnitKind, number>> = 
   Dragonfly: 3,
   Mantis: 4,
   Scarab: 5,
+  // Bee faction (MVP): HoneyBee is the early-tier flyer that gives
+  // the player flight before they unlock Wasp upgrades; HiveDrone is
+  // the mid-tier flying tank, parallel to HoneyTank's land role.
+  HoneyBee: 2,
+  HiveDrone: 4,
 };
 
 // Hidden-from-roster units: summoned by behaviors, not by the player.

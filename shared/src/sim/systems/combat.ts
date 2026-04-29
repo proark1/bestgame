@@ -233,6 +233,25 @@ export function combatSystem(
       if (ub?.vsBuildingPercent) {
         dmg = scaleFixedByPercent(dmg, ub.vsBuildingPercent);
       }
+      // Beetle faction signature: +25% vs wall buildings. Stacks
+      // multiplicatively after vsBuildingPercent so a future hybrid
+      // kind compounds correctly. Wall set is small + closed:
+      // LeafWall + ThornHedge are the only wall-class buildings.
+      if (
+        ub?.vsWallPercent &&
+        (b.kind === 'LeafWall' || b.kind === 'ThornHedge')
+      ) {
+        dmg = scaleFixedByPercent(dmg, ub.vsWallPercent);
+      }
+      // Spider faction signature: +50% on the unit's FIRST attack
+      // ever. firstHitFired latches the bonus so it can't re-apply
+      // — combat is single-pass per tick so the latch is set on the
+      // same tick the bonus fires. Applied last so it stacks on top
+      // of vsBuilding / vsWall multipliers.
+      if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+        dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+        u.firstHitFired = true;
+      }
       // Hero buildingDamage aura — applies only to building hits, so
       // it lives here rather than in unitStatsFor. StagBeetle's +20%
       // is the canonical case.
@@ -313,7 +332,15 @@ export function combatSystem(
     if (bestIdx < 0) continue;
     const target = state.units[bestIdx]!;
     const pct = levelStatPercent(attackerUnitLevels?.[u.kind]);
-    const dmg = scaleFixedByPercent(stats.attackDamage, pct);
+    let dmg = scaleFixedByPercent(stats.attackDamage, pct);
+    const ub = UNIT_BEHAVIOR[u.kind];
+    // Spider faction signature also fires on attacker spiders hitting
+    // defender units (e.g. an Ambusher whose first contact is a
+    // NestSpider rather than a building). Latched once per lifetime.
+    if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+      dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+      u.firstHitFired = true;
+    }
     target.hp = sub(target.hp, dmg);
     if (target.hp < 0) target.hp = 0;
     u.attackCooldown = applyAttackSpeedBuff(
@@ -323,7 +350,6 @@ export function combatSystem(
     // FireAnt-style burn applied to defender units. Building-side burn
     // lives above in loop 1; this is the unit-side branch that makes
     // FireAnt genuinely useful against a NestSpider swarm.
-    const ub = UNIT_BEHAVIOR[u.kind];
     if (ub?.burnTicks && ub.burnDamagePerTick) {
       target.burnTicks = Math.max(target.burnTicks ?? 0, ub.burnTicks);
       target.burnDamagePerTick = Math.max(
@@ -376,6 +402,10 @@ export function combatSystem(
       // makes both sides authoritative without a second branch.
       if (u.owner === b.owner) continue;
       if (beh?.antiAirOnly && !unitStatsFor(u).canFly) continue;
+      // groundOnly: ground-mounted traps (DungeonTrap, RootSnare)
+      // can't catch flyers. Mirror of antiAirOnly so Bee-faction
+      // flight is the genuine counter to early-tier defender traps.
+      if (beh?.groundOnly && unitStatsFor(u).canFly) continue;
       const reachable =
         u.layer === b.layer || (b.spans && b.spans.includes(u.layer));
       if (!reachable) continue;
@@ -422,6 +452,9 @@ export function combatSystem(
         // for SporeTower + splash variant; AcidSpitter has no
         // antiAirOnly, so this just stays permissive).
         if (beh.antiAirOnly && !unitStatsFor(u).canFly) continue;
+        // Same gate for ground-only buildings — splash from a trap
+        // doesn't suddenly snare a passing flyer.
+        if (beh.groundOnly && unitStatsFor(u).canFly) continue;
         const d2 = dist2(u.x, u.y, primary.x, primary.y);
         if (d2 <= splashSq) {
           u.hp = sub(u.hp, effectiveDamage);
@@ -497,7 +530,16 @@ export function combatSystem(
       continue;
     }
     if (u.attackCooldown === 0) {
-      target.hp = sub(target.hp, stats.attackDamage);
+      let dmg = stats.attackDamage;
+      // Spider faction signature also applies to defender-side
+      // NestSpiders attacking attackers. firstHitFired latches the
+      // bonus once per spider lifetime.
+      const ub = UNIT_BEHAVIOR[u.kind];
+      if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+        dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+        u.firstHitFired = true;
+      }
+      target.hp = sub(target.hp, dmg);
       if (target.hp < 0) target.hp = 0;
       u.attackCooldown = stats.attackCooldownTicks;
     }
@@ -605,6 +647,55 @@ export function combatSystem(
     // spawning in the same tick respect each other's max-alive gate.
     aliveByOwnerKind[b.owner][beh.spawnKind] = aliveCount + 1;
     b.spawnCooldown = beh.spawnIntervalTicks;
+  }
+
+  // -------------------------------------------------------------------
+  // 5a. Detonate-on-death (BombBeetle). Runs BEFORE death-spawn so a
+  // hypothetical future "explodes-and-spawns" hybrid (Scarab + bomb)
+  // would resolve in the right order. Each corpse fires once: the
+  // `detonated` flag stops a re-cull pass from re-applying splash if
+  // step.ts skipped culling for any reason.
+  //
+  // Splash hits both enemy units and enemy buildings within radius,
+  // mirroring AcidSpitter's splash-on-firing semantics. Owner filter
+  // is RELATIVE to the dying unit so attacker-side bombs hit defender
+  // assets and arena-mirror bombs hit the opposite slot.
+  // -------------------------------------------------------------------
+  for (let i = 0; i < state.units.length; i++) {
+    const u = state.units[i] as Unit & { detonated?: boolean };
+    if (u.hp > 0) continue;
+    if (u.detonated) continue;
+    const beh = UNIT_BEHAVIOR[u.kind];
+    if (!beh?.detonateRadius || !beh.detonateDamage) continue;
+    u.detonated = true;
+    const radSq = mul(beh.detonateRadius, beh.detonateRadius);
+    // Splash on enemy units.
+    for (let j = 0; j < state.units.length; j++) {
+      const t = state.units[j]!;
+      if (t.hp <= 0 || t.owner === u.owner) continue;
+      if (dist2(u.x, u.y, t.x, t.y) <= radSq) {
+        t.hp = sub(t.hp, beh.detonateDamage);
+        if (t.hp < 0) t.hp = 0;
+      }
+    }
+    // Splash on enemy buildings.
+    for (let bi = 0; bi < state.buildings.length; bi++) {
+      const tb = state.buildings[bi]!;
+      if (tb.hp <= 0 || tb.owner === u.owner) continue;
+      const bcx = buildingCenterX(tb);
+      const bcy = buildingCenterY(tb);
+      if (dist2(u.x, u.y, bcx, bcy) <= radSq) {
+        tb.hp = sub(tb.hp, beh.detonateDamage);
+        if (tb.hp < 0) tb.hp = 0;
+        if (tb.hp <= 0) {
+          const bstats = BUILDING_STATS[tb.kind];
+          state.attackerSugarLooted += bstats.dropsSugarOnDestroy;
+          state.attackerLeafBitsLooted += bstats.dropsLeafBitsOnDestroy;
+          state.buildingsDestroyedThisTick =
+            (state.buildingsDestroyedThisTick ?? 0) + 1;
+        }
+      }
+    }
   }
 
   // -------------------------------------------------------------------
