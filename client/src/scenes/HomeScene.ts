@@ -4725,14 +4725,22 @@ export class HomeScene extends Phaser.Scene {
     // Drag + wheel scroll. Backdrop owns "tap outside to close",
     // cardZone swallows taps in the modal padding — we wire the
     // strip-area hit zone for the scroll gestures so a slot tap
-    // still lands on the slot's own hit zone (depth 205, above
-    // this zone at 203).
+    // still lands on the slot's own hit zone above it.
+    //
+    // CRITICAL: Phaser sorts input hit-testing inside a Container by
+    // child insertion order, not by `setDepth()`. So even though the
+    // slot hit zones live at depth 205 and this zone at depth 203,
+    // whichever was added LAST to `container` ends up topmost. We
+    // therefore add stripHit FIRST and `bringToTop(stripContainer)`
+    // afterwards so slot taps reach commitPlacement instead of being
+    // swallowed by the scroll handler.
     const stripHit = this.add
       .zone(ox + stripPadX, stripTop, viewportW, stripH)
       .setOrigin(0, 0)
       .setDepth(203)
       .setInteractive();
     container.add(stripHit);
+    container.bringToTop(stripContainer);
     let dragStartX = 0;
     let dragStartScroll = 0;
     let dragging = false;
