@@ -297,8 +297,16 @@ export function registerRaid(app: FastifyInstance): void {
         // Nemesis stamp: on a 2+ star loss, the attacker becomes the
         // defender's nemesis. Stars < 2 don't reset an existing stamp
         // — a single 1-star raid shouldn't displace a genuine rivalry.
+        //
+        // Daily defender chest: a successful defense (attacker scored
+        // <3 stars) bumps the chest 10%, capped at 100. The first fill
+        // on a new UTC day resets progress to 0 first — this catches
+        // players who don't open /me between defenses across the day
+        // boundary (otherwise an unclaimed 100% chest would carry over
+        // and break the daily cadence).
         const shieldHours = shieldHoursForStars(stars);
         const stampNemesis = stars >= 2;
+        const chestQualifies = stars < 3;
         await client.query(
           `UPDATE players
               SET trophies  = GREATEST(0, trophies + $2),
@@ -314,9 +322,28 @@ export function registerRaid(app: FastifyInstance): void {
                   nemesis_player_id = CASE WHEN $6 THEN $7::uuid ELSE nemesis_player_id END,
                   nemesis_stars     = CASE WHEN $6 THEN $8::int  ELSE nemesis_stars END,
                   nemesis_set_at    = CASE WHEN $6 THEN NOW()    ELSE nemesis_set_at END,
-                  nemesis_avenged   = CASE WHEN $6 THEN FALSE    ELSE nemesis_avenged END
+                  nemesis_avenged   = CASE WHEN $6 THEN FALSE    ELSE nemesis_avenged END,
+                  chest_progress = CASE
+                    WHEN NOT $9 THEN chest_progress
+                    WHEN chest_day <> (NOW() AT TIME ZONE 'UTC')::DATE THEN 10
+                    ELSE LEAST(100, chest_progress + 10)
+                  END,
+                  chest_day = CASE
+                    WHEN $9 THEN (NOW() AT TIME ZONE 'UTC')::DATE
+                    ELSE chest_day
+                  END
             WHERE id = $1`,
-          [defenderId, delta.def, sugarLooted, leafLooted, shieldHours, stampNemesis, attackerId, stars],
+          [
+            defenderId,
+            delta.def,
+            sugarLooted,
+            leafLooted,
+            shieldHours,
+            stampNemesis,
+            attackerId,
+            stars,
+            chestQualifies,
+          ],
         );
       }
 

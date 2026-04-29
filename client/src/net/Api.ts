@@ -146,6 +146,16 @@ export interface PlayerState {
     startHour: number | null;
     lengthHours: number;
   };
+  // Defender daily chest (migrations/0027). Fills 10% per defense
+  // where the attacker scored <3 stars; claim at 100% for a fixed
+  // sugar+leaf reward; resets at UTC midnight. Optional so older
+  // servers keep working — HUD treats absent as 0%.
+  chest?: {
+    progress: number;
+    claimable: boolean;
+    rewardSugar: number;
+    rewardLeafBits: number;
+  };
 }
 
 export interface DailyQuestState {
@@ -1060,6 +1070,20 @@ export class Api {
     const res = await this.authedFetch('/player/comeback/claim', { method: 'POST' });
     if (!res.ok) throw await errorFromResponse(res, 'comeback/claim');
     return (await res.json()) as Awaited<ReturnType<Api['claimComeback']>>;
+  }
+
+  // Daily defender chest claim. 409 when chest isn't full (the server
+  // also passively resets a stale-day chest in the same call so a
+  // second tap on a new UTC day shows progress=0).
+  async claimDefenderChest(): Promise<{
+    ok: true;
+    reward: { sugar: number; leafBits: number };
+    wallet: { sugar: number; leafBits: number };
+    chest: { progress: number; claimable: boolean; rewardSugar: number; rewardLeafBits: number };
+  }> {
+    const res = await this.authedFetch('/player/chest/claim', { method: 'POST' });
+    if (!res.ok) throw await errorFromResponse(res, 'chest/claim');
+    return (await res.json()) as Awaited<ReturnType<Api['claimDefenderChest']>>;
   }
 
   async getNemesis(): Promise<{
