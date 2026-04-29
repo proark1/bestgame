@@ -608,6 +608,55 @@ export function combatSystem(
   }
 
   // -------------------------------------------------------------------
+  // 5a. Detonate-on-death (BombBeetle). Runs BEFORE death-spawn so a
+  // hypothetical future "explodes-and-spawns" hybrid (Scarab + bomb)
+  // would resolve in the right order. Each corpse fires once: the
+  // `detonated` flag stops a re-cull pass from re-applying splash if
+  // step.ts skipped culling for any reason.
+  //
+  // Splash hits both enemy units and enemy buildings within radius,
+  // mirroring AcidSpitter's splash-on-firing semantics. Owner filter
+  // is RELATIVE to the dying unit so attacker-side bombs hit defender
+  // assets and arena-mirror bombs hit the opposite slot.
+  // -------------------------------------------------------------------
+  for (let i = 0; i < state.units.length; i++) {
+    const u = state.units[i] as Unit & { detonated?: boolean };
+    if (u.hp > 0) continue;
+    if (u.detonated) continue;
+    const beh = UNIT_BEHAVIOR[u.kind];
+    if (!beh?.detonateRadius || !beh.detonateDamage) continue;
+    u.detonated = true;
+    const radSq = mul(beh.detonateRadius, beh.detonateRadius);
+    // Splash on enemy units.
+    for (let j = 0; j < state.units.length; j++) {
+      const t = state.units[j]!;
+      if (t.hp <= 0 || t.owner === u.owner) continue;
+      if (dist2(u.x, u.y, t.x, t.y) <= radSq) {
+        t.hp = sub(t.hp, beh.detonateDamage);
+        if (t.hp < 0) t.hp = 0;
+      }
+    }
+    // Splash on enemy buildings.
+    for (let bi = 0; bi < state.buildings.length; bi++) {
+      const tb = state.buildings[bi]!;
+      if (tb.hp <= 0 || tb.owner === u.owner) continue;
+      const bcx = buildingCenterX(tb);
+      const bcy = buildingCenterY(tb);
+      if (dist2(u.x, u.y, bcx, bcy) <= radSq) {
+        tb.hp = sub(tb.hp, beh.detonateDamage);
+        if (tb.hp < 0) tb.hp = 0;
+        if (tb.hp <= 0) {
+          const bstats = BUILDING_STATS[tb.kind];
+          state.attackerSugarLooted += bstats.dropsSugarOnDestroy;
+          state.attackerLeafBitsLooted += bstats.dropsLeafBitsOnDestroy;
+          state.buildingsDestroyedThisTick =
+            (state.buildingsDestroyedThisTick ?? 0) + 1;
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------
   // 5. Death-spawn: Scarab → MiniScarabs.
   //
   // Iterate units that died this tick (hp <= 0) and whose kind has

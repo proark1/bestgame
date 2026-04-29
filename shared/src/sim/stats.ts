@@ -245,12 +245,28 @@ export interface UnitBehavior {
   // upgrade catalog. Used for MiniScarab (not directly summonable) and
   // NestSpider (defender AI, never in the attacker's hand).
   hiddenFromRoster?: boolean;
+  // Detonate-on-death: when this unit's hp drops to 0, apply splash
+  // damage to enemies in radius. Mirrors building splash (AcidSpitter)
+  // for unit deaths. Applied once per death — combat tags the corpse
+  // with `detonated` so a re-cull pass can't double-fire. BombBeetle
+  // is the canonical case (kamikaze sapper).
+  detonateRadius?: Fixed;     // Fixed tiles
+  detonateDamage?: Fixed;     // Fixed HP
 }
 
 export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
   FireAnt: {
     burnTicks: 90, // 3 seconds at 30 Hz
     burnDamagePerTick: fromInt(1),
+  },
+  // BombBeetle keeps its 25-dmg attack pattern. New: when killed, it
+  // detonates — splash to enemies within ~1.5 tiles. The on-death
+  // handler in combat.ts iterates state.units and state.buildings
+  // once per detonation, so list order stays the same and the gate
+  // is deterministic.
+  BombBeetle: {
+    detonateRadius: fromFloat(1.5),
+    detonateDamage: fromInt(35),
   },
   Termite: {
     vsBuildingPercent: 200,
