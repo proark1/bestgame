@@ -509,6 +509,20 @@ export function registerPlayer(app: FastifyInstance): void {
           ],
         );
       }
+
+      // Source-of-truth check for "did chest_day roll over since the
+      // last write?". Done in Postgres so the comparison uses the
+      // same clock that stamps chest_day on raid/submit and
+      // chest/claim — avoids a Node↔Postgres skew window at UTC
+      // midnight where one side reads "today" and the other reads
+      // "yesterday".
+      const chestFreshQ = await client.query<{ fresh: boolean }>(
+        `SELECT chest_day = (NOW() AT TIME ZONE 'UTC')::DATE AS fresh
+           FROM players WHERE id = $1`,
+        [playerId],
+      );
+      const chestFresh = !!chestFreshQ.rows[0]?.fresh;
+
       await client.query('COMMIT');
 
       return {
@@ -618,19 +632,16 @@ export function registerPlayer(app: FastifyInstance): void {
           // Defender daily chest. Display progress is 0% on a new
           // UTC day even if the DB still holds yesterday's value —
           // the next qualifying defense will catch up the row.
-          chest: (() => {
-            const todayUtc = new Date().toISOString().slice(0, 10);
-            const chestDayUtc = player.chest_day
-              ? new Date(player.chest_day).toISOString().slice(0, 10)
-              : todayUtc;
-            const progress = chestDayUtc === todayUtc ? player.chest_progress : 0;
-            return {
-              progress,
-              claimable: progress >= 100,
-              rewardSugar: 500,
-              rewardLeafBits: 200,
-            };
-          })(),
+          // Freshness is computed by Postgres (same clock that
+          // stamps chest_day on writes) so a Node↔Postgres skew
+          // around UTC midnight can't show a just-bumped chest as
+          // stale or vice-versa.
+          chest: {
+            progress: chestFresh ? player.chest_progress : 0,
+            claimable: chestFresh && player.chest_progress >= 100,
+            rewardSugar: 500,
+            rewardLeafBits: 200,
+          },
         },
         base: base.snapshot,
         offlineTrickle: {
@@ -2902,10 +2913,18 @@ export function registerPlayer(app: FastifyInstance): void {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const r = await client.query<Pick<PlayerRow,
-        'chest_progress' | 'chest_day' | 'sugar' | 'leaf_bits'
-      >>(
-        `SELECT chest_progress, chest_day, sugar, leaf_bits
+      // Fold the freshness check into the SELECT itself so the
+      // comparison uses Postgres's clock — same source that
+      // /raid/submit and the UPDATE below stamp chest_day with.
+      // A Node↔Postgres skew of even a few hundred ms across the
+      // UTC midnight boundary would otherwise let JS read "today"
+      // while the row still has yesterday's date (or vice-versa).
+      const r = await client.query<{
+        chest_progress: number;
+        fresh: boolean;
+      }>(
+        `SELECT chest_progress,
+                chest_day = (NOW() AT TIME ZONE 'UTC')::DATE AS fresh
            FROM players WHERE id = $1 FOR UPDATE`,
         [playerId],
       );
@@ -2915,14 +2934,12 @@ export function registerPlayer(app: FastifyInstance): void {
         return { error: 'player not found' };
       }
       const row = r.rows[0]!;
-      const todayUtc = new Date().toISOString().slice(0, 10);
-      const chestDayUtc = new Date(row.chest_day).toISOString().slice(0, 10);
-      const liveProgress = chestDayUtc === todayUtc ? row.chest_progress : 0;
+      const liveProgress = row.fresh ? row.chest_progress : 0;
       if (liveProgress < 100) {
         // Still write a passive reset on stale day so the row
         // doesn't carry yesterday's progress forward into the
         // next /me echo. Idempotent on a same-day partial chest.
-        if (chestDayUtc !== todayUtc) {
+        if (!row.fresh) {
           await client.query(
             `UPDATE players
                 SET chest_progress = 0,
