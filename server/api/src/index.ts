@@ -67,14 +67,18 @@ async function start(): Promise<void> {
   // Security headers — defense in depth. We disable CSP because the
   // game's client bundle uses inline styles + dynamic Phaser-built
   // canvas content, and a tight CSP would need scene-by-scene
-  // tuning. The other helmet defaults (X-Frame-Options DENY,
-  // X-Content-Type-Options nosniff, Referrer-Policy, HSTS in prod)
-  // are cheap wins. CORP cross-origin so the static bundle can be
-  // hot-loaded behind Railway's proxy without strict isolation.
+  // tuning. The other helmet defaults (X-Content-Type-Options
+  // nosniff, Referrer-Policy, HSTS in prod) are cheap wins. CORP
+  // cross-origin so the static bundle can be hot-loaded behind
+  // Railway's proxy without strict isolation. frameguard is OFF
+  // because the client explicitly accommodates cross-origin
+  // embedding (FB Instant's wrapper frame — see client/src/main.ts
+  // and the embedder note there); SAMEORIGIN/DENY would block it.
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    frameguard: false,
   });
 
   await app.register(cors, {

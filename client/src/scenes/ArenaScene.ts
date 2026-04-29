@@ -763,19 +763,21 @@ export class ArenaScene extends Phaser.Scene {
 
   // Apply the server's confirmed-input batch for a tick and advance
   // our local sim to match. Hash check catches any client-side drift.
-  // Sanity cap on the per-message confirmed-input batch. Arena lockstep
-  // expects ~one input per tick; a server message carrying thousands
-  // would be either a desync replay or a malicious payload, and the
-  // unbounded Map below would balloon under it. Drop the batch and
-  // log instead of letting it tank the client.
-  private static readonly MAX_CONFIRMED_INPUTS_PER_BATCH = 512;
+  // Sanity threshold on the per-message confirmed-input batch. Arena
+  // lockstep expects ~one input per tick; a server message carrying
+  // thousands would be either a long catch-up after a network hiccup
+  // or a buggy server. We log it (so production telemetry surfaces
+  // the anomaly) but still apply — the server is authoritative in
+  // this architecture, and dropping the batch would leave the client
+  // permanently behind the server's tick counter and break the rest
+  // of the match.
+  private static readonly OVERSIZE_BATCH_WARN = 512;
 
   private applyConfirmedInputs(e: { tick: number; confirmedInputs: Types.SimInput[]; stateHash: string }): void {
-    if (e.confirmedInputs.length > ArenaScene.MAX_CONFIRMED_INPUTS_PER_BATCH) {
+    if (e.confirmedInputs.length > ArenaScene.OVERSIZE_BATCH_WARN) {
       console.warn(
-        `[arena] dropping oversized tickConfirm batch (${e.confirmedInputs.length} inputs)`,
+        `[arena] oversized tickConfirm batch (${e.confirmedInputs.length} inputs); applying anyway to avoid desync`,
       );
-      return;
     }
     // Run each local tick up to the server's tick, applying confirmed
     // inputs at the exact tick the server applied them.
