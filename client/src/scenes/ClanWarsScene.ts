@@ -176,7 +176,7 @@ export class ClanWarsScene extends Phaser.Scene {
       body.container.add(
         crispText(this, originX + maxW / 2 + 60, y + 80,
           `${oppStars}`,
-          displayTextStyle(48, '#ff9a80', 5),
+          displayTextStyle(48, COLOR.redCss, 5),
         ).setOrigin(0, 0.5),
       );
       body.container.add(

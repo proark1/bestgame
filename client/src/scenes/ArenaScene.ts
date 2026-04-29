@@ -100,6 +100,10 @@ export class ArenaScene extends Phaser.Scene {
   // Pheromone trail drawing (same shape as RaidScene).
   private drawingPoints: Array<{ x: number; y: number }> = [];
   private isDrawing = false;
+  // Scratch map reused on every applyConfirmedInputs call so the
+  // tickConfirm hot path doesn't allocate a fresh Map per server
+  // message (~once a tick at 30 Hz). cleared at the top of each call.
+  private byTickScratch: Map<number, Types.SimInput[]> = new Map();
   // Deck rail (added in batch 3) — picker for which unit kind the next
   // drawn pheromone path will deploy. Defaults to SoldierAnt to
   // preserve the pre-rail behaviour. Each card is the kind icon at
@@ -759,10 +763,26 @@ export class ArenaScene extends Phaser.Scene {
 
   // Apply the server's confirmed-input batch for a tick and advance
   // our local sim to match. Hash check catches any client-side drift.
+  // Sanity threshold on the per-message confirmed-input batch. Arena
+  // lockstep expects ~one input per tick; a server message carrying
+  // thousands would be either a long catch-up after a network hiccup
+  // or a buggy server. We log it (so production telemetry surfaces
+  // the anomaly) but still apply — the server is authoritative in
+  // this architecture, and dropping the batch would leave the client
+  // permanently behind the server's tick counter and break the rest
+  // of the match.
+  private static readonly OVERSIZE_BATCH_WARN = 512;
+
   private applyConfirmedInputs(e: { tick: number; confirmedInputs: Types.SimInput[]; stateHash: string }): void {
+    if (e.confirmedInputs.length > ArenaScene.OVERSIZE_BATCH_WARN) {
+      console.warn(
+        `[arena] oversized tickConfirm batch (${e.confirmedInputs.length} inputs); applying anyway to avoid desync`,
+      );
+    }
     // Run each local tick up to the server's tick, applying confirmed
     // inputs at the exact tick the server applied them.
-    const byTick = new Map<number, Types.SimInput[]>();
+    const byTick = this.byTickScratch;
+    byTick.clear();
     for (const inp of e.confirmedInputs) {
       const list = byTick.get(inp.tick) ?? [];
       list.push(inp);

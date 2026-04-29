@@ -39,6 +39,19 @@ export const COLOR = {
   // overlays. Several scenes hardcoded `#e6f5d2` for this; promoting
   // it to a token keeps a future palette swap to one line.
   textOnDark: '#e6f5d2',
+  // CSS-string form of the warm gold that's been hardcoded as
+  // `#ffd98a` across most scene HUD/highlight text. Lifted to a
+  // token so a future palette swap is one line; existing literals
+  // are migrated incrementally as scenes get touched.
+  goldCss: '#ffd98a',
+  // Coral CSS string used for opponent-side stars / "danger" highlights.
+  redCss: '#ff9a80',
+  // Soft warm green used for sub-labels/captions on dim backgrounds —
+  // see ClanScene clan description, ClanWarsScene status hints.
+  mossLight: '#9cb98a',
+  // Deep maroon banner background, used for danger/war banners that
+  // need to stand apart from the standard green/cream palette.
+  dangerBg: 0x2a1e1e,
 
   // Accents — saturated pastels
   brass: 0xfdcd6a,         // butter yellow (legacy "brass")
@@ -275,6 +288,10 @@ export const DEPTHS = {
   pickerStripContent: 204,
   pickerSlotHit: 205,
   pickerSlotControl: 206,
+  // Generic full-screen modal (e.g. DefenderAIScene rule editor). Sits
+  // above the drawer + picker stack but below toasts so a transient
+  // "saved" notification still renders on top.
+  modal: 400,
   toast: 500,
   clickDebug: 9999,
 } as const;

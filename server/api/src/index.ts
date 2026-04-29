@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
 import rateLimit from '@fastify/rate-limit';
 import { initServerSentry } from './obs/sentry.js';
@@ -61,6 +62,23 @@ async function start(): Promise<void> {
     // Treat /play and /play/ (and every other clean URL) as the same
     // route so we don't have to register a pair of handlers each time.
     ignoreTrailingSlash: true,
+  });
+
+  // Security headers — defense in depth. We disable CSP because the
+  // game's client bundle uses inline styles + dynamic Phaser-built
+  // canvas content, and a tight CSP would need scene-by-scene
+  // tuning. The other helmet defaults (X-Content-Type-Options
+  // nosniff, Referrer-Policy, HSTS in prod) are cheap wins. CORP
+  // cross-origin so the static bundle can be hot-loaded behind
+  // Railway's proxy without strict isolation. frameguard is OFF
+  // because the client explicitly accommodates cross-origin
+  // embedding (FB Instant's wrapper frame — see client/src/main.ts
+  // and the embedder note there); SAMEORIGIN/DENY would block it.
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    frameguard: false,
   });
 
   await app.register(cors, {

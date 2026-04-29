@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^8.0.1",
     "@hive/protocol": "workspace:*",

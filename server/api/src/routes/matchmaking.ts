@@ -237,6 +237,12 @@ export function registerMatchmaking(app: FastifyInstance): void {
     }
 
     const token = randomToken();
+    // /match is intentionally non-idempotent: a second call lets the
+    // player re-roll their opponent. The rate limit at the route level
+    // (30/min) caps abuse, and the prune below + the per-row TTL keep
+    // orphaned tokens from accumulating. /raid/submit consumes the
+    // token atomically with DELETE...RETURNING so even if a player
+    // ends up holding two valid tokens, only one can be redeemed.
     await pool.query(
       `INSERT INTO pending_matches
          (token, attacker_id, defender_id, seed, base_snapshot, expires_at)
