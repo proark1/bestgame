@@ -70,7 +70,9 @@ export class ProgressionScene extends Phaser.Scene {
         runtime.api.getBuildingCatalog(),
       ]);
       if (!this.scene.isActive()) return;
-      const queenBuilding = me.base.buildings.find((b) => b.kind === 'QueenChamber');
+      // Defensive guard: server returned a base with no buildings array
+      // (legacy / corrupted snapshot) shouldn't crash the scene boot.
+      const queenBuilding = (me.base?.buildings ?? []).find((b) => b.kind === 'QueenChamber');
       this.queenLevel = queenBuilding?.level ?? 1;
       this.resources = {
         sugar: me.player.sugar,

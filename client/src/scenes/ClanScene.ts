@@ -251,7 +251,7 @@ export class ClanScene extends Phaser.Scene {
       const hh = Math.floor(msLeft / 3600000);
       const mm = Math.floor((msLeft % 3600000) / 60000);
       const banner = this.add.graphics();
-      banner.fillStyle(0x2a1e1e, 1);
+      banner.fillStyle(COLOR.dangerBg, 1);
       banner.lineStyle(2, 0xd94c4c, 1);
       const bx = 20;
       const bw = this.scale.width - 40;
@@ -269,7 +269,7 @@ export class ClanScene extends Phaser.Scene {
             {
               fontFamily: 'ui-monospace, monospace',
               fontSize: '12px',
-              color: '#ffd98a',
+              color: COLOR.goldCss,
             },
           )
           .setOrigin(0.5),
@@ -281,7 +281,7 @@ export class ClanScene extends Phaser.Scene {
           .text(this.scale.width / 2, HUD_H + (this.activeWar ? 82 : 40), clan.description, {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '11px',
-            color: '#9cb98a',
+            color: COLOR.mossLight,
           })
           .setOrigin(0.5),
       );

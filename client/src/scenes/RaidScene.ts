@@ -585,6 +585,11 @@ export class RaidScene extends Phaser.Scene {
   private isDrawing = false;
   private lastSpawnEdge: SpawnEdge = 'left';
 
+  // Scratch Set reused across renderFrame() calls so the per-frame
+  // alive-unit sweep doesn't allocate a fresh Set every paint. Cleared
+  // at the top of each call.
+  private aliveUnitIdsScratch = new Set<number>();
+
   // Pheromone path modifier state. The player picks a mode here BEFORE
   // drawing; on commit, the chosen modifier is auto-attached at the
   // path's midpoint waypoint. 'none' = vintage straight-shot path.
@@ -3119,7 +3124,8 @@ export class RaidScene extends Phaser.Scene {
     }
 
     // Units: sync sprites to sim positions; puff the shared trail emitter.
-    const alive = new Set<number>();
+    const alive = this.aliveUnitIdsScratch;
+    alive.clear();
     let surfaceCount = 0;
     let undergroundCount = 0;
     for (const u of this.state.units) {

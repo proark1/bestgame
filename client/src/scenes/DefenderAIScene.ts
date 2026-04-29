@@ -341,7 +341,7 @@ export class DefenderAIScene extends Phaser.Scene {
     const H = Math.min(520, this.scale.height - 80);
     const ox = (this.scale.width - W) / 2;
     const oy = (this.scale.height - H) / 2;
-    const container = this.add.container(0, 0).setDepth(500);
+    const container = this.add.container(0, 0).setDepth(DEPTHS.modal);
     this.modal = container;
 
     const back = this.add.graphics();
@@ -356,7 +356,7 @@ export class DefenderAIScene extends Phaser.Scene {
 
     const card = this.add.graphics();
     card.fillStyle(0x1a2b1a, 0.98);
-    card.lineStyle(3, 0xffd98a, 1);
+    card.lineStyle(3, COLOR.gold, 1);
     card.fillRoundedRect(ox, oy, W, H, 12);
     card.strokeRoundedRect(ox, oy, W, H, 12);
     const cardZone = this.add
@@ -370,7 +370,7 @@ export class DefenderAIScene extends Phaser.Scene {
         ox + W / 2,
         oy + 16,
         `Rules for ${b.kind}`,
-        '#ffd98a',
+        COLOR.goldCss,
         15,
         0.5,
         0,
@@ -397,7 +397,7 @@ export class DefenderAIScene extends Phaser.Scene {
           ox + W / 2,
           oy + 16,
           `Rules for ${b.kind}`,
-          '#ffd98a',
+          COLOR.goldCss,
           15,
           0.5,
           0,
@@ -417,7 +417,7 @@ export class DefenderAIScene extends Phaser.Scene {
         // Trigger cycle button
         const triggerLabel = TRIGGER_SHORT[r.trigger] ?? r.trigger;
         container.add(
-          this.text(ox + 22, yy + 10, 'Trigger', '#ffd98a', 10, 0, 0),
+          this.text(ox + 22, yy + 10, 'Trigger', COLOR.goldCss, 10, 0, 0),
         );
         const tBtn = this.textButton(
           ox + 22,
@@ -429,7 +429,7 @@ export class DefenderAIScene extends Phaser.Scene {
 
         // Effect cycle button
         container.add(
-          this.text(ox + 22 + 200, yy + 10, 'Effect', '#ffd98a', 10, 0, 0),
+          this.text(ox + 22 + 200, yy + 10, 'Effect', COLOR.goldCss, 10, 0, 0),
         );
         const eBtn = this.textButton(
           ox + 22 + 200,
@@ -504,7 +504,7 @@ export class DefenderAIScene extends Phaser.Scene {
         footerY,
         'Save',
         () => void this.saveRules(b.id, working),
-        { color: '#ffd98a' },
+        { color: COLOR.goldCss },
       );
       container.add(saveBtn);
     };

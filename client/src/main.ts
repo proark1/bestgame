@@ -278,6 +278,13 @@ async function main(): Promise<void> {
   };
   syncCanvasSize();
   game.scale.on('resize', syncCanvasSize);
+  // Detach the resize hook if the Phaser game instance is destroyed
+  // (multi-tab dev / hot-reload). Production users don't hit this
+  // path — the listener would otherwise survive across reloads in
+  // dev tooling that swaps the game without a full page reload.
+  game.events.once(Phaser.Core.Events.DESTROY, () => {
+    game.scale.off('resize', syncCanvasSize);
+  });
 
   // One-shot pointer diagnostic. Logs on the first pointerdown of a
   // session so a user who reports "clicks are offset by N cm" can

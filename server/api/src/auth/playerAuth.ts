@@ -17,6 +17,15 @@ let runtimeSecret: string | null = null;
 
 function secret(): string {
   if (process.env.HIVE_AUTH_SECRET) return process.env.HIVE_AUTH_SECRET;
+  // Production must have a stable HIVE_AUTH_SECRET — falling back to
+  // an ephemeral one would invalidate every active session on every
+  // restart, which is a correctness bug at scale. Fail closed at
+  // first auth attempt rather than silently shipping it.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[auth] HIVE_AUTH_SECRET is required in production — set it on the deploy environment',
+    );
+  }
   if (runtimeSecret) return runtimeSecret;
   runtimeSecret = randomBytes(48).toString('hex');
   console.warn(
