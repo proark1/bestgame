@@ -66,6 +66,15 @@ export const COLOR = {
   grassFill: 0x6cbf6a,
   grassBot: 0x549c54,
   grassFillCss: '#6cbf6a', // CSS string form for camera.setBackgroundColor
+  // Per-tile grid stroke painted on top of the grass underlay in
+  // RaidScene/ArenaScene. Slightly darker than grassBot so it reads
+  // as "lines on grass" rather than a separate band.
+  gridLine: 0x2d5e2a,
+  // Spawn-zone tint in RaidScene — soft mint that overlays without
+  // tinting the grass beneath. `spawnZoneCss` is the same value in
+  // CSS form for chevron text styles.
+  spawnZone: 0xc3e8b0,
+  spawnZoneCss: '#c3e8b0',
   // Mossy shadow used as a bottom-of-viewport vignette behind the
   // footer button row so the buttons keep contrast against the grass.
   mossDark: 0x2a4a26,
@@ -252,6 +261,20 @@ export const DEPTHS = {
   resultContent: 102,
   drawerBackdrop: 200,
   drawer: 220,
+  // Build-menu picker stack. Spans 200..206 so callers don't need
+  // magic numbers when wiring up the modal. The slot hit zone must
+  // sit ABOVE pickerStripScroll so taps reach commitPlacement and
+  // not the strip's drag handler — that depth gap was the bug
+  // behind PR #143.
+  pickerBackdrop: 200,
+  pickerBackdropHit: 200.5,
+  pickerCard: 201,
+  pickerCardHit: 201.5,
+  pickerContainer: 202,
+  pickerStripScroll: 203,
+  pickerStripContent: 204,
+  pickerSlotHit: 205,
+  pickerSlotControl: 206,
   toast: 500,
   clickDebug: 9999,
 } as const;

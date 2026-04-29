@@ -113,7 +113,10 @@ export class ArenaScene extends Phaser.Scene {
   }> = [];
   // First-entry coachmark for the deck rail. Single-shot, persisted
   // in localStorage; bumping the key replays for everyone.
-  private static readonly ARENA_COACHMARK_KEY = 'hive:coachmarks:arena:v1';
+  // Bump the version suffix when the deck rail / coachmark copy
+  // changes so returning players see the updated guidance instead of
+  // their stale "already seen v1" flag suppressing it.
+  private static readonly ARENA_COACHMARK_KEY = 'hive:coachmarks:arena:v2';
   private arenaCoach: CoachmarkHandle | null = null;
 
   constructor() {
@@ -177,6 +180,9 @@ export class ArenaScene extends Phaser.Scene {
     };
     applyLayout();
     this.scale.on('resize', applyLayout);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', applyLayout);
+    });
     // Slight delay so the deck rail's getBounds() returns the
     // post-layout values, not the (0, 0, 0, 0) zone the rail
     // starts in. 120 ms is enough for one resize tick.

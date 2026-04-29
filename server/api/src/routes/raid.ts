@@ -29,6 +29,13 @@ interface RaidSubmissionBody {
   clientResultHash: string;
 }
 
+// Caps on the inputs array. The client caps drawn paths at 32 points
+// and a raid is RAID_SECONDS long, so a generous-but-finite ceiling
+// here turns a malicious "ship a million-point path" payload into a
+// fast 400 instead of letting it crawl through the deterministic sim.
+const MAX_INPUTS = 256;
+const MAX_PATH_POINTS = 64;
+
 // Trophy ladder uses ELO with a trophy-tiered K-factor — see
 // server/api/src/game/progression.ts::trophyDelta() and
 // docs/GAME_DESIGN.md §6.5 for the design rationale. Gains scale with
@@ -63,6 +70,22 @@ export function registerRaid(app: FastifyInstance): void {
       reply.code(400);
       return { error: 'bad request' };
     }
+    // Defense-in-depth payload caps. The replay validator below would
+    // eventually reject a malformed timeline, but it does so by running
+    // the sim — much cheaper to fail fast on obviously oversized inputs.
+    if (body.inputs.length > MAX_INPUTS) {
+      reply.code(413);
+      return { error: `too many inputs (max ${MAX_INPUTS})` };
+    }
+    for (const inp of body.inputs) {
+      if (inp?.type === 'deployPath') {
+        const pts = inp.path?.points;
+        if (!Array.isArray(pts) || pts.length > MAX_PATH_POINTS) {
+          reply.code(413);
+          return { error: `path exceeds ${MAX_PATH_POINTS} points` };
+        }
+      }
+    }
 
     const pool = await getPool();
     if (!pool) {
@@ -94,7 +117,16 @@ export function registerRaid(app: FastifyInstance): void {
       }
       const row = popped.rows[0]!;
       const defenderId = row.defender_id;
+      // Postgres returns BIGINT as string; coerce, then guard against
+      // NaN/Infinity. A malformed seed silently cascades into the sim
+      // and corrupts the replay hash, which surfaces as a confusing
+      // 409 to the player. Catch it here with a clearer 500.
       const seed = Number(row.seed);
+      if (!Number.isFinite(seed)) {
+        await client.query('ROLLBACK');
+        reply.code(500);
+        return { error: 'pending match has invalid seed' };
+      }
       const baseSnapshot = row.base_snapshot;
 
       // Fetch the attacker's unit levels + trophies + base snapshot in

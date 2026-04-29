@@ -2564,7 +2564,7 @@ export class HomeScene extends Phaser.Scene {
     // Pre-drag sprite coords so we can cleanly reset if the user
     // drops on an invalid tile or cancels mid-drag.
     origSpriteXY: { x: number; y: number };
-    keyListener: (e: KeyboardEvent) => void;
+    keyListener: () => void;
     dragOrigin: { px: number; py: number } | null;
   } | null = null;
 
@@ -2780,10 +2780,12 @@ export class HomeScene extends Phaser.Scene {
     cancelBtn.container.setDepth(DEPTHS.drawer);
     banner.add(cancelBtn.container);
 
-    const keyListener = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') this.exitMoveMode();
-    };
-    window.addEventListener('keydown', keyListener);
+    // Hook the scene's keyboard plugin instead of `window` so the
+    // listener is torn down automatically when the scene shuts down,
+    // even if exitMoveMode never fires (e.g. a scene transition while
+    // move mode is still active).
+    const keyListener = (): void => this.exitMoveMode();
+    this.input.keyboard?.on('keydown-ESC', keyListener);
 
     this.moveMode = {
       building: b,
@@ -2859,7 +2861,7 @@ export class HomeScene extends Phaser.Scene {
       spr.off('dragend');
       this.snapSpriteToBuilding(spr, building.id);
     }
-    window.removeEventListener('keydown', keyListener);
+    this.input.keyboard?.off('keydown-ESC', keyListener);
     this.moveMode = null;
     // Move mode suppressed the build-tile affordances while it was
     // active; restore them now that the player can place again.
@@ -4252,7 +4254,7 @@ export class HomeScene extends Phaser.Scene {
           return;
         }
       }
-      if (this.pickerContainer) {
+      if (this.isPlacementModeActive()) {
         this.tapStartedInsidePicker = true;
         this.tapDownPos = null;
         return;
@@ -4280,7 +4282,7 @@ export class HomeScene extends Phaser.Scene {
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!p.isDown) return;
       if (!this.panAnchor) return;
-      if (this.pickerContainer || this.burgerDrawer) return;
+      if (this.isPlacementModeActive() || this.burgerDrawer) return;
       if (isModalActive(this)) return;
       const dx = p.x - this.panAnchor.px;
       const dy = p.y - this.panAnchor.py;
@@ -4304,7 +4306,7 @@ export class HomeScene extends Phaser.Scene {
         this.tapStartedInsidePicker = false;
         return;
       }
-      if (this.pickerContainer) return;
+      if (this.isPlacementModeActive()) return;
       // Same modal-active gate as pointerdown — picks up the case
       // where the modal opened between down and up.
       if (isModalActive(this)) return;
@@ -4425,6 +4427,15 @@ export class HomeScene extends Phaser.Scene {
   // mask; tracked here so closePicker can destroy it (the scene's
   // automatic teardown only walks display-list children).
   private pickerMaskShape: Phaser.GameObjects.Graphics | null = null;
+
+  // Single source of truth for "is the build picker currently the
+  // active modal?" — board input handlers read this rather than
+  // checking pickerContainer truthiness directly. Keeps the
+  // suppress-board-taps gate in one place if the picker grows more
+  // state (e.g. an opening animation that should still block taps).
+  private isPlacementModeActive(): boolean {
+    return this.pickerContainer !== null;
+  }
 
   // Queen Chamber level determines the tier index into per-kind
   // quotas. Reads from the server-backed base snapshot so a freshly
@@ -4889,7 +4900,7 @@ export class HomeScene extends Phaser.Scene {
       const hit = this.add
         .zone(cx, cy, slotW - 8, slotH - 8)
         .setOrigin(0.5)
-        .setDepth(205)
+        .setDepth(DEPTHS.pickerSlotHit)
         .setInteractive({ useHandCursor: placeable });
       hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
         // Mirror the strip drag detector — the slot zone catches
@@ -4929,7 +4940,7 @@ export class HomeScene extends Phaser.Scene {
         labelTextStyle(14, isPinned ? COLOR.textGold : '#7d8a6e'),
       )
         .setOrigin(0.5, 0)
-        .setDepth(206)
+        .setDepth(DEPTHS.pickerSlotControl)
         .setInteractive({ useHandCursor: true });
       star.on('pointerdown', (
         _p: Phaser.Input.Pointer,
