@@ -259,6 +259,22 @@ export class HomeScene extends Phaser.Scene {
   private sugarRateText: Phaser.GameObjects.Text | null = null;
   private leafRateText: Phaser.GameObjects.Text | null = null;
   private milkRateText: Phaser.GameObjects.Text | null = null;
+  // Per-resource pulsing tween on the rate text when the wallet hits
+  // its storage cap. Refresh keeps the pulse alive while capped and
+  // tears it down on release. Set in refreshCapAlerts().
+  private cappedTweens: {
+    sugar: Phaser.Tweens.Tween | null;
+    leaf: Phaser.Tweens.Tween | null;
+    milk: Phaser.Tweens.Tween | null;
+  } = { sugar: null, leaf: null, milk: null };
+  // Edge-detection: did the wallet just transition into the capped
+  // state this tick? Used to fire a one-shot floating "Vault full!"
+  // alert so the player notices the moment income starts being lost.
+  private lastCapState: { sugar: boolean; leaf: boolean; milk: boolean } = {
+    sugar: false,
+    leaf: false,
+    milk: false,
+  };
   // Storage cap headroom from the server (§6.8). Falls back to no-cap
   // when the server payload predates the storage feature.
   private storageCaps: { sugar: number | null; leaf: number | null; milk: number | null } = {
@@ -759,6 +775,75 @@ export class HomeScene extends Phaser.Scene {
     refreshRate(this.sugarRateText, 'sugar');
     refreshRate(this.leafRateText, 'leaf');
     refreshRate(this.milkRateText, 'milk');
+    this.refreshCapAlerts();
+  }
+
+  // Pulse + alert the player when a wallet hits its cap. The rate
+  // text already swaps to "FULL" red — this layer adds a pulsing
+  // alpha so the eye actually catches it, plus a one-shot floating
+  // toast on the cap-edge transition (was-not-full → is-full).
+  // Skipped silently if the rate text isn't present (phone tier or
+  // milk with no producer).
+  private refreshCapAlerts(): void {
+    const targets: Array<{
+      kind: 'sugar' | 'leaf' | 'milk';
+      text: Phaser.GameObjects.Text | null;
+      label: string;
+    }> = [
+      { kind: 'sugar', text: this.sugarRateText, label: 'Sugar' },
+      { kind: 'leaf', text: this.leafRateText, label: 'Leaf' },
+      { kind: 'milk', text: this.milkRateText, label: 'Milk' },
+    ];
+    for (const t of targets) {
+      const isFull = this.isResourceCapped(t.kind);
+      const wasFull = this.lastCapState[t.kind];
+      this.lastCapState[t.kind] = isFull;
+      const tween = this.cappedTweens[t.kind];
+      if (isFull && t.text && t.text.active) {
+        if (!tween || !tween.isPlaying()) {
+          this.cappedTweens[t.kind] = this.tweens.add({
+            targets: t.text,
+            alpha: { from: 1, to: 0.45 },
+            duration: 600,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut',
+          });
+        }
+        if (!wasFull) this.flashCapAlert(t.label, t.text.x, t.text.y);
+      } else {
+        if (tween) {
+          tween.stop();
+          this.cappedTweens[t.kind] = null;
+          if (t.text && t.text.active) t.text.setAlpha(1);
+        }
+      }
+    }
+  }
+
+  // One-shot floating "Vault full!" alert anchored near the rate
+  // pill that just capped. Fades out after 1.6 s; tap to dismiss
+  // early. Cheap (single text + tween) so multiple kinds capping in
+  // the same frame each get their own clear signal.
+  private flashCapAlert(label: string, anchorX: number, anchorY: number): void {
+    const text = this.add
+      .text(anchorX, anchorY - 18, `${label} vault full!`, {
+        fontFamily: 'ui-monospace, monospace',
+        fontSize: '12px',
+        color: '#0f1b10',
+        backgroundColor: '#ffd98a',
+        padding: { left: 8, right: 8, top: 4, bottom: 4 },
+      })
+      .setOrigin(1, 1)
+      .setDepth(DEPTHS.toast);
+    this.tweens.add({
+      targets: text,
+      y: anchorY - 38,
+      alpha: { from: 1, to: 0 },
+      duration: 1400,
+      ease: 'Sine.easeOut',
+      onComplete: () => text.destroy(),
+    });
   }
 
   // Scene-wide ambient: a continuous grass background behind the
