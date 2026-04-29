@@ -155,6 +155,11 @@ interface PlayerRow {
   // (start, start+length) UTC hour window.
   quiet_hour_start: number | null;
   quiet_hour_length: number;
+  // Defender daily chest (migrations/0027). chest_progress is 0..100
+  // in steps of 10. Filled +10 per successful defense (attacker
+  // scored <3 stars), claimed at 100, reset at UTC midnight.
+  chest_progress: number;
+  chest_day: Date;
 }
 
 interface BaseRow {
@@ -610,6 +615,22 @@ export function registerPlayer(app: FastifyInstance): void {
             startHour: player.quiet_hour_start,
             lengthHours: player.quiet_hour_length,
           },
+          // Defender daily chest. Display progress is 0% on a new
+          // UTC day even if the DB still holds yesterday's value —
+          // the next qualifying defense will catch up the row.
+          chest: (() => {
+            const todayUtc = new Date().toISOString().slice(0, 10);
+            const chestDayUtc = player.chest_day
+              ? new Date(player.chest_day).toISOString().slice(0, 10)
+              : todayUtc;
+            const progress = chestDayUtc === todayUtc ? player.chest_progress : 0;
+            return {
+              progress,
+              claimable: progress >= 100,
+              rewardSugar: 500,
+              rewardLeafBits: 200,
+            };
+          })(),
         },
         base: base.snapshot,
         offlineTrickle: {
@@ -2863,4 +2884,87 @@ export function registerPlayer(app: FastifyInstance): void {
       return { ok: true, startHour: start, lengthHours: length };
     },
   );
+
+  // POST /player/chest/claim — empty the defender daily chest at
+  // 100% in exchange for a fixed reward (500 sugar + 200 leafBits).
+  // The reset-on-stale-day branch handles the edge case of a player
+  // who filled the chest yesterday and never claimed: yesterday's
+  // 100% is forfeit; the claim is denied with chest_progress reset
+  // to 0 so today starts clean.
+  app.post('/player/chest/claim', async (req, reply) => {
+    const playerId = requirePlayer(req, reply);
+    if (!playerId) return;
+    const pool = await getPool();
+    if (!pool) {
+      reply.code(503);
+      return { error: 'database not configured' };
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const r = await client.query<Pick<PlayerRow,
+        'chest_progress' | 'chest_day' | 'sugar' | 'leaf_bits'
+      >>(
+        `SELECT chest_progress, chest_day, sugar, leaf_bits
+           FROM players WHERE id = $1 FOR UPDATE`,
+        [playerId],
+      );
+      if (r.rows.length === 0) {
+        await client.query('ROLLBACK');
+        reply.code(404);
+        return { error: 'player not found' };
+      }
+      const row = r.rows[0]!;
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      const chestDayUtc = new Date(row.chest_day).toISOString().slice(0, 10);
+      const liveProgress = chestDayUtc === todayUtc ? row.chest_progress : 0;
+      if (liveProgress < 100) {
+        // Still write a passive reset on stale day so the row
+        // doesn't carry yesterday's progress forward into the
+        // next /me echo. Idempotent on a same-day partial chest.
+        if (chestDayUtc !== todayUtc) {
+          await client.query(
+            `UPDATE players
+                SET chest_progress = 0,
+                    chest_day = (NOW() AT TIME ZONE 'UTC')::DATE
+              WHERE id = $1`,
+            [playerId],
+          );
+        }
+        await client.query('COMMIT');
+        reply.code(409);
+        return { error: 'chest not full', progress: liveProgress };
+      }
+      const rewardSugar = 500;
+      const rewardLeaf = 200;
+      const upd = await client.query<{ sugar: string; leaf_bits: string }>(
+        `UPDATE players
+            SET sugar = sugar + $2,
+                leaf_bits = leaf_bits + $3,
+                chest_progress = 0,
+                chest_day = (NOW() AT TIME ZONE 'UTC')::DATE
+          WHERE id = $1
+        RETURNING sugar, leaf_bits`,
+        [playerId, rewardSugar, rewardLeaf],
+      );
+      await client.query('COMMIT');
+      const out = upd.rows[0]!;
+      return {
+        ok: true,
+        reward: { sugar: rewardSugar, leafBits: rewardLeaf },
+        wallet: {
+          sugar: safeBigintToNumber(out.sugar, 'sugar', app.log),
+          leafBits: safeBigintToNumber(out.leaf_bits, 'leaf_bits', app.log),
+        },
+        chest: { progress: 0, claimable: false, rewardSugar, rewardLeafBits: rewardLeaf },
+      };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      app.log.error({ err }, 'player/chest/claim failed');
+      reply.code(500);
+      return { error: 'claim failed' };
+    } finally {
+      client.release();
+    }
+  });
 }

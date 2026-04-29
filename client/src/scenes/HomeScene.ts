@@ -1108,9 +1108,18 @@ export class HomeScene extends Phaser.Scene {
       pillY += PILL_H + PILL_GAP;
     }
 
+    // Defender daily chest. Slots between the resource pills and the
+    // codex chip on the right column. Returns the next available top-Y
+    // so the codex chip stacks below; when the chest is hidden (older
+    // server has no `chest` field) it returns the input Y unchanged so
+    // the codex chip sits in its original slot.
+    const chestBottomY = this.drawChestPill(rightEdge, pillY + 4, tier);
+    const codexCenterY = chestBottomY > pillY + 4
+      ? chestBottomY + (tier === 'phone' ? 17 : 18) + 6
+      : pillY + PILL_H / 2 + 4;
     // Codex chip — small disc tucked under the resource stack. Kept
     // here (not in the corner stack) because it's lookup, not action.
-    this.drawCodexChip(rightEdge, pillY + PILL_H / 2 + 4, tier);
+    this.drawCodexChip(rightEdge, codexCenterY, tier);
 
     // The audio mute + fullscreen quick-toggles used to live here on
     // the right HUD edge. They've moved to the bottom-left button
@@ -1481,6 +1490,109 @@ export class HomeScene extends Phaser.Scene {
     // background tab doesn't build up a stale grace debt the player
     // pays when they return.
     this.pickerClosedAtMs = this.time.now;
+  }
+
+  // Defender daily chest pill. Returns the BOTTOM Y of the rendered
+  // pill, or `topY` unchanged when the chest field is absent (older
+  // server). The pill shows a horizontal fill bar mirroring the
+  // chest_progress 0..100 value; when full it pulses + becomes
+  // tappable for the claim API.
+  private drawChestPill(
+    rightEdgeX: number,
+    topY: number,
+    tier: 'wide' | 'narrow' | 'phone',
+  ): number {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    const chest = runtime?.player?.player.chest;
+    if (!chest) return topY;
+    const pillW = tier === 'phone' ? 80 : 100;
+    const pillH = tier === 'phone' ? 30 : 34;
+    const left = rightEdgeX - pillW;
+    const claimable = chest.claimable;
+    const pill = this.add.graphics().setDepth(DEPTHS.hud);
+    drawPill(pill, left, topY, pillW, pillH, { brass: claimable });
+    // Inset progress bar so the empty/partial states still read as a
+    // real progress meter, not just a label. Bar lives along the
+    // bottom of the pill so the icon + text stay above it.
+    const barInset = 4;
+    const barX = left + barInset;
+    const barY = topY + pillH - barInset - 4;
+    const barW = pillW - barInset * 2;
+    const barH = 3;
+    const fillRatio = Math.max(0, Math.min(1, chest.progress / 100));
+    const bar = this.add.graphics().setDepth(DEPTHS.hud);
+    bar.fillStyle(0x000000, 0.45);
+    bar.fillRoundedRect(barX, barY, barW, barH, 1.5);
+    if (fillRatio > 0) {
+      bar.fillStyle(claimable ? 0xffd86b : 0xc8f2a0, 1);
+      bar.fillRoundedRect(barX, barY, barW * fillRatio, barH, 1.5);
+    }
+    const label = claimable
+      ? 'CLAIM'
+      : tier === 'phone'
+        ? `${chest.progress}%`
+        : `🎁 ${chest.progress}%`;
+    const text = crispText(
+      this,
+      left + pillW / 2,
+      topY + pillH / 2 - 2,
+      label,
+      claimable
+        ? labelTextStyle(11, COLOR.textGold)
+        : displayTextStyle(12, COLOR.textPrimary, 2),
+    ).setOrigin(0.5, 0.5).setDepth(DEPTHS.hud);
+    if (claimable) {
+      this.tweens.add({
+        targets: [pill, text],
+        alpha: { from: 1, to: 0.7 },
+        duration: 700,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+    const zone = this.add
+      .zone(left + pillW / 2, topY + pillH / 2, pillW, pillH)
+      .setOrigin(0.5, 0.5)
+      .setInteractive({ useHandCursor: true })
+      .setDepth(DEPTHS.hud);
+    zone.on('pointerdown', (_p: Phaser.Input.Pointer, _lx: number, _ly: number, e: Phaser.Types.Input.EventData) => {
+      e?.stopPropagation?.();
+      if (claimable) {
+        void this.claimDefenderChest();
+      } else {
+        this.flashToast(
+          chest.progress > 0
+            ? `Defender chest: ${chest.progress}% — hold off the next attacker.`
+            : 'Defender chest: hold off raids to fill it (≤2★ counts).',
+        );
+      }
+    });
+    return topY + pillH;
+  }
+
+  private async claimDefenderChest(): Promise<void> {
+    const runtime = this.registry.get('runtime') as HiveRuntime | undefined;
+    if (!runtime?.api) return;
+    try {
+      const r = await runtime.api.claimDefenderChest();
+      this.resources.sugar = r.wallet.sugar;
+      this.resources.leafBits = r.wallet.leafBits;
+      if (runtime.player) {
+        runtime.player.player.sugar = r.wallet.sugar;
+        runtime.player.player.leafBits = r.wallet.leafBits;
+        runtime.player.player.chest = r.chest;
+      }
+      this.flashToast(`Chest claimed: +${r.reward.sugar} sugar, +${r.reward.leafBits} leaf`);
+      // Cheap full-redraw to repaint the chest pill in its empty
+      // state alongside the updated wallet pills. Mirrors the
+      // streak-claim restart pattern.
+      this.registry.set('homeLayer', this.layer);
+      this.scene.restart();
+    } catch (err) {
+      console.warn('chest claim failed', err);
+      this.flashToast('Chest claim failed — try again.');
+    }
   }
 
   private drawCodexChip(
