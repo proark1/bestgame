@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { Types } from '@hive/shared';
-import { UNIT_CODEX } from '../codex/codexData.js';
+import { UNIT_CODEX, FACTION_SIGNATURES } from '../codex/codexData.js';
 import { crispText } from './text.js';
 import { drawPanel } from './panel.js';
 import {
@@ -112,9 +112,23 @@ export function openUnitInfoModal(opts: OpenUnitInfoOpts): () => void {
     ).setOrigin(0.5, 0),
   );
 
-  // Story + power blurbs. Both wrap to the card width minus padding.
+  // Faction signature — a one-line rule shared by every unit in the
+  // faction (e.g. "Beetles: +25% vs walls"). Surfaces the sim-side
+  // UnitBehavior tags so a player can see why their Bee flies past
+  // a trap or their Spider crits the queen on contact.
   const padX = 18;
-  const bodyStart = nameY + 52;
+  const factionRuleY = nameY + 52;
+  const factionRule = crispText(
+    scene,
+    cx + padX,
+    factionRuleY,
+    `${entry.faction.toUpperCase()}: ${FACTION_SIGNATURES[entry.faction]}`,
+    bodyTextStyle(11, COLOR.textGold),
+  ).setWordWrapWidth(MODAL_W - padX * 2);
+  root.add(factionRule);
+
+  // Story + power blurbs. Both wrap to the card width minus padding.
+  const bodyStart = factionRuleY + factionRule.height + 10;
   const story = crispText(
     scene,
     cx + padX,

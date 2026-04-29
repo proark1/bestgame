@@ -20,6 +20,19 @@ export interface CodexEntry {
   power: string;
 }
 
+// One-line faction-wide rule, surfaced in unitInfoModal so players
+// can see why a Beetle hits walls harder or a Bee waltzes past a
+// trap. Mirrors the per-faction sim rules in shared/src/sim/stats.ts
+// (UnitBehavior.vsWallPercent / firstHitBonusPercent and
+// BuildingBehavior.groundOnly). Keep these in sync when the sim
+// rules change.
+export const FACTION_SIGNATURES: Record<Types.Faction, string> = {
+  Ants:    'All-rounder. No special faction rule — versatile by design.',
+  Beetles: '+25% damage when attacking walls (LeafWall, ThornHedge).',
+  Bees:    'All Bees fly — ground traps (DungeonTrap, RootSnare) cannot catch them.',
+  Spiders: '+50% damage on this unit\'s FIRST attack only. Choose the opening hit carefully.',
+};
+
 // Units. role = the one-line "what it does" that sits under the name.
 // power = the long blurb that sits under the image.
 export const UNIT_CODEX: Record<Types.UnitKind, CodexEntry> = {
