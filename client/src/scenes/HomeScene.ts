@@ -4889,6 +4889,7 @@ export class HomeScene extends Phaser.Scene {
       const hit = this.add
         .zone(cx, cy, slotW - 8, slotH - 8)
         .setOrigin(0.5)
+        .setDepth(205)
         .setInteractive({ useHandCursor: placeable });
       hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
         // Mirror the strip drag detector — the slot zone catches
@@ -4928,6 +4929,7 @@ export class HomeScene extends Phaser.Scene {
         labelTextStyle(14, isPinned ? COLOR.textGold : '#7d8a6e'),
       )
         .setOrigin(0.5, 0)
+        .setDepth(206)
         .setInteractive({ useHandCursor: true });
       star.on('pointerdown', (
         _p: Phaser.Input.Pointer,
