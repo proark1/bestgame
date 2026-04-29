@@ -233,6 +233,16 @@ export function combatSystem(
       if (ub?.vsBuildingPercent) {
         dmg = scaleFixedByPercent(dmg, ub.vsBuildingPercent);
       }
+      // Beetle faction signature: +25% vs wall buildings. Stacks
+      // multiplicatively after vsBuildingPercent so a future hybrid
+      // kind compounds correctly. Wall set is small + closed:
+      // LeafWall + ThornHedge are the only wall-class buildings.
+      if (
+        ub?.vsWallPercent &&
+        (b.kind === 'LeafWall' || b.kind === 'ThornHedge')
+      ) {
+        dmg = scaleFixedByPercent(dmg, ub.vsWallPercent);
+      }
       // Hero buildingDamage aura — applies only to building hits, so
       // it lives here rather than in unitStatsFor. StagBeetle's +20%
       // is the canonical case.

@@ -237,6 +237,11 @@ export interface UnitBehavior {
   // Termite: multiplier applied when the target is a building. 200 =
   // 2× damage. Applied on top of the per-level stat percent.
   vsBuildingPercent?: number;
+  // Beetle faction signature: damage multiplier applied ONLY when the
+  // target is a wall (LeafWall / ThornHedge). 125 = +25% damage.
+  // Stacks multiplicatively with vsBuildingPercent so a future
+  // hybrid kind (e.g. a Termite-Beetle) compounds correctly.
+  vsWallPercent?: number;
   // Scarab: kind + count of units spawned at death. Spawned unit is
   // owner=0 (attacker-side) for a Scarab death.
   deathSpawnKind?: UnitKind;
@@ -267,16 +272,26 @@ export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
   BombBeetle: {
     detonateRadius: fromFloat(1.5),
     detonateDamage: fromInt(35),
+    vsWallPercent: 125, // Beetle faction signature: +25% vs walls
   },
+  // Beetle faction signature: +25% damage when the target is a wall
+  // (LeafWall / ThornHedge). Cements the "Beetles break walls"
+  // identity. Spread across every Beetle-faction kind so the
+  // mechanic reads as a faction rule, not a one-unit tag.
+  ShieldBeetle: { vsWallPercent: 125 },
+  Roller: { vsWallPercent: 125 },
+  Mantis: { vsWallPercent: 125 },
   Termite: {
     vsBuildingPercent: 200,
   },
   Scarab: {
     deathSpawnKind: 'MiniScarab',
     deathSpawnCount: 2,
+    vsWallPercent: 125,
   },
   MiniScarab: {
     hiddenFromRoster: true,
+    vsWallPercent: 125,
   },
   NestSpider: {
     hiddenFromRoster: true,
