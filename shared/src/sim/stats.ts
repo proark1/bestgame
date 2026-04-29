@@ -196,6 +196,32 @@ export const UNIT_STATS: Record<UnitKind, UnitStats> = {
     canFly: false,
     canDig: false,
   },
+  // Bee-faction MVP. HoneyBee is a fast cheap flyer — fills the early
+  // Bee curve like SoldierAnt does for Ants but with flight, trading
+  // HP for path freedom. Tuned just under Wasp on damage so Bee
+  // strategies still favor swarm volume over single-bee finishes.
+  HoneyBee: {
+    hpMax: fromInt(22),
+    speed: fromFloat(0.11),
+    attackRange: fromFloat(0.7),
+    attackDamage: fromInt(4),
+    attackCooldownTicks: 22,
+    canFly: true,
+    canDig: false,
+  },
+  // Heavy flying tank — slow, high HP, melee. Acts as the Bee equivalent
+  // of HoneyTank with a flight bypass. No anti-armor splash today; the
+  // ability scaffold (UnitAbilityKind detonate) is the future hook for a
+  // rotor-blade splash on death.
+  HiveDrone: {
+    hpMax: fromInt(95),
+    speed: fromFloat(0.05),
+    attackRange: fromFloat(0.8),
+    attackDamage: fromInt(9),
+    attackCooldownTicks: 34,
+    canFly: true,
+    canDig: false,
+  },
 };
 
 // Extended per-unit behavior flags that don't fit neatly into UnitStats.

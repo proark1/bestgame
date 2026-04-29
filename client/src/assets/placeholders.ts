@@ -302,6 +302,30 @@ function drawUnit(scene: Phaser.Scene, key: string): void {
           }
         });
         break;
+      case 'unit-HoneyBee':
+        drawBug(g, PALETTE.bee, () => {
+          drawWings(g);
+          // honey-gold stripes (thinner than Forager so silhouettes differ)
+          g.fillStyle(OUTLINE, 1);
+          g.fillRect(cx - 22, cy - 4, 44, 4);
+          g.fillRect(cx - 18, cy + 8, 36, 4);
+          // small stinger
+          g.fillTriangle(cx, cy + 32, cx - 4, cy + 26, cx + 4, cy + 26);
+        });
+        break;
+      case 'unit-HiveDrone':
+        drawBug(g, PALETTE.bee, () => {
+          drawWings(g);
+          // armored thorax plate to read as the heavy variant
+          g.fillStyle(PALETTE.beetle.body, 1);
+          g.lineStyle(3, OUTLINE, 1);
+          g.fillRoundedRect(cx - 26, cy - 12, 52, 28, 8);
+          g.strokeRoundedRect(cx - 26, cy - 12, 52, 28, 8);
+          // crown bands echoing HoneyBee
+          g.fillStyle(PALETTE.bee.body, 1);
+          g.fillRect(cx - 22, cy - 4, 44, 4);
+        });
+        break;
       default:
         drawBug(g, PALETTE.neutral, () => {});
     }

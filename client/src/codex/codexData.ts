@@ -289,6 +289,36 @@ export const UNIT_CODEX: Record<Types.UnitKind, CodexEntry> = {
       'Only spawns from a Spider Nest during a raid. Not in any ' +
       'attacker\'s hand — this is the defender\'s answer.',
   },
+  HoneyBee: {
+    kind: 'HoneyBee',
+    name: 'Honey Bee',
+    role: 'Cheap flyer',
+    faction: 'Bees',
+    spriteKey: 'unit-HoneyBee',
+    story:
+      'Spilled out of an overturned hive and now answers the colony\'s ' +
+      'pheromone like any worker. Doesn\'t care about walls — flight is ' +
+      'her birthright, not a tactic.',
+    power:
+      'Fast and cheap with flight. Bypasses walls and ground traps. ' +
+      'Fragile alone — deploy in burst waves of 3-5 and let the swarm ' +
+      'tide handle the queen chamber.',
+  },
+  HiveDrone: {
+    kind: 'HiveDrone',
+    name: 'Hive Drone',
+    role: 'Flying tank',
+    faction: 'Bees',
+    spriteKey: 'unit-HiveDrone',
+    story:
+      'A bulkier drone bred for breaching. Slow on the wing, but a ' +
+      'wall is just an obstacle she flies over with the queen\'s ' +
+      'blessing humming in her thorax.',
+    power:
+      'Heavy HP and flight, but slow attacks and no splash. Front a ' +
+      'swarm of HoneyBees behind her so the soak holds while the ' +
+      'damage stacks.',
+  },
 };
 
 export const BUILDING_CODEX: Record<Types.BuildingKind, CodexEntry> = {

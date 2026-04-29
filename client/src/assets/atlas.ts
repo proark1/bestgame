@@ -29,6 +29,10 @@ export const UNIT_SPRITE_KEYS = [
   // spawn on the battlefield, so they need sprite keys.
   'unit-MiniScarab',
   'unit-NestSpider',
+  // Bee-faction MVP (PR: faction-stub). Queen-level gated like the
+  // expanded Ant roster.
+  'unit-HoneyBee',
+  'unit-HiveDrone',
 ] as const;
 
 export const BUILDING_SPRITE_KEYS = [

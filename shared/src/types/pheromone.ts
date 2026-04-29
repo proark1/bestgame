@@ -73,6 +73,19 @@ export const DIG_TICKS = 90;
 // Input: a player command issued at a specific sim tick. The sim consumes
 // these from a queue sorted by tick. In async raid: the full timeline is
 // known up front. In live arena: it arrives over the network.
+//
+// `triggerAbility` is the scaffold for per-unit active abilities (see
+// UnitAbilityKind in types/units.ts). step.ts treats it as a no-op
+// today — the input slot reserves the wire format so existing replays
+// keep validating bit-exact while a future combat-side handler can
+// land without a SimInput shape change.
 export type SimInput =
   | { type: 'deployPath'; tick: number; ownerSlot: 0 | 1; path: PheromonePath }
-  | { type: 'surrender'; tick: number; ownerSlot: 0 | 1 };
+  | { type: 'surrender'; tick: number; ownerSlot: 0 | 1 }
+  | {
+      type: 'triggerAbility';
+      tick: number;
+      ownerSlot: 0 | 1;
+      unitId: number;
+      ability: import('./units.js').UnitAbilityKind;
+    };

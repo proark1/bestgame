@@ -36,6 +36,11 @@ export function step(
       applyDeploy(state, inp.ownerSlot, inp.path, cfg.attackerUnitLevels);
     } else if (inp.type === 'surrender') {
       state.outcome = inp.ownerSlot === 0 ? 'defenderWin' : 'attackerWin';
+    } else if (inp.type === 'triggerAbility') {
+      // Scaffold: per-unit active ability slot. No combat-side handler
+      // is wired yet, so this branch deliberately does nothing — the
+      // union arm exists so the wire format is forwards-compatible.
+      // When the first ability lands, dispatch on inp.ability here.
     }
   }
 
