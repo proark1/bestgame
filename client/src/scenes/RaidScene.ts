@@ -792,9 +792,15 @@ export class RaidScene extends Phaser.Scene {
     this.replayContext = replayCtx;
     this.revengeContext = revengeCtx;
 
+    // Tutorials want a stable seed so authored choreography lands the
+    // same on every run. Free-play / offline raids should feel fresh,
+    // so we derive a per-session seed from Date.now() — the seed is
+    // sent with the raid submission, so server replay validation still
+    // succeeds against whatever value the client used.
+    const TUTORIAL_SEED = 0xc0ffee;
     const seed = prefilledMatch?.seed
       ?? replayCtx?.seed
-      ?? 0xc0ffee;
+      ?? (tutorialFlag ? TUTORIAL_SEED : Date.now() | 0);
     const snapshot = prefilledMatch?.baseSnapshot
       ?? replayCtx?.baseSnapshot
       ?? (tutorialFlag ? TUTORIAL_BASE : BOT_BASE);
@@ -983,7 +989,7 @@ export class RaidScene extends Phaser.Scene {
       .text(this.scale.width - 16, HUD_H / 2 + 10, 'loot: 0', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(1, 0.5)
       .setDepth(DEPTHS.hud);
@@ -1010,7 +1016,7 @@ export class RaidScene extends Phaser.Scene {
           {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '11px',
-            color: '#c3e8b0',
+            color: COLOR.spawnZoneCss,
           },
         )
         .setOrigin(0.5, 0)
@@ -1045,7 +1051,7 @@ export class RaidScene extends Phaser.Scene {
     // else.
     const grass = this.add.graphics();
     grass.setDepth(DEPTHS.boardUnder);
-    grass.fillStyle(0x6cbf6a, 1);
+    grass.fillStyle(COLOR.grassFill, 1);
     grass.fillRect(0, 0, BOARD_W, BOARD_H);
 
     // Per-tile grid box outlines — small green boxes so the player
@@ -1054,7 +1060,7 @@ export class RaidScene extends Phaser.Scene {
     // and didn't communicate "this is a grid". A 1 px stroke per cell
     // at 0.45 alpha is readable without competing with art.
     const grid = this.add.graphics();
-    grid.lineStyle(1, 0x2d5e2a, 0.45);
+    grid.lineStyle(1, COLOR.gridLine, 0.45);
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         grid.strokeRect(x * TILE + 0.5, y * TILE + 0.5, TILE - 1, TILE - 1);
@@ -1064,28 +1070,28 @@ export class RaidScene extends Phaser.Scene {
     this.spawnZoneGraphics = this.add.graphics().setDepth(2);
 
     // Left spawn zone (2 tiles wide, full height)
-    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillStyle(COLOR.spawnZone, 0.09);
     this.spawnZoneGraphics.fillRect(0, 0, SPAWN_ZONE_W, BOARD_H);
-    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.lineStyle(3, COLOR.spawnZone, 0.45);
     this.spawnZoneGraphics.strokeRect(0, 0, SPAWN_ZONE_W, BOARD_H);
 
     // Top spawn zone (excluding corners covered by left/right)
-    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillStyle(COLOR.spawnZone, 0.09);
     this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
-    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.lineStyle(3, COLOR.spawnZone, 0.45);
     this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, 0, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
 
     // Bottom spawn zone (excluding corners covered by left/right)
-    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillStyle(COLOR.spawnZone, 0.09);
     this.spawnZoneGraphics.fillRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
-    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.lineStyle(3, COLOR.spawnZone, 0.45);
     this.spawnZoneGraphics.strokeRect(SPAWN_ZONE_W, BOARD_H - SPAWN_ZONE_H, BOARD_W - SPAWN_ZONE_W * 2, SPAWN_ZONE_H);
 
     // Right spawn zone — full height, mirrors the left strip. Lets
     // attackers come at a defender's funnel from the far side too.
-    this.spawnZoneGraphics.fillStyle(0xc3e8b0, 0.09);
+    this.spawnZoneGraphics.fillStyle(COLOR.spawnZone, 0.09);
     this.spawnZoneGraphics.fillRect(BOARD_W - SPAWN_ZONE_W, 0, SPAWN_ZONE_W, BOARD_H);
-    this.spawnZoneGraphics.lineStyle(3, 0xc3e8b0, 0.45);
+    this.spawnZoneGraphics.lineStyle(3, COLOR.spawnZone, 0.45);
     this.spawnZoneGraphics.strokeRect(BOARD_W - SPAWN_ZONE_W, 0, SPAWN_ZONE_W, BOARD_H);
 
     // Chevron indicators for each edge
@@ -1094,7 +1100,7 @@ export class RaidScene extends Phaser.Scene {
         .text(SPAWN_ZONE_W / 2, 140 + i * 120, '>>>', {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '22px',
-          color: '#c3e8b0',
+          color: COLOR.spawnZoneCss,
         })
         .setOrigin(0.5)
         .setAlpha(0.28),
@@ -1105,7 +1111,7 @@ export class RaidScene extends Phaser.Scene {
         .text(140 + i * 120, SPAWN_ZONE_H / 2, 'vvv', {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '22px',
-          color: '#c3e8b0',
+          color: COLOR.spawnZoneCss,
         })
         .setOrigin(0.5)
         .setAlpha(0.28),
@@ -1116,7 +1122,7 @@ export class RaidScene extends Phaser.Scene {
         .text(140 + i * 120, BOARD_H - SPAWN_ZONE_H / 2, '^^^', {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '22px',
-          color: '#c3e8b0',
+          color: COLOR.spawnZoneCss,
         })
         .setOrigin(0.5)
         .setAlpha(0.28),
@@ -1127,7 +1133,7 @@ export class RaidScene extends Phaser.Scene {
         .text(BOARD_W - SPAWN_ZONE_W / 2, 140 + i * 120, '<<<', {
           fontFamily: 'ui-monospace, monospace',
           fontSize: '22px',
-          color: '#c3e8b0',
+          color: COLOR.spawnZoneCss,
         })
         .setOrigin(0.5)
         .setAlpha(0.28),
@@ -1137,7 +1143,7 @@ export class RaidScene extends Phaser.Scene {
       .text(SPAWN_ZONE_W / 2, BOARD_H / 2, 'SPAWN\nEDGE', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '18px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
         align: 'center',
       })
       .setOrigin(0.5)
@@ -1856,7 +1862,7 @@ export class RaidScene extends Phaser.Scene {
       .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '↺ Redo', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(0.5);
     redoContainer.add([this.redoBg, this.redoLabel]);
@@ -1876,7 +1882,7 @@ export class RaidScene extends Phaser.Scene {
       .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '☰ Tactics', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(0.5);
     tacContainer.add([tacBg, tacLabel]);
@@ -1900,7 +1906,7 @@ export class RaidScene extends Phaser.Scene {
       .text(MOD_ACTION_BTN_W / 2, MOD_BTN_H / 2, '📌 Loadouts', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(0.5);
     loadoutContainer.add([loadoutBg, loadoutLabel]);
@@ -1966,7 +1972,7 @@ export class RaidScene extends Phaser.Scene {
       .text(w / 2 - 18, 14, '✕', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '16px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(0.5, 0)
       .setInteractive({ useHandCursor: true })
@@ -2314,7 +2320,7 @@ export class RaidScene extends Phaser.Scene {
       .text(w / 2 - 18, 14, '✕', {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '16px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(0.5, 0)
       .setInteractive({ useHandCursor: true })
@@ -2367,7 +2373,7 @@ export class RaidScene extends Phaser.Scene {
           .text(w / 2 - 50, rowH / 2, '📋', {
             fontFamily: 'ui-monospace, monospace',
             fontSize: '14px',
-            color: '#c3e8b0',
+            color: COLOR.spawnZoneCss,
           })
           .setOrigin(0.5, 0.5)
           .setInteractive({ useHandCursor: true })
@@ -2521,7 +2527,7 @@ export class RaidScene extends Phaser.Scene {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '22px',
         fontStyle: 'bold',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
       })
       .setOrigin(1, 0.5)
       .setDepth(31);
@@ -2530,7 +2536,7 @@ export class RaidScene extends Phaser.Scene {
         0,
         0,
         'Pick a unit, then drag on the battlefield to draw its path.',
-        { ...bodyTextStyle(11, '#c3e8b0'), align: 'center' },
+        { ...bodyTextStyle(11, COLOR.spawnZoneCss), align: 'center' },
       )
       .setOrigin(0.5, 0)
       .setDepth(31);
@@ -2660,7 +2666,7 @@ export class RaidScene extends Phaser.Scene {
     // Unit count display: shows current/max count, color-coded by readiness
     const totalCount = ALL_DECK.find((d) => d.kind === entry.kind)?.count ?? 0;
     const countStr = `${entry.count}/${totalCount}`;
-    let countColor = '#c3e8b0'; // green default
+    let countColor: string = COLOR.spawnZoneCss; // green default
     if (entry.count === 0) {
       countColor = '#d98080'; // red if depleted
     } else if (entry.count <= totalCount / 2) {
@@ -2891,13 +2897,13 @@ export class RaidScene extends Phaser.Scene {
     const start = this.drawingPoints[0];
     const end = this.drawingPoints[this.drawingPoints.length - 1];
     if (start) {
-      this.trailGraphics.lineStyle(3, 0xc3e8b0, 0.95);
+      this.trailGraphics.lineStyle(3, COLOR.spawnZone, 0.95);
       this.trailGraphics.strokeCircle(start.x, start.y, 10);
-      this.trailGraphics.fillStyle(0xc3e8b0, 0.95);
+      this.trailGraphics.fillStyle(COLOR.spawnZone, 0.95);
       this.trailGraphics.fillCircle(start.x, start.y, 5);
     }
     if (end) {
-      this.trailGraphics.lineStyle(3, 0xffd98a, 1);
+      this.trailGraphics.lineStyle(3, COLOR.gold, 1);
       this.trailGraphics.strokeCircle(end.x, end.y, 12);
     }
   }
@@ -3479,7 +3485,7 @@ export class RaidScene extends Phaser.Scene {
       .text(x, y, `+${count} ${label}`, {
         fontFamily: 'ui-monospace, monospace',
         fontSize: '13px',
-        color: '#c3e8b0',
+        color: COLOR.spawnZoneCss,
         stroke: '#1a1208',
         strokeThickness: 3,
       })
@@ -3660,7 +3666,7 @@ export class RaidScene extends Phaser.Scene {
             {
               fontFamily: 'ui-monospace, monospace',
               fontSize: '11px',
-              color: match.opponent.isBot ? '#c3e8b0' : '#ffd98a',
+              color: match.opponent.isBot ? COLOR.spawnZoneCss : '#ffd98a',
             },
           )
           .setOrigin(0.5, 0)
