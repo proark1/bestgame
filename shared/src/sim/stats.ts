@@ -257,6 +257,12 @@ export interface UnitBehavior {
   // is the canonical case (kamikaze sapper).
   detonateRadius?: Fixed;     // Fixed tiles
   detonateDamage?: Fixed;     // Fixed HP
+  // Spider faction signature: bonus damage on the unit's FIRST
+  // attack ever (not per-target). 150 = +50% on the first hit.
+  // Rewards positioning — the player chooses where the first
+  // strike lands. Combat sets u.firstHitFired the tick the bonus
+  // fires so it can't apply again over the unit's lifetime.
+  firstHitBonusPercent?: number;
 }
 
 export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
@@ -293,8 +299,15 @@ export const UNIT_BEHAVIOR: Partial<Record<UnitKind, UnitBehavior>> = {
     hiddenFromRoster: true,
     vsWallPercent: 125,
   },
+  // Spider faction signature: +50% damage on the unit's FIRST hit.
+  // One-shot bonus, fires once per unit lifetime. Pairs with the
+  // ambush path modifier — pause to set up, then crit on contact.
+  Jumper: { firstHitBonusPercent: 150 },
+  WebSetter: { firstHitBonusPercent: 150 },
+  Ambusher: { firstHitBonusPercent: 150 },
   NestSpider: {
     hiddenFromRoster: true,
+    firstHitBonusPercent: 150,
   },
 };
 

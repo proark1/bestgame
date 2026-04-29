@@ -243,6 +243,15 @@ export function combatSystem(
       ) {
         dmg = scaleFixedByPercent(dmg, ub.vsWallPercent);
       }
+      // Spider faction signature: +50% on the unit's FIRST attack
+      // ever. firstHitFired latches the bonus so it can't re-apply
+      // — combat is single-pass per tick so the latch is set on the
+      // same tick the bonus fires. Applied last so it stacks on top
+      // of vsBuilding / vsWall multipliers.
+      if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+        dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+        u.firstHitFired = true;
+      }
       // Hero buildingDamage aura — applies only to building hits, so
       // it lives here rather than in unitStatsFor. StagBeetle's +20%
       // is the canonical case.
@@ -323,7 +332,15 @@ export function combatSystem(
     if (bestIdx < 0) continue;
     const target = state.units[bestIdx]!;
     const pct = levelStatPercent(attackerUnitLevels?.[u.kind]);
-    const dmg = scaleFixedByPercent(stats.attackDamage, pct);
+    let dmg = scaleFixedByPercent(stats.attackDamage, pct);
+    const ub = UNIT_BEHAVIOR[u.kind];
+    // Spider faction signature also fires on attacker spiders hitting
+    // defender units (e.g. an Ambusher whose first contact is a
+    // NestSpider rather than a building). Latched once per lifetime.
+    if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+      dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+      u.firstHitFired = true;
+    }
     target.hp = sub(target.hp, dmg);
     if (target.hp < 0) target.hp = 0;
     u.attackCooldown = applyAttackSpeedBuff(
@@ -333,7 +350,6 @@ export function combatSystem(
     // FireAnt-style burn applied to defender units. Building-side burn
     // lives above in loop 1; this is the unit-side branch that makes
     // FireAnt genuinely useful against a NestSpider swarm.
-    const ub = UNIT_BEHAVIOR[u.kind];
     if (ub?.burnTicks && ub.burnDamagePerTick) {
       target.burnTicks = Math.max(target.burnTicks ?? 0, ub.burnTicks);
       target.burnDamagePerTick = Math.max(
@@ -514,7 +530,16 @@ export function combatSystem(
       continue;
     }
     if (u.attackCooldown === 0) {
-      target.hp = sub(target.hp, stats.attackDamage);
+      let dmg = stats.attackDamage;
+      // Spider faction signature also applies to defender-side
+      // NestSpiders attacking attackers. firstHitFired latches the
+      // bonus once per spider lifetime.
+      const ub = UNIT_BEHAVIOR[u.kind];
+      if (ub?.firstHitBonusPercent && !u.firstHitFired) {
+        dmg = scaleFixedByPercent(dmg, ub.firstHitBonusPercent);
+        u.firstHitFired = true;
+      }
+      target.hp = sub(target.hp, dmg);
       if (target.hp < 0) target.hp = 0;
       u.attackCooldown = stats.attackCooldownTicks;
     }

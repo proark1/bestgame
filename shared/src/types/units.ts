@@ -131,6 +131,11 @@ export interface Unit {
   // so the buff doesn't re-apply each tick. The bonus also
   // outlives the hero — leaving the radius doesn't shrink HP.
   auraHpBonusApplied?: number;
+  // Spider faction signature: latched once the unit's first attack
+  // resolves. Bonus is applied at attack time then this flag
+  // suppresses it for the rest of the unit's lifetime. Optional so
+  // pre-existing replays without the field deserialise unchanged.
+  firstHitFired?: boolean;
 }
 
 export interface UnitStats {
