@@ -1,5 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { Schema, type } from '@colyseus/schema';
+import { createHash } from 'node:crypto';
 import { Sim, Types } from '@hive/shared';
 
 // PicnicRoom — the live 2-minute arena.
@@ -141,7 +142,13 @@ export class PicnicRoom extends Room<PicnicState> {
     this.setState(new PicnicState());
 
     let snapshot: Types.Base = NEUTRAL_MAP;
-    let seed: number = Math.floor(Math.random() * 0xffffffff) | 0;
+    // Fallback seed used when no arenaToken was provided — derive
+    // from the Colyseus roomId via SHA-256 so a room remains
+    // reproducible from its joining clients (every client computing
+    // the same input sequence against this seed gets the same sim
+    // state). The arenaToken path below overwrites this with the
+    // persisted database seed.
+    let seed = createHash('sha256').update(this.roomId).digest().readInt32BE(0);
 
     if (options.arenaToken) {
       const lookup = await redeemArenaToken(options.arenaToken);

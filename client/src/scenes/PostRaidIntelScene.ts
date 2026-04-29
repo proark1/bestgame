@@ -96,7 +96,11 @@ export class PostRaidIntelScene extends Phaser.Scene {
     this.drawDeathBadges(replayResult.deaths);
     this.drawSummary(ctx, replayResult);
     this.layout();
-    this.scale.on('resize', () => this.layout());
+    const onResize = (): void => this.layout();
+    this.scale.on('resize', onResize);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', onResize);
+    });
   }
 
   // Re-runs the saved sim from baseSnapshot + inputs, recording the

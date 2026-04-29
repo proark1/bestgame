@@ -16,6 +16,7 @@ import {
 } from '../game/quests.js';
 import { CURRENT_SEASON_ID, xpForRaid } from '../game/season.js';
 import { computeReplayName } from '../game/replayName.js';
+import { parseBase } from '../game/parseBase.js';
 
 // Raid submission. The client sends the matchToken it received from
 // /api/match plus its input timeline and the computed result hash.
@@ -127,7 +128,12 @@ export function registerRaid(app: FastifyInstance): void {
         reply.code(500);
         return { error: 'pending match has invalid seed' };
       }
-      const baseSnapshot = row.base_snapshot;
+      const baseSnapshot = parseBase(row.base_snapshot);
+      if (!baseSnapshot) {
+        await client.query('ROLLBACK');
+        reply.code(500);
+        return { error: 'pending match has malformed base snapshot' };
+      }
 
       // Fetch the attacker's unit levels + trophies + base snapshot in
       // one round-trip. unit_levels feeds the sim's stat-scaling;
