@@ -1439,6 +1439,32 @@ export class RaidScene extends Phaser.Scene {
       this.renderTrailPreview();
     });
 
+    // Bail out of an in-progress draw without committing. Used both
+    // by the normal too-short-to-deploy branch and by the aborted-
+    // gesture safety net below (pointerupoutside / pointercancel /
+    // gameout). Without the safety net, a touch that slid off the
+    // canvas would leave isDrawing=true and freeze deploys until the
+    // scene reloaded.
+    const cancelDraw = (): void => {
+      if (!this.isDrawing) return;
+      this.isDrawing = false;
+      this.drawingPoints = [];
+      this.trailGraphics.clear();
+      this.boardGuide.setVisible(this.raidInputs.length === 0 && this.currentDeckEntry().count > 0);
+      this.deckHintText.setText('Pick a unit, then drag on the battlefield to draw its path.');
+    };
+    this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, cancelDraw);
+    this.input.on(Phaser.Input.Events.GAME_OUT, cancelDraw);
+    const canvas = this.game.canvas;
+    if (canvas) {
+      canvas.addEventListener('pointercancel', cancelDraw);
+      canvas.addEventListener('lostpointercapture', cancelDraw);
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        canvas.removeEventListener('pointercancel', cancelDraw);
+        canvas.removeEventListener('lostpointercapture', cancelDraw);
+      });
+    }
+
     this.input.on('pointerup', () => {
       if (!this.isDrawing) return;
       this.isDrawing = false;

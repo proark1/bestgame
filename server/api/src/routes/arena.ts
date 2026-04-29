@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Types } from '@hive/shared';
 import { getPool } from '../db/pool.js';
 import { requirePlayer } from '../auth/playerAuth.js';
+import { parseBase } from '../game/parseBase.js';
 
 // /api/arena/reserve — the live-PvP pairing entrypoint.
 //
@@ -25,6 +26,15 @@ import { requirePlayer } from '../auth/playerAuth.js';
 const ARENA_TROPHY_BAND = 120;
 const ARENA_ACTIVE_WINDOW_MINUTES = 10; // live PvP needs a fresher pool than raids
 const ARENA_MATCH_TTL_MINUTES = 15;
+
+// Postgres BIGINT comes back as string. Coerce + reject NaN/Infinity
+// so a malformed seed surfaces as a clear 500 instead of silently
+// corrupting the deterministic sim's RNG. Mirrors the same guard on
+// /raid/submit.
+function parseSeed(raw: string): number | null {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
 
 interface ReserveResponse {
   arenaToken: string;
@@ -102,6 +112,19 @@ export function registerArena(app: FastifyInstance): void {
       );
       if (existing.rows.length > 0) {
         const r = existing.rows[0]!;
+        const seed = parseSeed(r.seed);
+        if (seed === null) {
+          await client.query('ROLLBACK');
+          reply.code(500);
+          return { error: 'arena reservation has invalid seed' };
+        }
+        const hostSnapshot = parseBase(r.host_snapshot);
+        const challengerSnapshot = parseBase(r.challenger_snapshot);
+        if (!hostSnapshot || !challengerSnapshot) {
+          await client.query('ROLLBACK');
+          reply.code(500);
+          return { error: 'arena reservation has malformed snapshot' };
+        }
         const oppId =
           r.host_player_id === playerId ? r.challenger_player_id : r.host_player_id;
         const oppRow = await client.query<{
@@ -113,14 +136,14 @@ export function registerArena(app: FastifyInstance): void {
         const rendezvous: ReserveResponse = {
           arenaToken: r.token,
           role: r.host_player_id === playerId ? 'host' : 'challenger',
-          seed: Number(r.seed),
+          seed,
           opponent: {
             playerId: oppId,
             displayName: opp?.display_name ?? 'Unknown',
             trophies: opp?.trophies ?? 0,
           },
-          hostSnapshot: r.host_snapshot,
-          challengerSnapshot: r.challenger_snapshot,
+          hostSnapshot,
+          challengerSnapshot,
         };
         return rendezvous;
       }
@@ -293,12 +316,23 @@ export function registerArena(app: FastifyInstance): void {
         return { error: 'unknown, expired, or already-used arena token' };
       }
       const r = row.rows[0]!;
+      const seed = parseSeed(r.seed);
+      if (seed === null) {
+        reply.code(500);
+        return { error: 'arena reservation has invalid seed' };
+      }
+      const hostSnapshot = parseBase(r.host_snapshot);
+      const challengerSnapshot = parseBase(r.challenger_snapshot);
+      if (!hostSnapshot || !challengerSnapshot) {
+        reply.code(500);
+        return { error: 'arena reservation has malformed snapshot' };
+      }
       return {
         hostPlayerId: r.host_player_id,
         challengerPlayerId: r.challenger_player_id,
-        seed: Number(r.seed),
-        hostSnapshot: r.host_snapshot,
-        challengerSnapshot: r.challenger_snapshot,
+        seed,
+        hostSnapshot,
+        challengerSnapshot,
       };
     },
   );

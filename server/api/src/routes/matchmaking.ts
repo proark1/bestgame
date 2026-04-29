@@ -130,7 +130,19 @@ interface MatchBody {
 }
 
 export function registerMatchmaking(app: FastifyInstance): void {
-  app.post<{ Body: MatchBody }>('/match', async (req, reply) => {
+  // Match generation provisions a pending_matches row per call. A
+  // legitimate player taps Raid every ~60s; 30/min per IP leaves
+  // headroom for shared-NAT households while shutting down a scripted
+  // bot trying to flood pending_matches before /raid/submit's stricter
+  // 20/min cap kicks in.
+  app.post<{ Body: MatchBody }>('/match', {
+    config: {
+      rateLimit: {
+        max: 30,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const attackerId = requirePlayer(req, reply);
     if (!attackerId) return;
     const trophies = Math.max(

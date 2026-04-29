@@ -86,6 +86,9 @@ export class CodexScene extends Phaser.Scene {
     this.renderRail();
 
     this.scale.on('resize', this.handleResize, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.handleResize, this);
+    });
   }
 
   private handleResize(): void {

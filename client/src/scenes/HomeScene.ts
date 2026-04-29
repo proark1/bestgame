@@ -378,12 +378,21 @@ export class HomeScene extends Phaser.Scene {
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let lastW = this.scale.width;
     let lastH = this.scale.height;
-    this.scale.on('resize', () => {
+    const onResizeRestart = (): void => {
       if (this.scale.width === lastW && this.scale.height === lastH) return;
       lastW = this.scale.width;
       lastH = this.scale.height;
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => this.scene.restart(), 220);
+    };
+    this.scale.on('resize', onResizeRestart);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', this.handleResize, this);
+      this.scale.off('resize', onResizeRestart);
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = undefined;
+      }
     });
 
     // First-visit tutorial. Guarded by a localStorage flag so we

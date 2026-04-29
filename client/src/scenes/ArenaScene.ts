@@ -201,7 +201,7 @@ export class ArenaScene extends Phaser.Scene {
     this.state = Sim.createInitialState(this.cfg);
 
     this.drawStartingBuildings();
-    this.trailGraphics = this.add.graphics().setDepth(10);
+    this.trailGraphics = this.add.graphics().setDepth(DEPTHS.trail);
     this.boardContainer.add(this.trailGraphics);
 
     this.setStatus('Connecting to arena...', 'Matchmaking and sync checks are in progress.');
