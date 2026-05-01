@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { MAX_DEVICE_PIXEL_RATIO } from '../ui/text.js';
 
 // Procedural placeholder sprites — drawn to a hidden Graphics object,
 // then baked into a texture under the expected key. These hold the game
@@ -12,6 +13,59 @@ const BUILDING_SIZE = 192;
 const UI_SIZE = 96;
 const OUTLINE = 0x1a1208; // near-black warm brown
 const OUTLINE_W = 4;
+
+// Baking scale for procedural textures. We rasterise placeholders at
+// physical-pixel resolution so when a sprite is then displayed at a
+// logical footprint (e.g. setDisplaySize(b.w * TILE, ...) in scenes)
+// the GPU is downsampling a sharper source rather than upscaling a
+// 1× canvas. Capped to MAX_DEVICE_PIXEL_RATIO (= 2) to keep texture
+// memory bounded — a 192 px building bakes to 384 px, which mips
+// down crisply on Retina without blowing out the GPU's atlas.
+function bakeScale(): number {
+  if (typeof window === 'undefined') return 1;
+  const raw = window.devicePixelRatio;
+  if (!Number.isFinite(raw) || raw < 1) return 1;
+  return Math.min(raw, MAX_DEVICE_PIXEL_RATIO);
+}
+
+// Apply the same filter + mipmap setup BootScene runs against
+// disk-loaded sprites. Procedural textures generated AFTER BootScene's
+// post-load pass (mote, trail-dot, raid auras) would otherwise sample
+// at the GPU default (LINEAR with no mip chain) and read soft when
+// drawn at non-1:1 scales. Idempotent — calling twice on the same key
+// is a no-op.
+export function applyCrispFilter(scene: Phaser.Scene, key: string): void {
+  if (!scene.textures.exists(key)) return;
+  const texture = scene.textures.get(key);
+  texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+  const renderer = scene.game.renderer as Phaser.Renderer.WebGL.WebGLRenderer;
+  const gl: WebGLRenderingContext | null =
+    'gl' in renderer && renderer.gl ? renderer.gl : null;
+  if (!gl) return;
+  const isWebGL2 =
+    typeof WebGL2RenderingContext !== 'undefined' &&
+    gl instanceof WebGL2RenderingContext;
+  for (const source of texture.source) {
+    const wrapper = source.glTexture as unknown as
+      | { webGLTexture?: WebGLTexture | null }
+      | null;
+    const rawTex = wrapper?.webGLTexture ?? null;
+    if (!rawTex) continue;
+    const img = source.image as HTMLImageElement | HTMLCanvasElement;
+    const w = 'naturalWidth' in img ? img.naturalWidth : img.width;
+    const h = 'naturalHeight' in img ? img.naturalHeight : img.height;
+    if (w <= 0 || h <= 0) continue;
+    const isPot = (n: number): boolean => n > 0 && (n & (n - 1)) === 0;
+    if (!isWebGL2 && (!isPot(w) || !isPot(h))) continue;
+    gl.bindTexture(gl.TEXTURE_2D, rawTex);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(
+      gl.TEXTURE_2D,
+      gl.TEXTURE_MIN_FILTER,
+      gl.LINEAR_MIPMAP_LINEAR,
+    );
+  }
+}
 
 // Faction palettes — warm, saturated, pastel-ish. Keep these in sync
 // with prompts.json factions for visual continuity when real art lands.
@@ -45,10 +99,20 @@ function bake(
   draw: (g: Phaser.GameObjects.Graphics) => void,
 ): void {
   if (scene.textures.exists(key)) return; // real atlas already loaded
+  const scale = bakeScale();
   const g = makeGraphics(scene);
+  // scaleCanvas pre-multiplies the rendering context so every
+  // subsequent draw command (in logical 0..size coordinates) lands
+  // on a backing canvas that is `scale` times larger. The texture
+  // we generate ends up `(size*scale)` px on each axis, which —
+  // combined with applyCrispFilter mip-chains below — yields a
+  // sharp downsample instead of a soft 1× upscale on HiDPI screens.
+  if (scale !== 1) g.scaleCanvas(scale, scale);
   draw(g);
-  g.generateTexture(key, size, size);
+  const px = Math.round(size * scale);
+  g.generateTexture(key, px, px);
   g.destroy();
+  applyCrispFilter(scene, key);
 }
 
 // -- Unit placeholders ------------------------------------------------------
@@ -876,7 +940,9 @@ function drawBoardBackground(scene: Phaser.Scene): void {
   const key = 'board-background';
   if (scene.textures.exists(key)) return;
   const BOARD_BG_SIZE = 256;
+  const scale = bakeScale();
   const g = makeGraphics(scene);
+  if (scale !== 1) g.scaleCanvas(scale, scale);
   // Simple tileable grass/earth pattern
   g.fillStyle(PALETTE.leaf.body, 1);
   g.fillRect(0, 0, BOARD_BG_SIZE, BOARD_BG_SIZE);
@@ -894,8 +960,10 @@ function drawBoardBackground(scene: Phaser.Scene): void {
     const y = ((i * 119) % (BOARD_BG_SIZE - 10)) + 5;
     g.fillCircle(x, y, 3 + (i % 3));
   }
-  g.generateTexture(key, BOARD_BG_SIZE, BOARD_BG_SIZE);
+  const px = Math.round(BOARD_BG_SIZE * scale);
+  g.generateTexture(key, px, px);
   g.destroy();
+  applyCrispFilter(scene, key);
 }
 
 // -- UI placeholders --------------------------------------------------------
@@ -1036,7 +1104,10 @@ export function generateMissingPlaceholders(
 function drawHero(scene: Phaser.Scene, key: string): void {
   if (scene.textures.exists(key)) return;
   const size = 128;
+  const scale = bakeScale();
+  const px = Math.round(size * scale);
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  if (scale !== 1) g.scaleCanvas(scale, scale);
   // Halo behind the disc (legendary glow).
   g.fillStyle(0xffd97a, 0.35);
   g.fillCircle(size / 2, size / 2, size / 2 - 4);
@@ -1045,11 +1116,12 @@ function drawHero(scene: Phaser.Scene, key: string): void {
   g.fillCircle(size / 2, size / 2, size / 2 - 14);
   g.lineStyle(4, 0xc99b3a, 1);
   g.strokeCircle(size / 2, size / 2, size / 2 - 14);
-  // Letter glyph.
+  // Letter glyph. Rasterise at the bake scale so the glyph stays
+  // crisp when the hero disc is then displayed at HiDPI.
   const letter = key.replace(/^hero-/, '').charAt(0).toUpperCase();
   const text = scene.make.text({
-    x: size / 2,
-    y: size / 2,
+    x: 0,
+    y: 0,
     text: letter,
     style: {
       fontFamily: "'Arial Black', sans-serif",
@@ -1061,12 +1133,18 @@ function drawHero(scene: Phaser.Scene, key: string): void {
     },
   });
   text.setOrigin(0.5, 0.5);
+  text.setResolution(scale);
   // Compose graphics + text into a render texture so the texture
   // manager has a single backing image keyed under the hero name.
-  const rt = scene.add.renderTexture(0, 0, size, size).setVisible(false);
+  // RenderTexture.draw uses the source object's transform; setting
+  // text.scale here keeps the glyph centered at the high-DPR canvas
+  // center while letting setResolution govern glyph sharpness.
+  const rt = scene.add.renderTexture(0, 0, px, px).setVisible(false);
   rt.draw(g, 0, 0);
-  rt.draw(text, size / 2, size / 2);
+  text.setScale(scale);
+  rt.draw(text, px / 2, px / 2);
   rt.saveTexture(key);
+  applyCrispFilter(scene, key);
   g.destroy();
   text.destroy();
   rt.destroy();
@@ -1074,6 +1152,13 @@ function drawHero(scene: Phaser.Scene, key: string): void {
 
 // Small helper used by RaidScene to draw a soft pheromone-trail dot even
 // without a dedicated sprite key.
+//
+// Kept at native 24 px (no bakeScale upscale) because the consumer is a
+// particle emitter — particles render at the texture's intrinsic frame
+// size, so doubling the texture would visibly double the trail puff
+// regardless of DPR. We still attach the LINEAR + mipmap filter so the
+// soft blob downsamples cleanly when the particle scale config tweens
+// it from 0.9 → 0.
 export function bakeTrailDot(scene: Phaser.Scene): string {
   const key = 'trail-dot';
   if (scene.textures.exists(key)) return key;
@@ -1084,5 +1169,6 @@ export function bakeTrailDot(scene: Phaser.Scene): string {
   g.fillCircle(12, 12, 5);
   g.generateTexture(key, 24, 24);
   g.destroy();
+  applyCrispFilter(scene, key);
   return key;
 }
