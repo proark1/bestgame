@@ -8,6 +8,7 @@
 // sit between the gradient and the playfield).
 
 import Phaser from 'phaser';
+import { applyCrispFilter } from '../assets/placeholders.js';
 import { COLOR, DEPTHS } from './theme.js';
 
 const MOTE_TEXTURE_KEY = 'ambient-mote';
@@ -17,6 +18,12 @@ function ensureMoteTexture(scene: Phaser.Scene): void {
   // 16-pixel soft white disc — radial gradient via concentric circles
   // since Phaser Graphics doesn't expose true radial fills. Three
   // bands give a smooth-enough falloff at this size.
+  //
+  // Native 16 px (no DPR upscale) because the consumer is a particle
+  // emitter — particles render at the texture's intrinsic frame size,
+  // and the emitter already tweens scale from 0.4 → 1.05 to size the
+  // mote. We attach the LINEAR + mipmap filter so the soft blob
+  // downsamples cleanly through that tween.
   const g = scene.add.graphics().setVisible(false);
   g.fillStyle(0xffffff, 0.18);
   g.fillCircle(8, 8, 8);
@@ -26,6 +33,7 @@ function ensureMoteTexture(scene: Phaser.Scene): void {
   g.fillCircle(8, 8, 2);
   g.generateTexture(MOTE_TEXTURE_KEY, 16, 16);
   g.destroy();
+  applyCrispFilter(scene, MOTE_TEXTURE_KEY);
 }
 
 export interface AmbientMotesOptions {
